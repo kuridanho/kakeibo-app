@@ -1232,7 +1232,8 @@ async function recurringForm(id) {
   const list = await accounts();
   const r = id ? (await api("GET", "/api/recurring")).find((x) => x.id === Number(id)) : null;
   if (id && !r) throw new Error("見つかりません");
-  const payWith = live(list).filter((a) => (a.type === "asset" || a.type === "liability") && (a.pay_method || a.id === r?.from_account_id));
+  // 繰り返しの支払いは、支払方法に出す設定に関わらずすべての資産とカードから選べる。借入は除く
+  const payWith = live(list).filter((a) => a.type === "asset" || a.kind === "card" || a.id === r?.from_account_id);
   const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown");
   let kind = r?.kind ?? "expense";
   let every = r?.every ?? "month";
