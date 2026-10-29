@@ -105,6 +105,7 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .cell .grow { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 .cell .detail { font-size: 13px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell .value { color: var(--secondary); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.cell .value.inc { color: var(--tint); }
 .cell .amount { white-space: nowrap; }
 .cell .muted { color: var(--secondary); }
 a.cell::after, .cell.link::after {

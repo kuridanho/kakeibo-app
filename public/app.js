@@ -40,6 +40,8 @@ const monthLabel = (m) => `${Number(m.slice(0, 4))}年${Number(m.slice(5, 7))}�
 const monthTitle = (m) => (m.slice(0, 4) === thisMonth().slice(0, 4) ? `${Number(m.slice(5, 7))}月` : monthLabel(m));
 // 行の金額の表記。¥ は大きな額にだけ付け、行では付けない。収入と増えた差だけ + を付ける
 const plus = (n) => `${n > 0 ? "+" : ""}${num(n)}`;
+// 出ていく額。支出はすべて − を付けて出す
+const minus = (n) => plus(-n);
 const dayLabel = (d) => {
   const w = "日月火水木金土"[new Date(`${d}T00:00:00Z`).getUTCDay()];
   return `${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日(${w})`;
@@ -233,12 +235,12 @@ async function home() {
     h("span", { class: "section-head" }, `${Number(thisMonth().slice(5))}月の支出`),
     h("a", { class: "card", href: "#/summary", style: "text-decoration:none;color:inherit" },
       h("div", { class: "row" },
-        h("span", { class: "title2" }, yen(s.expense)),
-        s.income ? h("span", { class: "sub" }, `収入 ${num(s.income)}`) : null),
+        h("span", { class: "title2" }, yen(-s.expense)),
+        s.income ? h("span", { class: "sub" }, `収入 ${plus(s.income)}`) : null),
       top.length ? h("div", { class: "bars" }, top.map((c) => [
         h("span", {}, c.name),
         h("div", { class: "bar" }, h("div", { style: `width:${(c.amount / max) * 100}%` })),
-        h("span", { style: "text-align:right" }, c.amount.toLocaleString("ja-JP")),
+        h("span", { style: "text-align:right" }, minus(c.amount)),
       ])) : null),
     todos.length ? [
       h("span", { class: "section-head" }, "確かめること"),
@@ -665,7 +667,7 @@ function entryCell(e) {
     e.advance && !e.settled ? h("span", { class: "pill" }, "立替") : null,
     ["ai", "keyword", "none"].includes(e.category_source) ? h("span", { class: "pill" }, "AI") : null,
     e.kind === "income" ? h("span", { class: "amount inc" }, plus(entryAmount(e)))
-      : h("span", { class: `amount${transfer ? " muted" : ""}` }, num(entryAmount(e))));
+      : h("span", { class: `amount${transfer ? " muted" : ""}` }, transfer ? num(entryAmount(e)) : minus(entryAmount(e))));
 }
 
 // 予定のうち手元のお金が減るもの。支出の繰り返しと、カードの引き落としと借入の返済。口座間の振替は数えない
@@ -719,8 +721,8 @@ async function calendarView(params) {
       },
         h("span", { class: "n" }, i),
         // 入る額と出る額を差し引かずに1行ずつ出す。記録がなければ予定を点線で出す。入るほうは水色
-        t?.income ? h("span", { class: "i" }, num(t.income)) : pin ? h("span", { class: "p inc" }, num(pin)) : null,
-        t?.expense ? h("span", { class: "e" }, num(t.expense)) : pout ? h("span", { class: "p" }, num(pout)) : null);
+        t?.income ? h("span", { class: "i" }, plus(t.income)) : pin ? h("span", { class: "p inc" }, plus(pin)) : null,
+        t?.expense ? h("span", { class: "e" }, minus(t.expense)) : pout ? h("span", { class: "p" }, minus(pout)) : null);
     }));
 
   const income = Object.values(cal.days).reduce((s, d) => s + d.income, 0);
@@ -728,8 +730,8 @@ async function calendarView(params) {
   const comingIn = cal.planned.filter((p) => p.kind === "income").reduce((s, p) => s + p.amount, 0);
   const comingOut = cal.planned.filter((p) => flowsOut(p)).reduce((s, p) => s + p.amount, 0);
   const totals = h("div", { class: "cal-sum" },
-    h("div", {}, h("span", {}, "収入"), h("b", { class: "inc" }, num(income))),
-    h("div", {}, h("span", {}, "支出"), h("b", {}, num(spent))),
+    h("div", {}, h("span", {}, "収入"), h("b", { class: "inc" }, plus(income))),
+    h("div", {}, h("span", {}, "支出"), h("b", {}, minus(spent))),
     h("div", {}, h("span", {}, "差"), h("b", { class: income - spent < 0 ? "neg" : "" }, `${income - spent > 0 ? "+" : ""}${num(income - spent)}`)));
 
   // 月の取引と予定を日ごとに、新しい日から並べる
@@ -740,19 +742,19 @@ async function calendarView(params) {
     h("div", { class: "section-head day-head", id: `day-${d}` }, h("span", {}, dayLabel(d)),
       // 受け取った額と使った額を差し引かずに並べる
       dayIn(d) || dayOut(d) ? h("span", {}, dayIn(d) ? h("span", { class: "inc" }, plus(dayIn(d))) : null,
-        dayIn(d) && dayOut(d) ? "　" : null, dayOut(d) ? num(dayOut(d)) : null) : null),
+        dayIn(d) && dayOut(d) ? "　" : null, dayOut(d) ? minus(dayOut(d)) : null) : null),
     h("div", { class: "group" },
       (byDay.get(d) ?? []).map(entryCell),
       (plannedBy.get(d) ?? []).map((p) => cell({},
         h("div", { class: "grow" }, h("span", {}, p.label), h("span", { class: "detail" }, "予定")),
-        h("span", { class: "amount muted" }, p.kind === "income" ? plus(p.amount) : num(p.amount))))),
+        h("span", { class: "amount muted" }, p.kind === "income" ? plus(p.amount) : minus(p.amount))))),
   ]);
 
   if (selected) setTimeout(() => document.getElementById(`day-${selected}`)?.scrollIntoView({ block: "start" }), 0);
   const go = (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; };
   const card = h("div", { class: "cal-card" }, head, grid, totals,
     comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
-      h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${num(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
+      h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${minus(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
   swipe(card, go);
   if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.classList.add(from > 0 ? "in-right" : "in-left");
   return [monthNav(month, go), listTabs("cal", month), card, listBody];
@@ -793,7 +795,7 @@ async function summary(params) {
     toggle,
     swipePane(from, go,
     h("div", { class: "card" },
-      h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(s.expense))),
+      h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(-s.expense))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(s.income))),
       h("div", { class: "row sub" }, h("span", {}, "差"), h("span", {}, plus(s.income - s.expense)))),
     s.report && (s.changes.length || changedTotal) ? h("details", { class: "banner" },
@@ -806,11 +808,11 @@ async function summary(params) {
       expenses.length === 0 ? h("p", { class: "empty" }, "支出はありません") : h("div", { class: "bars" }, expenses.map((c) => [
         h("span", {}, c.name),
         h("div", { class: "bar" }, h("div", { style: `width:${Math.max(0, (c.amount / max) * 100)}%` })),
-        h("span", { style: "text-align:right" }, num(c.amount),
+        h("span", { style: "text-align:right" }, minus(c.amount),
           c.changed ? h("span", { class: "footnote" }, ` ${c.changed > 0 ? "+" : ""}${num(c.changed)}`) : null),
       ]))),
     incomes.length ? [h("span", { class: "section-head" }, "収入"), h("div", { class: "group" },
-      incomes.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value" }, num(c.amount)))))] : null,
+      incomes.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value inc" }, plus(c.amount)))))] : null,
     !s.report && month < thisMonth() ? h("button", { class: "plain", onclick: makeReport }, "この月のまとめを作る") : null),
   ];
 }
@@ -829,16 +831,16 @@ async function yearView(params, from) {
     monthNav(String(y.year), (n) => go(y.year + n), start === 4 ? `${y.year}年度` : `${y.year}年`),
     (n) => go(y.year + n),
     h("div", { class: "card" },
-      h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(y.months.reduce((s, m) => s + m.expense, 0)))),
+      h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(-y.months.reduce((s, m) => s + m.expense, 0)))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(y.months.reduce((s, m) => s + m.income, 0))))),
     h("span", { class: "section-head" }, "月ごとの支出"),
     h("div", { class: "card" }, h("div", { class: "bars" }, y.months.map((m) => [
       h("a", { href: `#/summary?month=${m.month}` }, `${Number(m.month.slice(5))}月`),
       h("div", { class: "bar" }, h("div", { style: `width:${(m.expense / max) * 100}%` })),
-      h("span", { style: "text-align:right" }, num(m.expense)),
+      h("span", { style: "text-align:right" }, minus(m.expense)),
     ]))),
     cats.length ? [h("span", { class: "section-head" }, "カテゴリごと"), h("div", { class: "group" },
-      cats.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value" }, num(c.amount)))))] : null,
+      cats.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value" }, minus(c.amount)))))] : null,
     // 年の始まりは一度決めれば変えないので、その他にしまう
     h("details", { class: "more" },
       h("summary", {}, "その他"),
@@ -1224,7 +1226,7 @@ async function recurringView() {
         h("div", { class: "grow" },
           h("span", {}, r.payee || name(r.category_id) || "振替"),
           h("span", { class: "detail" }, [everyLabel(r), name(r.kind === "income" ? r.to_account_id : r.from_account_id), r.active ? "" : "止めています"].filter(Boolean).join("　"))),
-        h("span", { class: `amount${r.active ? "" : " muted"}${r.kind === "income" && r.active ? " inc" : ""}` }, r.kind === "income" ? plus(r.amount) : num(r.amount))))),
+        h("span", { class: `amount${r.active ? "" : " muted"}${r.kind === "income" && r.active ? " inc" : ""}` }, r.kind === "income" ? plus(r.amount) : r.kind === "expense" ? minus(r.amount) : num(r.amount))))),
   ];
 }
 
