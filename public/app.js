@@ -653,8 +653,8 @@ const loadCalendar = (month) => Promise.all([api("GET", `/api/calendar?month=${m
 
 function listTabs(current, month) {
   return h("div", { class: "seg", role: "group", "aria-label": "表示" },
-    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?view=list&month=${month}`; } }, "リスト"),
-    h("button", { "aria-pressed": String(current === "cal"), onclick: () => { location.hash = `#/list?view=cal&month=${month}`; } }, "カレンダー"));
+    h("button", { "aria-pressed": String(current === "cal"), onclick: () => { location.hash = `#/list?view=cal&month=${month}`; } }, "カレンダー"),
+    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?view=list&month=${month}`; } }, "リスト"));
 }
 
 function entryCell(e) {
