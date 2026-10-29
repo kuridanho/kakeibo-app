@@ -59,6 +59,13 @@ body {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
+/* ホーム画面のアプリでは、iOS が画面の上の端にぼかしをかけ、時計の欄の下の文字までぼやける。
+   上の端に一色の不透明な板を固定しておくと、iOS はぼかしの代わりにその色で塗る。Safari のタブでは高さ 0。
+   半透明や backdrop-filter にするとぼかしが戻るので使わない */
+body::before {
+  content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top);
+  background: var(--bg); z-index: 15; pointer-events: none;
+}
 main {
   max-width: 600px;
   margin: 0 auto;

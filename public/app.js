@@ -1214,6 +1214,10 @@ function goBack(fallback) {
 }
 
 window.addEventListener("hashchange", () => { navigated = true; route(); });
+// 今いるタブをもう一度押したときも、中身をサーバーから取り直す。ホーム画面のアプリには再読み込みがないため
+for (const a of document.querySelectorAll(".tabbar a")) {
+  a.addEventListener("click", () => { if (a.getAttribute("href") === (location.hash || "#/")) route(); });
+}
 route();
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
