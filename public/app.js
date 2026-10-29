@@ -88,6 +88,20 @@ function options(list, selected, blank) {
   ];
 }
 
+// 資産、カード、借入は別のまとまりとして並べる。カードの未払いと借りているお金を一緒にしない
+const SIDES = [["資産", (a) => a.type === "asset"], ["カード", (a) => a.kind === "card"], ["借入", (a) => a.kind === "loan"]];
+
+/** 資産、カード、借入を見出し付きで分けた選択肢 */
+function sideOptions(list, selected, blank) {
+  return [
+    blank ? h("option", { value: "" }, blank) : null,
+    SIDES.map(([label, is]) => {
+      const part = list.filter(is);
+      return part.length ? h("optgroup", { label }, options(part, selected)) : null;
+    }),
+  ];
+}
+
 /** インセットのグループの1行。左に項目名、右に値の入力欄を置く */
 function field(label, input) {
   return h("label", { class: "cell field" }, h("span", { class: "caption" }, label), input);
@@ -320,12 +334,12 @@ async function entryForm(existing) {
       group(
         field("日付", h("input", { name: "date", type: "date", value: init.date, required: true, disabled: isStatement })),
         kind !== "transfer" ? field(kind === "income" ? "どこから" : "店や内容", h("input", { name: "payee", value: init.payee, autocomplete: "off" })) : null,
-        kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true, disabled: isStatement }, options(payWith, init.from_account_id, "選んでください"))) : null,
+        kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true, disabled: isStatement }, sideOptions(payWith, init.from_account_id, "選んでください"))) : null,
         kind === "expense" ? field("カテゴリ", categorySelect({ name: "category_id" }, expense, "expense", init.category_id, existing ? null : "AIに任せる")) : null,
         kind === "income" ? field("受け取り先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(receiveTo, init.to_account_id, "選んでください"))) : null,
         kind === "income" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, income, "income", init.category_id)) : null,
-        kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, options(movable, init.from_account_id, "選んでください"))) : null,
-        kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true, onchange: () => showInterest() }, options(movable, init.to_account_id, "選んでください"))) : null,
+        kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, sideOptions(movable, init.from_account_id, "選んでください"))) : null,
+        kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true, onchange: () => showInterest() }, sideOptions(movable, init.to_account_id, "選んでください"))) : null,
         kind === "transfer" ? field("うち利息・手数料", moneyInput({ name: "interest", "data-num": "", value: init.interest })) : null,
         field("メモ", h("input", { name: "memo", value: init.memo }))),
       kind === "expense" ? itemsBox : null,
@@ -776,17 +790,39 @@ async function yearView(params) {
 // 棚卸しで実際の残高と照らし合わせるもの
 const CHECKABLE = ["cash", "bank", "emoney"];
 
-/** 並べ替えの画面。上下のボタンで動かし、終わったら順番を保存する */
-function reorderGroup(items, label, onDone) {
-  const order = [...items];
-  const group = h("div", { class: "group" });
-  const draw = () => fill(group, ...order.map((a, i) => cell({},
+/** 並べ替えの画面。右の取っ手をドラッグして動かし、完了で今の並びの id を返す */
+function reorderGroup(items, label) {
+  const group = h("div", { class: "group reorder" }, items.map((a) => cell({ "data-id": a.id },
     h("span", { class: "grow" }, label(a)),
-    h("button", { type: "button", class: "icon", "aria-label": `${a.name}を上へ`, disabled: i === 0, onclick: () => move(i, -1) }, icon("M6 15l6-6 6 6")),
-    h("button", { type: "button", class: "icon", "aria-label": `${a.name}を下へ`, disabled: i === order.length - 1, onclick: () => move(i, 1) }, icon("M6 9l6 6 6-6")))));
-  const move = (i, d) => { [order[i], order[i + d]] = [order[i + d], order[i]]; draw(); };
-  draw();
-  return { group, save: () => onDone(order.map((a) => a.id)) };
+    h("span", { class: "grip", "aria-hidden": "true" }, icon("M5 9h14M5 15h14")))));
+  group.addEventListener("pointerdown", (ev) => {
+    const grip = ev.target.closest(".grip");
+    if (!grip) return;
+    ev.preventDefault();
+    const row = grip.closest(".cell");
+    grip.setPointerCapture(ev.pointerId);
+    row.classList.add("dragging");
+    // 行を指に付いて動かし、隣の行の半分を越えたら入れ替える。入れ替えた分だけ起点をずらす
+    let base = ev.clientY;
+    const move = (e) => {
+      const dy = e.clientY - base;
+      const next = row.nextElementSibling, prev = row.previousElementSibling;
+      if (next && dy > next.offsetHeight / 2) { next.after(row); base += next.offsetHeight; }
+      else if (prev && dy < -prev.offsetHeight / 2) { prev.before(row); base -= prev.offsetHeight; }
+      row.style.transform = `translateY(${e.clientY - base}px)`;
+    };
+    const up = () => {
+      row.classList.remove("dragging");
+      row.style.transform = "";
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
+  return { group, save: () => [...group.children].map((r) => Number(r.dataset.id)) };
 }
 
 async function accountsView(params) {
@@ -797,14 +833,16 @@ async function accountsView(params) {
       hidden.length ? h("div", { class: "group" }, hidden.map((a) => cell({ href: `#/account/${a.id}` }, h("span", { class: "grow" }, a.name), h("span", { class: "value" }, KIND_LABEL[a.kind]))))
         : h("p", { class: "empty" }, "ありません")];
   }
+  const sum = (as) => as.reduce((s, a) => s + a.balance, 0);
   const groups = [
-    ["すぐ使えるお金", b.accounts.filter((a) => a.type === "asset" && a.liquid)],
-    ["カードと借入", b.accounts.filter((a) => a.type === "liability")],
+    ["手元のお金", b.accounts.filter((a) => a.type === "asset" && a.liquid)],
     ["別枠の資産", b.accounts.filter((a) => a.type === "asset" && !a.liquid)],
+    ["カード", b.accounts.filter((a) => a.kind === "card")],
+    ["借入", b.accounts.filter((a) => a.kind === "loan")],
   ].filter(([, as]) => as.length);
 
   if (params?.get("reorder")) {
-    const parts = groups.map(([title, as]) => [title, reorderGroup(as, (a) => a.name, () => null)]);
+    const parts = groups.map(([title, as]) => [title, reorderGroup(as, (a) => a.name)]);
     return [
       h("div", { class: "navrow" }, h("h1", {}, "並べ替え"),
         h("div", {}, h("button", { class: "text", onclick: async () => {
@@ -834,7 +872,8 @@ async function accountsView(params) {
     h("span", { class: "section-head" }, "合計"),
     h("div", { class: "group" },
       cell({}, h("span", { class: "grow" }, "資産"), h("span", { class: "value" }, num(b.assets))),
-      cell({}, h("span", { class: "grow" }, "負債"), h("span", { class: "value" }, num(b.liabilities))),
+      cell({}, h("span", { class: "grow" }, "カードの未払い"), h("span", { class: "value" }, num(sum(b.accounts.filter((a) => a.kind === "card"))))),
+      cell({}, h("span", { class: "grow" }, "借入"), h("span", { class: "value" }, num(sum(b.accounts.filter((a) => a.kind === "loan"))))),
       cell({}, h("b", { class: "grow" }, "純資産"), h("b", {}, num(b.net_worth)))),
     h("span", { class: "section-head" }, "記録と設定"),
     h("div", { class: "group" },
@@ -867,7 +906,7 @@ function toggles(kind, a) {
   const isAsset = !["card", "loan"].includes(kind);
   const defPay = ["cash", "bank", "emoney", "card"].includes(kind);
   return [
-    isAsset ? toggle("すぐ使えるお金に数える", h("input", { type: "checkbox", name: "liquid", checked: a ? !!a.liquid : ["cash", "bank", "emoney"].includes(kind) })) : null,
+    isAsset ? toggle("手元のお金に数える", h("input", { type: "checkbox", name: "liquid", checked: a ? !!a.liquid : ["cash", "bank", "emoney"].includes(kind) })) : null,
     kind !== "loan" ? toggle("支払方法に出す", h("input", { type: "checkbox", name: "pay_method", checked: a ? !!a.pay_method : defPay })) : null,
   ];
 }
@@ -916,7 +955,7 @@ async function accountView(id) {
   return [
     h("div", { class: "navrow" }, h("h1", {}, a.name), h("div", {}, h("a", { class: "text", href: `#/account/${a.id}/edit` }, "編集"))),
     h("div", { class: "card" }, h("div", { class: "row" },
-      h("span", {}, a.type === "liability" ? "未払い" : "残高"), h("span", { class: "title1" }, yen(bal)))),
+      h("span", {}, a.kind === "card" ? "未払い" : a.kind === "loan" ? "借りている額" : "残高"), h("span", { class: "title1" }, yen(bal)))),
     CHECKABLE.includes(a.kind) || a.kind === "investment" ? checkForm(a, bal, history) : null,
     a.kind === "investment" ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "売買は、記録の振替で銀行口座との間を移します。") : null,
     recent.length ? [...Map.groupBy(recent, (e) => e.date)].map(([d, es]) => [
@@ -1002,8 +1041,11 @@ async function openingView() {
   }));
   const form = h("form", { id: "opening-form" },
     group(field("いつ時点の残高か", h("input", { name: "date", type: "date", value: today() }))),
-    group(targets.map((a) => field(`${a.name}${a.type === "liability" ? "の借りている額" : ""}`,
-      moneyInput({ name: `a${a.id}`, value: opening.get(a.id), placeholder: "分からない" })))));
+    SIDES.map(([label, is]) => {
+      const part = targets.filter(is);
+      return part.length ? [h("span", { class: "section-head" }, label === "カード" ? "カードの未払い" : label === "借入" ? "借りている額" : label),
+        group(part.map((a) => field(a.name, moneyInput({ name: `a${a.id}`, value: opening.get(a.id), placeholder: "分からない" }))))] : null;
+    }));
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const balances = [];
@@ -1027,7 +1069,7 @@ async function categoriesView(params) {
   const cats = byType(list, "expense", "income").filter((c) => c.origin !== "system");
   if (params?.get("reorder")) {
     const parts = [["支出", cats.filter((c) => c.type === "expense")], ["収入", cats.filter((c) => c.type === "income")]]
-      .map(([title, cs]) => [title, reorderGroup(cs, (c) => c.name, () => null)]);
+      .map(([title, cs]) => [title, reorderGroup(cs, (c) => c.name)]);
     return [
       h("div", { class: "navrow" }, h("h1", {}, "並べ替え"),
         h("div", {}, h("button", { class: "text", onclick: async () => {
@@ -1138,12 +1180,12 @@ async function recurringForm(id) {
       group(
         field("最初の日", h("input", { name: "first_date", type: "date", required: true, value: r?.first_date ?? today() })),
         kind !== "transfer" ? field(kind === "income" ? "どこから" : "店や内容", h("input", { name: "payee", value: r?.payee })) : null,
-        kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true }, options(payWith, r?.from_account_id, "選んでください"))) : null,
+        kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true }, sideOptions(payWith, r?.from_account_id, "選んでください"))) : null,
         kind === "expense" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, expense, "expense", r?.category_id, r ? null : "選んでください")) : null,
         kind === "income" ? field("受け取り先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(byType(list, "asset"), r?.to_account_id, "選んでください"))) : null,
         kind === "income" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, byType(list, "income"), "income", r?.category_id, r ? null : "選んでください")) : null,
-        kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, options(byType(list, "asset", "liability"), r?.from_account_id, "選んでください"))) : null,
-        kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(byType(list, "asset", "liability"), r?.to_account_id, "選んでください"))) : null,
+        kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, sideOptions(byType(list, "asset", "liability"), r?.from_account_id, "選んでください"))) : null,
+        kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true }, sideOptions(byType(list, "asset", "liability"), r?.to_account_id, "選んでください"))) : null,
         field("メモ", h("input", { name: "memo", value: r?.memo }))),
       h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, every === "year" ? "最初の日の月日に毎年記録します。" : "最初の日と同じ日に毎月記録します。31日なら月末です。"),
       h("details", { class: "more", open: (r && (!r.shift_holiday || r.end_date || !r.active)) || undefined },
