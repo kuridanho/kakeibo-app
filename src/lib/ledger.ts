@@ -181,6 +181,8 @@ export interface SimpleInput {
   /** 収入: 受け取った口座、振替: 移す先 */
   to_account_id?: number;
   category_id?: number;
+  /** 借入への振替(返済)のうち利息と手数料の額。元金は振替、利息は支出にする */
+  interest?: number;
   payee?: string;
   memo?: string;
   advance?: boolean;
@@ -234,7 +236,16 @@ export async function buildSimple(db: D1Database, input: SimpleInput): Promise<{
     paidWith = await need(input.from_account_id, "移す元");
     const to = await need(input.to_account_id, "移す先");
     if (paidWith.id === to.id) throw new LedgerError("移す元と先が同じです");
-    lines = [{ account_id: to.id, amount: input.amount }, { account_id: paidWith.id, amount: -input.amount }];
+    const interest = input.interest ?? 0;
+    if (!Number.isInteger(interest) || interest < 0) throw new LedgerError("利息は円単位で入れてください");
+    if (interest > 0 && to.kind !== "loan") throw new LedgerError("利息を分けられるのは借入の返済だけです");
+    if (interest >= input.amount && interest > 0) throw new LedgerError("利息は返済額より少なくしてください");
+    lines = [{ account_id: to.id, amount: input.amount - interest }, { account_id: paidWith.id, amount: -input.amount }];
+    if (interest > 0) {
+      const row = await db.prepare("SELECT id FROM accounts WHERE seed_key = 'interest'").first<{ id: number }>();
+      if (!row) throw new LedgerError("利息・手数料のカテゴリがありません");
+      lines.splice(1, 0, { account_id: (await resolveAccount(db, row.id)).id, amount: interest });
+    }
   } else {
     throw new LedgerError("種類は支出、収入、振替のどれかです");
   }

@@ -1,6 +1,6 @@
 // ホーム画面に追加して開けるようにするための最小限のService Worker。
 // 画面のファイルだけを控え、APIはいつもネットワークから読む。
-const CACHE = "kakeibo-v2";
+const CACHE = "kakeibo-v6";
 const SHELL = ["/", "/app.js", "/app.css", "/manifest.webmanifest", "/icon.svg", "/icon-180.png"];
 
 self.addEventListener("install", (e) => {
