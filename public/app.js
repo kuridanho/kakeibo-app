@@ -1392,6 +1392,59 @@ const routes = [
   [/^\/recurring\/(\d+)$/, recurringForm, "accounts", true],
 ];
 
+// 選ばれたタブの下のガラスを、指についてすべらせる
+const tabbar = document.querySelector(".tabbar");
+const tabGlider = tabbar?.querySelector(".tab-glider");
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+let gliderX = 0;
+let gliderShown = false;
+let lastTab = null;
+
+function placeTabGlider(animate = true) {
+  if (!tabbar || !tabGlider) return;
+  const active = tabbar.querySelector('a[data-tab][aria-current="page"]');
+  if (!active) return;
+  const bar = tabbar.getBoundingClientRect();
+  const tab = active.getBoundingClientRect();
+  const x = tab.left - bar.left - tabbar.clientLeft;
+  const y = tab.top - bar.top - tabbar.clientTop;
+  // 動いている途中に切り替えられたら、いま見えている位置からつなぐ
+  let from = gliderX;
+  const running = typeof tabGlider.getAnimations === "function" ? tabGlider.getAnimations() : [];
+  if (running.length > 0) {
+    try {
+      const transform = getComputedStyle(tabGlider).transform;
+      from = transform === "none" ? gliderX : new DOMMatrixReadOnly(transform).m41;
+    } catch {
+      from = gliderX;
+    }
+    for (const anim of running) anim.cancel();
+  }
+  tabGlider.style.setProperty("--x", `${x}px`);
+  tabGlider.style.setProperty("--y", `${y}px`);
+  tabGlider.style.setProperty("--w", `${tab.width}px`);
+  tabGlider.style.setProperty("--h", `${tab.height}px`);
+  tabGlider.style.transform = `translate3d(${x}px, 0, 0)`;
+  if (!gliderShown) {
+    gliderShown = true;
+    gliderX = x;
+    tabbar.classList.add("ready");
+    return;
+  }
+  if (!animate || reducedMotion.matches || Math.abs(x - from) < 1 || typeof tabGlider.animate !== "function") {
+    gliderX = x;
+    return;
+  }
+  // 遠くへ動くほど、途中で少し横に伸ばす
+  const stretch = Math.min(0.1, Math.abs(x - from) / 900);
+  tabGlider.animate([
+    { transform: `translate3d(${from}px, 0, 0) scaleX(1)` },
+    { transform: `translate3d(${(from + x) / 2}px, 0, 0) scaleX(${1 + stretch})`, offset: 0.42 },
+    { transform: `translate3d(${x}px, 0, 0) scaleX(1)` },
+  ], { duration: 520, easing: "cubic-bezier(.22, 1.12, .36, 1)" });
+  gliderX = x;
+}
+
 async function route() {
   const [path, query] = (location.hash.slice(1) || "/").split("?");
   const params = new URLSearchParams(query ?? "");
@@ -1402,6 +1455,10 @@ async function route() {
     if (a.dataset.tab === found[2]) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
+  placeTabGlider();
+  // タブが変わったときだけ、中身を軽く浮き上がらせる。同じタブの押し直しでは動かさない
+  const switched = !!found[2] && !!lastTab && found[2] !== lastTab;
+  if (found[2]) lastTab = found[2];
   try {
     const content = await (match[1] ? found[1](match[1], params) : found[1](params));
     view.replaceChildren(...[content].flat(Infinity).filter(Boolean));
@@ -1409,8 +1466,16 @@ async function route() {
     view.replaceChildren(h("h1", {}, "読み込めませんでした"), h("p", { class: "sub" }, e.message),
       h("button", { onclick: route }, "もう一度"));
   }
+  if (switched) {
+    view.classList.remove("tab-fade");
+    void view.offsetWidth;
+    view.classList.add("tab-fade");
+  }
   view.scrollTo(0, 0);
 }
+
+window.addEventListener("resize", () => placeTabGlider(false));
+if (document.fonts) document.fonts.ready.then(() => placeTabGlider(false));
 
 // 保存したら前の画面に戻る。アプリを開いてすぐの画面なら、戻る先がないので決まった画面へ移る
 let navigated = false;
