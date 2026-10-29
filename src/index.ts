@@ -8,6 +8,7 @@ import {
 } from "./lib/ledger";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
+import { type Recurring, recordRecurring, validate } from "./lib/recurring";
 import { StatementParseError } from "./lib/smbc";
 import { commitStatement, previewStatement } from "./lib/statement";
 
@@ -307,6 +308,60 @@ app.put("/api/entries/:id", async (c) => {
 
 app.delete("/api/entries/:id", async (c) => {
   await deleteEntry(c.env.DB, int(c.req.param("id"), "id"));
+  return c.json({ ok: true });
+});
+
+// ---- 繰り返し ----
+
+const RECURRING_COLS = ["kind", "amount", "every", "day", "shift_holiday", "first_date", "end_date",
+  "from_account_id", "to_account_id", "category_id", "payee", "memo", "active"] as const;
+
+function recurringFrom(body: Partial<Recurring>, base?: Recurring): Recurring {
+  const r = { ...(base ?? { active: 1, shift_holiday: 1, every: "month", payee: "", memo: "", end_date: null }), ...body } as Recurring;
+  r.amount = int(r.amount, "金額");
+  r.day = int(r.day ?? Number(String(r.first_date ?? "").slice(8, 10)), "日");
+  if (r.every !== "year") r.every = "month";
+  r.shift_holiday = r.shift_holiday ? 1 : 0;
+  r.active = r.active ? 1 : 0;
+  return r;
+}
+
+app.get("/api/recurring", async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT * FROM recurring ORDER BY active DESC, day, id").all<Recurring>();
+  return c.json(results);
+});
+
+app.post("/api/recurring", async (c) => {
+  const db = c.env.DB;
+  const r = recurringFrom(await c.req.json<Partial<Recurring>>());
+  await validate(db, r);
+  const row = await db
+    .prepare(`INSERT INTO recurring (${RECURRING_COLS.join(", ")}, user_id) VALUES (${RECURRING_COLS.map(() => "?").join(", ")}, ?) RETURNING *`)
+    .bind(...RECURRING_COLS.map((k) => r[k] ?? null), c.get("user"))
+    .first<Recurring>();
+  // 始める日が今日までなら、その回をすぐ記録する
+  await recordRecurring(db);
+  return c.json(row, 201);
+});
+
+app.put("/api/recurring/:id", async (c) => {
+  const db = c.env.DB;
+  const id = int(c.req.param("id"), "id");
+  const old = await db.prepare("SELECT * FROM recurring WHERE id = ?").bind(id).first<Recurring>();
+  if (!old) throw new LedgerError("繰り返しが見つかりません", 404);
+  const r = recurringFrom(await c.req.json<Partial<Recurring>>(), old);
+  await validate(db, r);
+  const row = await db
+    .prepare(`UPDATE recurring SET ${RECURRING_COLS.map((k) => `${k} = ?`).join(", ")} WHERE id = ? RETURNING *`)
+    .bind(...RECURRING_COLS.map((k) => r[k] ?? null), id)
+    .first<Recurring>();
+  await recordRecurring(db);
+  return c.json(row);
+});
+
+/** 繰り返しを消す。これまでに記録した取引は残す */
+app.delete("/api/recurring/:id", async (c) => {
+  await c.env.DB.prepare("DELETE FROM recurring WHERE id = ?").bind(int(c.req.param("id"), "id")).run();
   return c.json({ ok: true });
 });
 

@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import { app } from "../src/index";
 import { daily, recordDuePayments } from "../src/lib/reports";
+import { recordRecurring } from "../src/lib/recurring";
 import type { Env } from "../src/types";
 
 const testEnv = env as unknown as Env;
@@ -295,5 +296,34 @@ describe("集計の年と自動の処理", () => {
     await api("POST", "/api/accounts/order", { ids: [suica, wallet, bank] });
     const after = (await api<any[]>("GET", "/api/accounts")).filter((a) => [suica, wallet, bank].includes(a.id)).map((a) => a.id);
     expect(after).toEqual([suica, wallet, bank]);
+  });
+});
+
+describe("繰り返し", () => {
+  it("決まった日に一度だけ記録し、休みなら翌営業日にずらす", async () => {
+    const salary = await category("給与");
+    await api("POST", "/api/recurring", {
+      kind: "income", amount: 250000, day: 25, first_date: "2026-11-25", to_account_id: bank, category_id: salary, payee: "給与",
+    });
+    expect(await recordRecurring(testEnv.DB, "2026-11-24")).toHaveLength(0);
+    expect(await recordRecurring(testEnv.DB, "2026-11-25")).toHaveLength(1);
+    expect(await recordRecurring(testEnv.DB, "2026-11-26")).toHaveLength(0);
+
+    // 2027/1/10 は日曜、1/11 は成人の日なので 1/12 に記録する
+    const r = await api("POST", "/api/recurring", {
+      kind: "expense", amount: 12000, every: "year", day: 10, first_date: "2027-01-10",
+      from_account_id: bank, category_id: await category("その他"), payee: "保険",
+    });
+    // 前月の回は、休みで今月にずれたときだけ拾うので、12/25 の給与はここでは記録しない
+    expect(await recordRecurring(testEnv.DB, "2027-01-11")).toHaveLength(0);
+    expect(await recordRecurring(testEnv.DB, "2027-01-12")).toHaveLength(1);
+    const list = await api<any[]>("GET", "/api/entries?q=保険");
+    expect(list[0].date).toBe("2027-01-12");
+    await api("DELETE", `/api/recurring/${r.id}`);
+    expect((await api<any[]>("GET", "/api/entries?q=保険"))).toHaveLength(1);
+  });
+
+  it("記録できない中身は登録できない", async () => {
+    await expect(api("POST", "/api/recurring", { kind: "income", amount: 100, day: 1, first_date: "2026-11-01", to_account_id: card })).rejects.toThrow("400");
   });
 });

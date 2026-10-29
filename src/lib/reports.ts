@@ -3,6 +3,7 @@
 import type { Account, Env } from "../types";
 import { addMonths, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
 import { createEntry } from "./ledger";
+import { recordRecurring } from "./recurring";
 
 export async function getSetting(db: D1Database, key: string, fallback: string): Promise<string> {
   const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>();
@@ -236,9 +237,10 @@ export async function backupToR2(env: Env, today = todayJST()) {
   return key;
 }
 
-/** 毎日1回の処理。引き落としの記録、月初の前月のまとめ、控え */
+/** 毎日1回の処理。繰り返しと引き落としの記録、月初の前月のまとめ、控え */
 export async function daily(env: Env, now = new Date()) {
   const today = todayJST(now);
+  await recordRecurring(env.DB, today);
   await recordDuePayments(env.DB, today);
   if (today.endsWith("-01")) {
     const prev = addMonths(monthOf(today), -1);

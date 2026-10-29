@@ -294,7 +294,12 @@ async function entryForm(existing) {
       field("メモ", h("input", { name: "memo", value: init.memo })),
       kind === "expense" ? h("details", { class: "more", open: init.advance || undefined },
         h("summary", {}, "その他"),
-        toggle("立て替えあり", h("input", { type: "checkbox", name: "advance", checked: init.advance }))) : null,
+        h("div", { class: "stack" },
+          toggle("立て替えあり", h("input", { type: "checkbox", name: "advance", checked: init.advance })),
+          !existing ? toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })) : null)) : null,
+      kind !== "expense" && !existing ? h("details", { class: "more" },
+        h("summary", {}, "その他"),
+        toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" }))) : null,
       h("div", { class: "buttons" },
         h("button", { type: "submit" }, existing ? "保存" : "記録する"),
         existing ? h("button", { type: "button", class: "danger", onclick: remove }, "削除") : null));
@@ -354,6 +359,8 @@ async function entryForm(existing) {
       ev.preventDefault();
       const data = { kind, ...formData(form) };
       if (data.category_id === NEW_CATEGORY) delete data.category_id;
+      const repeat = data.repeat;
+      delete data.repeat;
       if (items.length) {
         data.items = items.map(({ name, amount, category_id }) => ({ name, amount, category_id }));
         delete data.category_id;
@@ -365,6 +372,17 @@ async function entryForm(existing) {
           goBack("#/list");
         } else {
           const r = await api("POST", "/api/entries", data);
+          if (repeat) {
+            // 今回の分は記録したので、繰り返しは翌月の同じ日から始める
+            const day = Number(data.date.slice(8, 10));
+            const next = addMonths(data.date.slice(0, 7), 1);
+            const last = new Date(Date.UTC(Number(next.slice(0, 4)), Number(next.slice(5, 7)), 0)).getUTCDate();
+            await api("POST", "/api/recurring", {
+              kind, amount: data.amount, every: "month", day, first_date: `${next}-${String(Math.min(day, last)).padStart(2, "0")}`,
+              from_account_id: data.from_account_id, to_account_id: data.to_account_id,
+              category_id: data.category_id ?? r.category_id, payee: data.payee ?? "", memo: data.memo ?? "",
+            });
+          }
           if (data.from_account_id) store.set("lastPay", data.from_account_id);
           const cat = list.find((a) => a.id === r.category_id);
           toast(cat && !data.category_id && !data.items ? `${cat.name}として記録しました` : "記録しました");
@@ -641,6 +659,7 @@ async function accountsView(params) {
     h("span", { class: "section-head" }, "記録と設定"),
     h("div", { class: "group" },
       cell({ href: "#/import" }, h("span", { class: "grow" }, "カード明細を取り込む")),
+      cell({ href: "#/recurring" }, h("span", { class: "grow" }, "繰り返し")),
       cell({ href: "#/advances" }, h("span", { class: "grow" }, "立て替え")),
       cell({ href: "#/opening" }, h("span", { class: "grow" }, "開始残高")),
       cell({ href: "#/categories" }, h("span", { class: "grow" }, "カテゴリと学んだ対応")),
@@ -897,6 +916,84 @@ async function advancesView() {
   ];
 }
 
+// ---- 繰り返し ----
+
+const everyLabel = (r) => `${r.every === "year" ? `毎年${Number(r.first_date.slice(5, 7))}月` : "毎月"}${r.day >= 31 ? "末日" : `${r.day}日`}`;
+
+async function recurringView() {
+  const [rs, list] = await Promise.all([api("GET", "/api/recurring"), accounts()]);
+  const name = (id) => list.find((a) => a.id === id)?.name ?? "";
+  return [
+    h("div", { class: "navrow" }, h("h1", {}, "繰り返し"),
+      h("div", {}, h("a", { class: "icon", href: "#/recurring/new", "aria-label": "追加" }, icon("M12 5v14M5 12h14")))),
+    rs.length === 0 ? h("p", { class: "empty" }, "家賃や給与、サブスクなどを登録すると、その日に自動で記録します")
+      : h("div", { class: "group" }, rs.map((r) => cell({ href: `#/recurring/${r.id}`, class: "tall" },
+        h("div", { class: "grow" },
+          h("span", {}, r.payee || name(r.category_id) || "振替"),
+          h("span", { class: "detail" }, [everyLabel(r), name(r.kind === "income" ? r.to_account_id : r.from_account_id), r.active ? "" : "止めています"].filter(Boolean).join("　"))),
+        h("span", { class: `amount${r.active ? "" : " muted"}` }, `${r.kind === "income" ? "+" : ""}${yen(r.amount)}`)))),
+  ];
+}
+
+async function recurringForm(id) {
+  const list = await accounts();
+  const r = id ? (await api("GET", "/api/recurring")).find((x) => x.id === Number(id)) : null;
+  if (id && !r) throw new Error("見つかりません");
+  const payWith = live(list).filter((a) => (a.type === "asset" || a.type === "liability") && (a.pay_method || a.id === r?.from_account_id));
+  const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown");
+  let kind = r?.kind ?? "expense";
+  let every = r?.every ?? "month";
+  const box = h("div", { class: "stack" });
+  const draw = () => {
+    const seg = (pairs, cur, set, label) => h("div", { class: "seg", role: "group", "aria-label": label },
+      pairs.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(cur === k), onclick: () => { set(k); draw(); } }, l)));
+    const form = h("form", {},
+      field("金額", moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: r?.amount })),
+      seg([["month", "毎月"], ["year", "毎年"]], every, (v) => { every = v; }, "繰り返し"),
+      field(every === "year" ? "最初の日 (この月日に毎年)" : "最初の日 (この日に毎月、31は月末)", h("input", { name: "first_date", type: "date", required: true, value: r?.first_date ?? today() })),
+      kind !== "transfer" ? field(kind === "income" ? "どこから" : "店や内容", h("input", { name: "payee", value: r?.payee })) : null,
+      kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true }, options(payWith, r?.from_account_id, "選んでください"))) : null,
+      kind === "expense" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, expense, "expense", r?.category_id, r ? null : "選んでください")) : null,
+      kind === "income" ? field("受け取り先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(byType(list, "asset"), r?.to_account_id, "選んでください"))) : null,
+      kind === "income" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, byType(list, "income"), "income", r?.category_id, r ? null : "選んでください")) : null,
+      kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, options(byType(list, "asset", "liability"), r?.from_account_id, "選んでください"))) : null,
+      kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(byType(list, "asset", "liability"), r?.to_account_id, "選んでください"))) : null,
+      field("メモ", h("input", { name: "memo", value: r?.memo })),
+      h("details", { class: "more", open: (r && (!r.shift_holiday || r.end_date || !r.active)) || undefined },
+        h("summary", {}, "その他"),
+        h("div", { class: "stack" },
+          toggle("休みなら翌営業日にずらす", h("input", { type: "checkbox", name: "shift_holiday", checked: r ? !!r.shift_holiday : true })),
+          field("終わる日 (空欄なら続ける)", h("input", { name: "end_date", type: "date", value: r?.end_date })),
+          r ? toggle("止める", h("input", { type: "checkbox", name: "paused", checked: !r.active })) : null)),
+      h("div", { class: "buttons" }, h("button", { type: "submit" }, r ? "保存" : "追加")),
+      r ? h("button", { type: "button", class: "danger", onclick: async () => {
+        if (!confirm("この繰り返しを削除します。これまでに記録した取引は残ります。")) return;
+        await api("DELETE", `/api/recurring/${r.id}`);
+        toast("削除しました");
+        goBack("#/recurring");
+      } }, "削除") : null);
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const d = formData(form);
+      if (d.category_id === NEW_CATEGORY) delete d.category_id;
+      const body = { kind, every, ...d, day: Number(d.first_date.slice(8, 10)), shift_holiday: d.shift_holiday ? 1 : 0,
+        end_date: d.end_date ?? null, active: d.paused ? 0 : 1 };
+      delete body.paused;
+      try {
+        if (r) await api("PUT", `/api/recurring/${r.id}`, body);
+        else await api("POST", "/api/recurring", body);
+        toast(r ? "保存しました" : "追加しました");
+        goBack("#/recurring");
+      } catch (e) { toast(e.message); }
+    });
+    box.replaceChildren(
+      seg([["expense", "支出"], ["income", "収入"], ["transfer", "振替"]], kind, (v) => { kind = v; }, "種類"),
+      form);
+  };
+  draw();
+  return box;
+}
+
 // ---- 明細の取り込み ----
 
 async function importView() {
@@ -989,6 +1086,9 @@ const routes = [
   [/^\/categories$/, categoriesView, "accounts"],
   [/^\/advances$/, advancesView, "accounts"],
   [/^\/import$/, importView, "accounts"],
+  [/^\/recurring$/, recurringView, "accounts"],
+  [/^\/recurring\/new$/, () => recurringForm(null), "accounts"],
+  [/^\/recurring\/(\d+)$/, recurringForm, "accounts"],
 ];
 
 async function route() {
