@@ -60,73 +60,83 @@ async function recordedItems(db: D1Database, from: string, to: string): Promise<
     }));
 }
 
+/** 候補の auto_key のうち、すでに記録された取引があるもの。1回の問い合わせで調べる */
+async function recordedKeys(db: D1Database, keys: string[]): Promise<Set<string>> {
+  if (keys.length === 0) return new Set();
+  const { results } = await db
+    .prepare(`SELECT auto_key FROM entries WHERE auto_key IN (${keys.map(() => "?").join(",")})`)
+    .bind(...keys)
+    .all<{ auto_key: string }>();
+  return new Set(results.map((r) => r.auto_key));
+}
+
 /**
  * その月にまだ記録されていない、繰り返しと引き落とし。
  * 祝日で翌月にずれる回があるので、前月の回も見て、実際の日付がその月のものだけを拾う。
+ * 問い合わせを1件ずつ待つと遅いので、候補を先に洗い出してまとめて調べる。
  */
 async function pendingItems(db: D1Database, month: string, liquidIds: Set<number>, today: string,
   cardOwed: Map<number, number>): Promise<BudgetItem[]> {
-  const items: BudgetItem[] = [];
+  // まだ記録されていないカードの利用と引き落としを、カードごとの未払いに足し引きする
   const owe = (id: number, amount: number) => { if (cardOwed.has(id)) cardOwed.set(id, cardOwed.get(id)! + amount); };
   const months = [addMonths(month, -1), month];
+  const [{ results: recurring }, { results: payers }] = await Promise.all([
+    db.prepare("SELECT * FROM recurring WHERE active = 1").all<Recurring>(),
+    db.prepare(`SELECT * FROM accounts WHERE kind IN ('card', 'loan') AND archived = 0
+      AND payment_day IS NOT NULL AND payment_account_id IS NOT NULL`).all<Account>(),
+  ]);
 
-  const { results: recurring } = await db.prepare("SELECT * FROM recurring WHERE active = 1").all<Recurring>();
-  for (const r of recurring) {
-    for (const m of months) {
-      const date = occurrence(r, m);
-      if (!date || monthOf(date) !== month) continue;
-      if (date < r.first_date || (r.end_date && date > r.end_date)) continue;
-      const autoKey = `recurring:${r.id}:${m}`;
-      if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(autoKey).first()) continue;
+  const recurringDue = recurring.flatMap((r) => months.flatMap((m) => {
+    const date = occurrence(r, m);
+    if (!date || monthOf(date) !== month) return [];
+    if (date < r.first_date || (r.end_date && date > r.end_date)) return [];
+    return [{ r, date, key: `recurring:${r.id}:${m}` }];
+  }));
+  const paymentDue = payers.flatMap((a) => months.flatMap((billMonth) => {
+    const due = nextBankDay(dayInMonth(billMonth, a.payment_day!));
+    return monthOf(due) === month ? [{ a, billMonth, due, key: `payment:${a.id}:${billMonth}` }] : [];
+  }));
+  const done = await recordedKeys(db, [...recurringDue, ...paymentDue].map((x) => x.key));
 
-      let cashDelta = 0;
-      try {
-        const { lines } = await buildSimple(db, toInput(r, date));
-        cashDelta = lines.filter((l) => liquidIds.has(l.account_id)).reduce((s, l) => s + l.amount, 0);
-        // カードの行は負債を増やす向きが負なので、符号を返して未払いに足す
-        for (const l of lines) owe(l.account_id, -l.amount);
-      } catch {
-        // 口座を消したなどで記録できない回は、予定にも入れない
-        continue;
-      }
-      const from = r.from_account_id ? await resolveAccount(db, r.from_account_id) : null;
-      const kind = r.kind === "expense" && from?.kind === "card" ? "card" : r.kind;
-      if (cashDelta === 0 && kind !== "card") continue;
-      items.push({ date, label: r.payee || "繰り返し", amount: Math.abs(r.amount), cash_delta: cashDelta, kind });
+  const fromRecurring = Promise.all(recurringDue.filter((x) => !done.has(x.key)).map(async ({ r, date }): Promise<BudgetItem | null> => {
+    let cashDelta = 0;
+    let from: Account | null;
+    try {
+      const [{ lines }, account] = await Promise.all([
+        buildSimple(db, toInput(r, date)),
+        r.from_account_id ? resolveAccount(db, r.from_account_id) : null,
+      ]);
+      cashDelta = lines.filter((l) => liquidIds.has(l.account_id)).reduce((s, l) => s + l.amount, 0);
+      // カードの行は負債が増える向きが負なので、符号を返して未払いに足す
+      for (const l of lines) owe(l.account_id, -l.amount);
+      from = account;
+    } catch {
+      // 口座を消したなどで記録できない回は、予定にも入れない
+      return null;
     }
-  }
+    const kind = r.kind === "expense" && from?.kind === "card" ? "card" : r.kind;
+    if (cashDelta === 0 && kind !== "card") return null;
+    return { date, label: r.payee || "繰り返し", amount: Math.abs(r.amount), cash_delta: cashDelta, kind };
+  }));
 
-  const { results: payers } = await db
-    .prepare(`SELECT * FROM accounts WHERE kind IN ('card', 'loan') AND archived = 0
-      AND payment_day IS NOT NULL AND payment_account_id IS NOT NULL`)
-    .all<Account>();
-  for (const a of payers) {
-    for (const billMonth of months) {
-      const due = nextBankDay(dayInMonth(billMonth, a.payment_day!));
-      if (monthOf(due) !== month) continue;
-      const autoKey = `payment:${a.id}:${billMonth}`;
-      if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(autoKey).first()) continue;
+  const fromPayments = Promise.all(paymentDue.filter((x) => !done.has(x.key)).map(async ({ a, billMonth, due }): Promise<BudgetItem | null> => {
+    const amount = a.kind === "card"
+      ? await cardDue(db, a.id, billMonth)
+      : Math.min(a.payment_amount ?? 0, Math.max(await balanceOf(db, a, today), 0));
+    if (amount <= 0) return null;
+    owe(a.id, -amount);
+    const cashDelta = liquidIds.has(a.payment_account_id!) ? -amount : 0;
+    if (cashDelta === 0) return null;
+    return {
+      date: due,
+      label: `${a.name} ${a.kind === "card" ? "引き落とし" : "返済"}`,
+      amount,
+      cash_delta: cashDelta,
+      kind: "payment",
+    };
+  }));
 
-      let amount: number;
-      if (a.kind === "card") {
-        amount = await cardDue(db, a.id, billMonth);
-      } else {
-        amount = Math.min(a.payment_amount ?? 0, Math.max(await balanceOf(db, a, today), 0));
-      }
-      if (amount <= 0) continue;
-      owe(a.id, -amount);
-      const cashDelta = liquidIds.has(a.payment_account_id!) ? -amount : 0;
-      if (cashDelta === 0) continue;
-      items.push({
-        date: due,
-        label: `${a.name} ${a.kind === "card" ? "引き落とし" : "返済"}`,
-        amount,
-        cash_delta: cashDelta,
-        kind: "payment",
-      });
-    }
-  }
-
+  const items = [...await fromRecurring, ...await fromPayments].filter((x): x is BudgetItem => x !== null);
   return items.sort((x, y) => x.date.localeCompare(y.date));
 }
 
@@ -137,24 +147,27 @@ export async function nextMonthBudget(db: D1Database, today = todayJST()): Promi
   const liquid = await liquidAccounts(db);
   const liquidIds = new Set(liquid.map((a) => a.id));
 
-  // カードごとの来月末の未払い。記録済みの分から始め、まだ記録されていない利用と引き落としを足し引きする
+  // カードごとの来月末の未払い。記録済みの残高から始める
   const { results: cards } = await db.prepare("SELECT * FROM accounts WHERE kind = 'card' AND archived = 0").all<Account>();
-  const cardOwed = new Map<number, number>();
-  for (const c of cards) cardOwed.set(c.id, await balanceOf(db, c, `${month}-31`));
+  const owed = await Promise.all(cards.map((c) => balanceOf(db, c, `${month}-31`)));
+  const cardOwed = new Map(cards.map((c, i) => [c.id, owed[i]]));
 
-  const pendingCurrent = await pendingItems(db, current, liquidIds, today, cardOwed);
-  const pendingNext = await pendingItems(db, month, liquidIds, today, cardOwed);
-  const cardUnpaid = [...cardOwed.values()].reduce((s, v) => s + Math.max(v, 0), 0);
-  const recordedNext = await recordedItems(db, `${month}-01`, `${month}-31`);
+  const [pendingCurrent, pendingNext, recordedNext, balances, bufferSetting] = await Promise.all([
+    pendingItems(db, current, liquidIds, today, cardOwed),
+    pendingItems(db, month, liquidIds, today, cardOwed),
+    recordedItems(db, `${month}-01`, `${month}-31`),
+    Promise.all(liquid.map((a) => balanceOf(db, a, `${month}-31`))),
+    getSetting(db, "budget_buffer", "0"),
+  ]);
 
   // 記録済みは残高に入っているので、まだ記録されていない分だけ足す
-  let projected = 0;
-  for (const a of liquid) projected += await balanceOf(db, a, `${month}-31`);
+  let projected = balances.reduce((s, b) => s + b, 0);
   for (const item of [...pendingCurrent, ...pendingNext]) projected += item.cash_delta;
 
   const nextItems = [...recordedNext, ...pendingNext].sort((x, y) => x.date.localeCompare(y.date));
   const change = nextItems.reduce((s, item) => s + item.cash_delta, 0);
-  const buffer = Number(await getSetting(db, "budget_buffer", "0")) || 0;
+  const buffer = Number(bufferSetting) || 0;
+  const cardUnpaid = [...cardOwed.values()].reduce((s, v) => s + Math.max(v, 0), 0);
 
   return {
     month,
