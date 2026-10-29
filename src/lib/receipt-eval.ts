@@ -13,9 +13,12 @@ export const RECEIPT_MODELS = [
 
 export const RECEIPT_PROMPT = [
   "これは日本のレシートの写真です。書かれている内容を読み取り、次の形のJSONだけを返してください。",
-  '{"store":"店名","date":"YYYY-MM-DD","items":[{"name":"品名","amount":税込の金額の整数,"quantity":数量}],',
-  '"total":合計の整数,"payment":"現金やカードなど支払方法","card_last4":"カードの下4桁があれば"}',
-  "読めない項目は null にしてください。値引きは金額をマイナスにして品目に入れてください。",
+  '{"store":"店名","date":"YYYY-MM-DD","items":[{"name":"品名","amount":印字されている金額の整数,"quantity":数量}],',
+  '"tax_mode":"外税なら outside、内税なら inside","tax":消費税の額の整数,"total":支払った合計の整数,',
+  '"payment":"現金やカードなど支払方法","card_last4":"カードの下4桁があれば"}',
+  "items には買った商品と、値引きや割引の行だけを入れてください。値引きは金額をマイナスにします。",
+  "小計、外税品計、内税対象、消費税、合計、総合計、お預り、お釣り、クレジット、ポイントの行は items に入れないでください。",
+  "金額は印字のまま写し、自分で税を足したり引いたりしないでください。読めない項目は null にしてください。",
 ].join("\n");
 
 export interface ModelResult {
@@ -121,5 +124,35 @@ export async function readReceipt(env: Env, image: Uint8Array, mime: string): Pr
     amount: toInt(i?.amount) ?? NaN,
     quantity: toInt(i?.quantity),
   })) : [];
-  return { store: typeof p.store === "string" ? p.store : null, date, total: toInt(p.total), items };
+  return normalizeReceipt({ store: typeof p.store === "string" ? p.store : null, date, total: toInt(p.total), items }, toInt(p.tax));
+}
+
+// 品目に紛れ込みやすい、合計や税、支払いの行
+const NOT_ITEM = /(小計|合計|品計|外税|内税|消費税|税率|対象|お預|預り|釣|クレジット|現金|電子マネー|ポイント|支払)/;
+
+/**
+ * 読み取った品目を、合計と合う税込の金額にそろえる。
+ * 合計や税の行を除き、ほかの品目を打ち消すだけのマイナスの行も除く。
+ * 外税で品目の合計が足りないときは、消費税を品目の金額に比べて割り振る。
+ */
+export function normalizeReceipt(r: Receipt, tax: number | null): Receipt {
+  let items = r.items.filter((i) => i.name && Number.isInteger(i.amount) && i.amount !== 0 && !NOT_ITEM.test(i.name));
+  const positive = items.filter((i) => i.amount > 0).reduce((s, i) => s + i.amount, 0);
+  items = items.filter((i) => !(i.amount < 0 && -i.amount >= positive));
+  const total = r.total ?? items.reduce((s, i) => s + i.amount, 0);
+  const sum = items.reduce((s, i) => s + i.amount, 0);
+  const gap = total - sum;
+  // 外税の消費税や端数の切り捨てと見てよい差だけを割り振る。大きくずれるときは画面で直してもらう
+  const looksLikeTax = gap > 0 && sum > 0 && (gap === tax || gap <= Math.ceil(sum * 0.1) + items.length);
+  if (looksLikeTax) {
+    const base = items.map((i) => Math.max(i.amount, 0));
+    const baseSum = base.reduce((s, v) => s + v, 0);
+    const shares = base.map((v) => Math.floor((gap * v) / baseSum));
+    let left = gap - shares.reduce((s, v) => s + v, 0);
+    // 余りは端数の大きい品目から1円ずつ足す
+    const order = base.map((v, i) => [((gap * v) / baseSum) % 1, i] as const).sort((a, b) => b[0] - a[0]);
+    for (const [, i] of order) { if (left-- <= 0) break; shares[i]++; }
+    items = items.map((it, i) => ({ ...it, amount: it.amount + shares[i] }));
+  }
+  return { ...r, total, items };
 }

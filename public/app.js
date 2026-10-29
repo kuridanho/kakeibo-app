@@ -4,6 +4,11 @@ const view = document.getElementById("view");
 
 // ---- 小さな道具 ----
 
+/** 中身を入れ替える。条件で出さない null や false は飛ばす */
+function fill(el, ...children) {
+  el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
+}
+
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs ?? {})) {
@@ -307,10 +312,10 @@ async function entryForm(existing) {
     const showItems = () => {
       form.elements.category_id.closest("label").hidden = items.length > 0;
       itemsBox.hidden = items.length === 0;
-      if (items.length === 0) { itemsBox.replaceChildren(); return; }
+      if (items.length === 0) { fill(itemsBox); return; }
       const sum = items.reduce((s, i) => s + i.amount, 0);
       const total = parseNum(form.elements.amount.value || 0);
-      itemsBox.replaceChildren(
+      fill(itemsBox,
         h("span", { class: "section-head", style: "padding:6px 4px 0" }, "品目"),
         h("div", { class: "group" }, items.map((it, n) => h("div", { class: "item" },
           it.unclear ? h("span", { class: "question" }, `${it.name} これは何ですか？`) : null,
@@ -319,11 +324,15 @@ async function entryForm(existing) {
             moneyInput({ class: "item-amount", value: it.amount, "aria-label": `${it.name}の金額`, onchange: (ev) => {
               it.amount = parseNum(ev.target.value) || 0;
               showItems();
-            } })),
+            } }),
+            h("button", { type: "button", class: "icon", "aria-label": `${it.name}を消す`, onclick: () => {
+              items.splice(n, 1);
+              showItems();
+            } }, icon("M6 6l12 12M18 6 6 18"))),
           categorySelect({ "aria-label": `${it.name}のカテゴリ`, required: true, onchange: (ev) => {
             if (ev.target.value && ev.target.value !== NEW_CATEGORY) { it.category_id = Number(ev.target.value); it.unclear = false; }
           } }, expense, "expense", it.category_id, it.category_id ? null : "選んでください")))),
-        sum !== total ? h("p", { class: "footnote neg", style: "margin:0;padding:0 4px" }, `品目の合計 ${yen(sum)} が金額と ${yen(total - sum)} 違います`) : null);
+        ...(sum !== total ? [h("p", { class: "footnote neg", style: "margin:0;padding:0 4px" }, `品目の合計 ${yen(sum)} が金額と ${yen(total - sum)} 違います`)] : []));
     };
 
     camera.addEventListener("change", async () => {
@@ -342,7 +351,7 @@ async function entryForm(existing) {
         // 値引きや端数で合計と合わない分は、いちばん大きい品目のカテゴリに寄せた行にする
         if (items.length && sum !== total) {
           const big = items.reduce((a, b) => (b.amount > a.amount ? b : a));
-          items.push({ name: "値引きと端数", amount: total - sum, category_id: big.category_id, unclear: false });
+          items.push({ name: "合わない分", amount: total - sum, category_id: big.category_id, unclear: false });
         }
         form.elements.amount.value = total ? fmtNum(total) : "";
         if (r.date) form.elements.date.value = r.date;
@@ -390,7 +399,7 @@ async function entryForm(existing) {
         }
       } catch (e) { toast(e.message); }
     });
-    box.replaceChildren(...[seg, camera, isStatement ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "明細から取り込んだ取引なので、金額、日付、支払方法は明細のままです。") : null, form].filter(Boolean));
+    fill(box, ...[seg, camera, isStatement ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "明細から取り込んだ取引なので、金額、日付、支払方法は明細のままです。") : null, form].filter(Boolean));
   };
   async function remove() {
     if (!confirm("この取引を削除しますか？")) return;
@@ -687,7 +696,7 @@ const CHECKABLE = ["cash", "bank", "emoney"];
 function reorderGroup(items, label, onDone) {
   const order = [...items];
   const group = h("div", { class: "group" });
-  const draw = () => group.replaceChildren(...order.map((a, i) => cell({},
+  const draw = () => fill(group, ...order.map((a, i) => cell({},
     h("span", { class: "grow" }, label(a)),
     h("button", { type: "button", class: "icon", "aria-label": `${a.name}を上へ`, disabled: i === 0, onclick: () => move(i, -1) }, icon("M6 15l6-6 6 6")),
     h("button", { type: "button", class: "icon", "aria-label": `${a.name}を下へ`, disabled: i === order.length - 1, onclick: () => move(i, 1) }, icon("M6 9l6 6 6-6")))));
@@ -791,7 +800,7 @@ async function newAccountView() {
   let kind = "cash";
   const extra = h("div", { class: "stack" });
   const kindSel = h("select", { name: "kind" }, Object.entries(KIND_LABEL).map(([k, v]) => h("option", { value: k }, v)));
-  const draw = () => extra.replaceChildren(...[kindFields(kind, null, banks), toggles(kind, null)].flat().filter(Boolean));
+  const draw = () => fill(extra, ...[kindFields(kind, null, banks), toggles(kind, null)].flat().filter(Boolean));
   kindSel.addEventListener("change", () => { kind = kindSel.value; draw(); });
   draw();
   const form = h("form", {},
@@ -852,7 +861,7 @@ function checkForm(a, bal, history) {
       if (await save(d, true)) { toast(diff === 0 ? "差はありませんでした" : "評価額を更新しました"); goBack("#/accounts"); }
       return;
     }
-    result.replaceChildren(h("div", { class: "card" },
+    fill(result, h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "差"), h("b", {}, yen(diff))),
       h("div", { class: "buttons" },
         h("button", { onclick: async () => { if (await save(d, true)) { toast("差を使途不明にしました"); goBack("#/accounts"); } } }, "差を使途不明にする"),
@@ -1073,7 +1082,7 @@ async function recurringForm(id) {
         goBack("#/recurring");
       } catch (e) { toast(e.message); }
     });
-    box.replaceChildren(
+    fill(box,
       seg([["expense", "支出"], ["income", "収入"], ["transfer", "振替"]], kind, (v) => { kind = v; }, "種類"),
       form);
   };
@@ -1136,7 +1145,7 @@ async function importView() {
           choices[r.index] = { ...choices[r.index], category_id: Number(ev.target.value) };
         } }, options(expense, r.category_id)) : null,
         status === "new" && r.charge_account_id ? h("span", { class: "sub" }, `${list.find((a) => a.id === r.charge_account_id)?.name}へのチャージ(振替)`) : null))));
-    out.replaceChildren(
+    fill(out,
       h("div", { class: "card" },
         h("div", { class: "row" }, h("span", {}, "明細の合計"), h("span", {}, p.declared_total === null ? "なし" : yen(p.declared_total))),
         h("div", { class: "row" }, h("span", {}, "読み取った行の合計"), h("span", {}, yen(p.payment_total))),

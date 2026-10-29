@@ -268,3 +268,4 @@ details.more > summary + * { margin-top: 4px; }
 .cal-plan { display: flex; justify-content: space-between; padding: 0 16px 12px; font-size: 13px; color: var(--secondary); }
 .day-head { display: flex; justify-content: space-between; padding-right: 20px; scroll-margin-top: 12px; }
 .cal > :nth-child(7n) { border-right: none; }
+.item .row button.icon { width: 36px; min-height: 36px; margin-right: -6px; color: var(--secondary); }

@@ -42,3 +42,26 @@ describe("dates", () => {
     expect(nextBankDay("2026-12-31")).toBe("2027-01-04");
   });
 });
+
+import { normalizeReceipt } from "../src/lib/receipt-eval";
+
+describe("レシートの品目", () => {
+  it("外税を品目に割り振り、合計の行と打ち消すだけの行を除く", () => {
+    const r = normalizeReceipt({
+      store: "ビッグボーイ", date: "2026-10-28", total: 1309,
+      items: [
+        { name: "551 L ミックスグリル", amount: 990, quantity: 1 },
+        { name: "280 L レギュラーセット", amount: 200, quantity: 1 },
+        { name: "外食商品券", amount: -1190, quantity: null },
+        { name: "外税品計", amount: 1190, quantity: null },
+        { name: "消費税", amount: 119, quantity: null },
+      ],
+    }, 119);
+    expect(r.items.map((i) => [i.name, i.amount])).toEqual([["551 L ミックスグリル", 1089], ["280 L レギュラーセット", 220]]);
+  });
+
+  it("内税で合計と合うときはそのまま", () => {
+    const r = normalizeReceipt({ store: null, date: null, total: 500, items: [{ name: "牛乳", amount: 300, quantity: 1 }, { name: "卵", amount: 250, quantity: 1 }, { name: "値引", amount: -50, quantity: null }] }, null);
+    expect(r.items.map((i) => i.amount)).toEqual([300, 250, -50]);
+  });
+});
