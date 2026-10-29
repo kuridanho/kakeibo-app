@@ -7,6 +7,7 @@ import {
   resolveAccount, type SimpleInput, updateEntry,
 } from "./lib/ledger";
 import { calendarMonth } from "./lib/calendar";
+import { nextMonthBudget } from "./lib/budget";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
 import { type Recurring, recordRecurring, validate } from "./lib/recurring";
@@ -498,6 +499,8 @@ app.get("/api/calendar", async (c) => {
 
 app.get("/api/balances", async (c) => c.json(await balances(c.env.DB)));
 
+app.get("/api/budget", async (c) => c.json(await nextMonthBudget(c.env.DB)));
+
 app.get("/api/summary/month", async (c) => {
   const month = c.req.query("month") ?? monthOf(todayJST());
   return c.json(await monthSummary(c.env.DB, month));
@@ -524,6 +527,7 @@ app.put("/api/settings", async (c) => {
   const body = await c.req.json<Record<string, string | number>>();
   const allowed: Record<string, (v: string) => boolean> = {
     year_start_month: (v) => v === "1" || v === "4",
+    budget_buffer: (v) => /^\d{1,9}$/.test(v),
   };
   const stmts = [];
   for (const [k, v] of Object.entries(body)) {

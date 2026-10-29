@@ -26,7 +26,7 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
-const yen = (n) => `${n < 0 ? "−" : ""}¥${Math.abs(n).toLocaleString("ja-JP")}`;
+const yen = (n) => `${n < 0 ? "−" : ""}${Math.abs(n).toLocaleString("ja-JP")}円`;
 const num = (n) => `${n < 0 ? "−" : ""}${Math.abs(n).toLocaleString("ja-JP")}`;
 const today = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
 const thisMonth = () => today().slice(0, 7);
@@ -38,7 +38,7 @@ function addMonths(month, n) {
 const monthLabel = (m) => `${Number(m.slice(0, 4))}年${Number(m.slice(5, 7))}月`;
 // 画面の題の月。今年なら月だけ、ほかの年なら年も付ける。一覧と集計で揃える
 const monthTitle = (m) => (m.slice(0, 4) === thisMonth().slice(0, 4) ? `${Number(m.slice(5, 7))}月` : monthLabel(m));
-// 行の金額の表記。¥ は大きな額にだけ付け、行では付けない。収入と増えた差だけ + を付ける
+// 行の金額の表記。円は大きな額にだけ付け、行では付けない。収入と増えた差だけ + を付ける
 const plus = (n) => `${n > 0 ? "+" : ""}${num(n)}`;
 // 出ていく額。支出はすべて − を付けて出す
 const minus = (n) => plus(-n);
@@ -115,10 +115,10 @@ function toggle(label, input) {
 
 const group = (...rows) => h("div", { class: "group" }, ...rows);
 
-/** 金額の大きな入力欄。¥ を前に置き、右に添えるもの(レシートのカメラなど)を受ける */
+/** 金額の大きな入力欄。数字のあとに「円」を置き、右に添えるもの(レシートのカメラなど)を受ける */
 function amountField(input, extra) {
   input.placeholder ||= "0";
-  return h("div", { class: "card amount-card" }, h("span", { class: "yen", "aria-hidden": "true" }, "¥"), input, extra);
+  return h("div", { class: "card amount-card" }, input, h("span", { class: "yen", "aria-hidden": "true" }, "円"), extra);
 }
 
 /** 記録や設定のシートの上の帯。左で取り消し、右で保存する。中央は題かセグメント */
@@ -183,11 +183,12 @@ function monthNav(month, go, label = monthTitle(month)) {
 // ---- ホーム ----
 
 async function home() {
-  const [b, s, advances, provisional] = await Promise.all([
+  const [b, s, advances, provisional, budget] = await Promise.all([
     api("GET", "/api/balances"),
     api("GET", `/api/summary/month?month=${thisMonth()}`),
     api("GET", "/api/advances"),
     api("GET", "/api/entries?provisional=1&limit=200"),
+    api("GET", "/api/budget"),
   ]);
   const entries = await api("GET", `/api/entries?month=${thisMonth()}`);
   const unsure = entries.filter((e) => e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source));
@@ -232,6 +233,12 @@ async function home() {
         legend("--tint-2", "カードの未払い", -b.card_unpaid),
         b.loan_due ? legend("stripe", "次の返済", -b.loan_due) : null,
         b.non_liquid_total ? h("div", { class: "cell sub" }, h("span", { class: "grow" }, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null)),
+    h("a", { class: "card", href: "#/budget", style: "text-decoration:none;color:inherit" },
+      h("div", { class: "row" },
+        h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月使える額（概算）"),
+        h("span", { class: "footnote" }, "内訳")),
+      h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yen(budget.budget)),
+      h("span", { class: "footnote" }, `${monthLabel(budget.month)}。来月末の手元から余裕を引いた額`)),
     h("span", { class: "section-head" }, `${Number(thisMonth().slice(5))}月の支出`),
     h("a", { class: "card", href: "#/summary", style: "text-decoration:none;color:inherit" },
       h("div", { class: "row" },
@@ -247,6 +254,54 @@ async function home() {
       h("div", { class: "group" }, todos.map(([href, label, n]) =>
         cell({ href }, h("span", { class: "grow" }, label), h("span", { class: "value" }, n)))),
     ] : null,
+  ];
+}
+
+// ---- 来月の予算 ----
+
+async function budgetView() {
+  const b = await api("GET", "/api/budget");
+  const list = (items, sign) => items.length === 0
+    ? h("p", { class: "empty" }, "ありません")
+    : h("div", { class: "group" }, items.map((x) => cell({},
+      h("span", { class: "grow" }, h("span", {}, x.label), h("span", { class: "detail" }, dayLabel(x.date))),
+      h("span", { class: `value${sign === "+" ? " inc" : ""}` }, `${sign}${yen(x.amount)}`))));
+  const form = h("form", { id: "budget-form" },
+    group(field("残しておく額", moneyInput({ name: "budget_buffer", "data-num": "", value: b.buffer }))),
+    h("button", { type: "submit" }, "保存"));
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const d = formData(form);
+    try {
+      await api("PUT", "/api/settings", { budget_buffer: d.budget_buffer ?? 0 });
+      toast("保存しました");
+      route();
+    } catch (e) { toast(e.message); }
+  });
+
+  return [
+    h("h1", {}, "来月の予算"),
+    h("div", { class: "card" },
+      h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月使える額（概算）"),
+      h("span", { class: `hero${b.budget < 0 ? " neg" : ""}` }, yen(b.budget)),
+      h("div", { class: "group", style: "padding-left:0;border-radius:0" },
+        h("div", { class: "cell" }, h("span", { class: "grow" }, "来月初めの手元"), h("span", { class: "amount" }, yen(b.opening_liquid))),
+        h("div", { class: "cell" }, h("span", { class: "grow" }, "来月末の手元（見込み）"), h("span", { class: "amount" }, yen(b.projected_liquid))),
+        h("div", { class: "cell" }, h("span", { class: "grow" }, "残しておく額"), h("span", { class: "amount" }, yen(b.buffer))))),
+    h("span", { class: "section-head" }, "入る予定"),
+    list(b.income, "+"),
+    h("span", { class: "section-head" }, "出る予定"),
+    list(b.expenses, "−"),
+    b.card_fixed.length ? [
+      h("span", { class: "section-head" }, "カードで払う固定費"),
+      h("div", { class: "group" }, b.card_fixed.map((x) => cell({},
+        h("span", { class: "grow" }, h("span", {}, x.label), h("span", { class: "detail" }, dayLabel(x.date))),
+        h("span", { class: "value" }, yen(x.amount))))),
+      h("p", { class: "footnote", style: "padding:0 4px" }, "カードの利用は来月の手元からは引いていません。この分も「使える額」に含まれています。来月の引き落としは出る予定に入っています。"),
+    ] : null,
+    h("span", { class: "section-head" }, "設定"),
+    form,
+    h("p", { class: "footnote", style: "padding:0 4px" }, "来月末の手元資金から、この額を残した分が「使える額」です。"),
   ];
 }
 
@@ -388,7 +443,7 @@ async function entryForm(existing) {
           categorySelect({ "aria-label": `${it.name}のカテゴリ`, required: true, onchange: (ev) => {
             if (ev.target.value && ev.target.value !== NEW_CATEGORY) { it.category_id = Number(ev.target.value); it.unclear = false; }
           } }, expense, "expense", it.category_id, it.category_id ? null : "選んでください")))),
-        ...(sum !== total ? [h("p", { class: "footnote neg", style: "margin:0;padding:0 4px" }, `品目の合計 ${yen(sum)} が金額と ${yen(total - sum)} 違います`)] : []));
+        ...(sum !== total ? [h("p", { class: "footnote neg", style: "margin:0;padding:0 4px" }, `品目の合計 ${yen(sum)} が、金額と ${yen(total - sum)} 違います`)] : []));
     };
 
     camera.addEventListener("change", async () => {
@@ -1375,6 +1430,7 @@ async function importView() {
 // 4つ目が true の画面は下から上がるシートとして出し、タブバーと記録ボタンを隠す
 const routes = [
   [/^\/$/, home, "home"],
+  [/^\/budget$/, budgetView, "home"],
   [/^\/new$/, newEntry, null, true],
   [/^\/list$/, list, "list"],
   [/^\/entry\/(\d+)$/, editEntry, "list", true],

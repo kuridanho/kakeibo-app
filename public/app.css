@@ -218,9 +218,9 @@ label.field .caption { flex-shrink: 0; color: var(--label); }
 .cell input[type="file"] { font-size: 15px; }
 .cell.toggle { cursor: pointer; }
 .group > button.cell { width: calc(100% + 16px); margin-left: -16px; padding: 0; min-height: 44px; border-radius: 0; font-weight: 400; justify-content: center; }
-.amount-card { flex-direction: row; align-items: center; gap: 4px; padding: 6px 6px 6px 16px; }
-.amount-card .yen { font-size: 34px; font-weight: 700; color: var(--secondary); }
-.amount-card.card input.amount { background-color: transparent; padding: 0; flex: 1; min-width: 0; outline: none; }
+.amount-card { flex-direction: row; align-items: center; gap: 4px; padding: 6px 16px; }
+.amount-card .yen { font-size: 26px; font-weight: 700; color: var(--secondary); padding-right: 2px; }
+.amount-card.card input.amount { background-color: transparent; padding: 0; flex: 1; min-width: 0; outline: none; text-align: right; }
 .amount-card input.amount::placeholder { color: var(--chevron); }
 .card input:not([type="checkbox"]), .card select { background-color: var(--field); }
 input, select, textarea {
