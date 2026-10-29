@@ -480,6 +480,7 @@ function entryAmount(e) {
 }
 
 async function list(params) {
+  if (params.get("view") === "cal") return calendarView(params);
   const month = params.get("month") ?? thisMonth();
   const qs = new URLSearchParams();
   if (params.get("provisional")) qs.set("provisional", "1");
@@ -498,21 +499,90 @@ async function list(params) {
   const groups = Map.groupBy(entries, (e) => e.date);
   const body = entries.length === 0 ? [h("p", { class: "empty" }, "取引はありません")] : [...groups].map(([d, es]) => [
     h("span", { class: "section-head" }, dayLabel(d)),
-    h("div", { class: "group" }, es.map((e) => {
-      const transfer = !["expense", "income"].includes(e.kind) && !e.lines.some((l) => l.type === "expense" || l.type === "income");
-      return cell({ href: `#/entry/${e.id}`, class: "tall plain" },
-        h("div", { class: "grow" }, h("span", {}, e.payee || (transfer ? "振替" : "（内容なし）")), h("span", { class: "detail" }, describeEntry(e))),
-        e.provisional ? h("span", { class: "pill" }, "仮") : null,
-        e.advance && !e.settled ? h("span", { class: "pill" }, "立替") : null,
-        ["ai", "keyword", "none"].includes(e.category_source) ? h("span", { class: "pill" }, "AI") : null,
-        h("span", { class: `amount${transfer ? " muted" : ""}` }, `${e.kind === "income" ? "+" : ""}${yen(entryAmount(e))}`));
-    })),
+    h("div", { class: "group" }, es.map(entryCell)),
   ]);
 
   const title = params.get("provisional") ? h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い")
     : params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
     : monthNav(month, (n) => { location.hash = `#/list?month=${addMonths(month, n)}`; }, `${Number(month.slice(5))}月`);
-  return [title, search, ...body];
+  const plain = !params.get("provisional") && !params.get("unsure");
+  return [plain ? listTabs("list", month) : null, title, search, ...body];
+}
+
+// ---- カレンダー ----
+
+function listTabs(current, month) {
+  return h("div", { class: "seg", role: "group", "aria-label": "表示" },
+    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?month=${month}`; } }, "リスト"),
+    h("button", { "aria-pressed": String(current === "cal"), onclick: () => { location.hash = `#/list?view=cal&month=${month}`; } }, "カレンダー"));
+}
+
+function entryCell(e) {
+  const transfer = !["expense", "income"].includes(e.kind) && !e.lines.some((l) => l.type === "expense" || l.type === "income");
+  return cell({ href: `#/entry/${e.id}`, class: "tall plain" },
+    h("div", { class: "grow" }, h("span", {}, e.payee || (transfer ? "振替" : "（内容なし）")), h("span", { class: "detail" }, describeEntry(e))),
+    e.provisional ? h("span", { class: "pill" }, "仮") : null,
+    e.advance && !e.settled ? h("span", { class: "pill" }, "立替") : null,
+    ["ai", "keyword", "none"].includes(e.category_source) ? h("span", { class: "pill" }, "AI") : null,
+    h("span", { class: `amount${transfer ? " muted" : ""}` }, `${e.kind === "income" ? "+" : ""}${yen(entryAmount(e))}`));
+}
+
+/** カレンダーの小さな枠に収まるよう、1万円以上は万で丸める */
+const shortYen = (n) => (Math.abs(n) >= 10000 ? `${Number((n / 10000).toFixed(Math.abs(n) >= 100000 ? 0 : 1))}万` : num(n));
+
+async function calendarView(params) {
+  const month = params.get("month") ?? thisMonth();
+  const [cal, entries] = await Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
+  let selected = params.get("day") ?? (today().startsWith(month) ? today() : `${month}-01`);
+  const byDay = Map.groupBy(entries, (e) => e.date);
+  const plannedBy = Map.groupBy(cal.planned, (p) => p.date);
+  const [y, m] = month.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const grid = h("div", { class: "cal" });
+  const detail = h("div", { class: "stack" });
+
+  const draw = () => {
+    grid.replaceChildren(
+      ..."日月火水木金土".split("").map((w, i) => h("span", { class: `cal-w${i === 0 ? " sun" : i === 6 ? " sat" : ""}` }, w)),
+      ...Array.from({ length: first }, () => h("span", {})),
+      ...Array.from({ length: last }, (_, i) => {
+        const d = `${month}-${String(i + 1).padStart(2, "0")}`;
+        const t = cal.days[d];
+        const plan = plannedBy.get(d);
+        const w = (first + i) % 7;
+        return h("button", {
+          type: "button",
+          class: `cal-d${d === selected ? " on" : ""}${d === cal.today ? " today" : ""}${w === 0 ? " sun" : w === 6 ? " sat" : ""}`,
+          "aria-label": `${dayLabel(d)}${t?.expense ? ` 支出 ${t.expense}円` : ""}${plan ? " 予定あり" : ""}`,
+          onclick: () => { selected = d; history.replaceState(null, "", `#/list?view=cal&month=${month}&day=${d}`); draw(); },
+        },
+          h("span", { class: "n" }, i + 1),
+          t?.expense ? h("span", { class: "e" }, shortYen(t.expense)) : null,
+          t?.income ? h("span", { class: "i" }, `+${shortYen(t.income)}`) : null,
+          plan ? h("span", { class: "p" }, shortYen(plan.reduce((s, p) => s + (p.kind === "income" ? -p.amount : p.amount), 0))) : null);
+      }));
+    const es = byDay.get(selected) ?? [];
+    const ps = plannedBy.get(selected) ?? [];
+    detail.replaceChildren(
+      h("span", { class: "section-head" }, dayLabel(selected)),
+      es.length || ps.length ? h("div", { class: "group" },
+        es.map(entryCell),
+        ps.map((p) => cell({},
+          h("div", { class: "grow" }, h("span", {}, p.label), h("span", { class: "detail" }, "予定")),
+          h("span", { class: "amount muted" }, `${p.kind === "income" ? "+" : ""}${yen(p.amount)}`)))) : h("p", { class: "empty" }, "取引はありません"));
+  };
+  draw();
+
+  const spent = Object.values(cal.days).reduce((s, d) => s + d.expense, 0);
+  const upcoming = cal.planned.filter((p) => p.kind !== "income").reduce((s, p) => s + p.amount, 0);
+  return [
+    listTabs("cal", month),
+    monthNav(month, (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; }, `${Number(month.slice(5))}月`),
+    h("div", { class: "card" }, grid,
+      h("div", { class: "row sub" }, h("span", {}, `支出 ${yen(spent)}`), upcoming ? h("span", {}, `これからの予定 ${yen(upcoming)}`) : null)),
+    detail,
+  ];
 }
 
 // ---- 集計 ----

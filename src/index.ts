@@ -6,6 +6,7 @@ import {
   balanceOf, buildSimple, createEntry, deleteEntry, getAccount, getEntry, LedgerError, logChange,
   resolveAccount, type SimpleInput, updateEntry,
 } from "./lib/ledger";
+import { calendarMonth } from "./lib/calendar";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
 import { type Recurring, recordRecurring, validate } from "./lib/recurring";
@@ -488,6 +489,12 @@ app.get("/api/balance-checks", async (c) => {
 });
 
 // ---- 集計 ----
+
+app.get("/api/calendar", async (c) => {
+  const month = c.req.query("month") ?? monthOf(todayJST());
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new LedgerError("月は YYYY-MM で入れてください");
+  return c.json(await calendarMonth(c.env.DB, month));
+});
 
 app.get("/api/balances", async (c) => c.json(await balances(c.env.DB)));
 
