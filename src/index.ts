@@ -18,8 +18,14 @@ type App = { Bindings: Env; Variables: { user: string | null } };
 const app = new Hono<App>();
 
 app.use("/api/*", async (c, next) => {
-  // Cloudflare Access を通ったリクエストには利用者のメールアドレスが付く
-  c.set("user", c.req.header("cf-access-authenticated-user-email") ?? null);
+  // Cloudflare Access を通ったリクエストには利用者のメールアドレスが付く。
+  // Access の外から直接叩かれても全データを読み書きできないよう、ヘッダーが無ければ通さない。
+  // 手元で動かすときだけ .dev.vars に ALLOW_LOCAL=1 を置いて外す。
+  const user = c.req.header("cf-access-authenticated-user-email") ?? null;
+  if (!user && c.env.ALLOW_LOCAL !== "1" && c.req.path !== "/api/health") {
+    return c.json({ error: "Cloudflare Access の認証がありません" }, 401);
+  }
+  c.set("user", user);
   await next();
 });
 
@@ -51,6 +57,35 @@ async function checkPaymentAccount(db: D1Database, id: unknown) {
   if (a.type !== "asset") throw new LedgerError("引き落とし口座には銀行口座などを選んでください");
 }
 
+const ACCOUNT_NUMBER_FIELDS: Record<string, { label: string; min: number; max: number }> = {
+  closing_day: { label: "締め日", min: 1, max: 31 },
+  payment_day: { label: "引き落とし日", min: 1, max: 31 },
+  payment_account_id: { label: "引き落とし口座", min: 1, max: Number.MAX_SAFE_INTEGER },
+  payment_amount: { label: "毎月の返済額", min: 0, max: Number.MAX_SAFE_INTEGER },
+  check_interval_days: { label: "棚卸しの間隔", min: 1, max: 3650 },
+  sort_order: { label: "並び順", min: 0, max: Number.MAX_SAFE_INTEGER },
+};
+const ACCOUNT_FLAG_FIELDS = ["liquid", "pay_method", "statement_import", "archived"] as const;
+
+/** 口座の数値とフラグの範囲を確かめ、数値に揃える。画面から来ない値もそのまま保存しない */
+function checkAccountFields(body: Record<string, unknown>) {
+  if ("name" in body && (typeof body.name !== "string" || !body.name.trim())) {
+    throw new LedgerError("名前を入れてください");
+  }
+  for (const [k, f] of Object.entries(ACCOUNT_NUMBER_FIELDS)) {
+    if (!(k in body) || body[k] === null) continue;
+    const n = Number(body[k]);
+    if (!Number.isInteger(n) || n < f.min || n > f.max) throw new LedgerError(`${f.label}の値が正しくありません`);
+    body[k] = n;
+  }
+  for (const k of ACCOUNT_FLAG_FIELDS) {
+    if (!(k in body) || body[k] === null) continue;
+    const n = Number(body[k]);
+    if (n !== 0 && n !== 1) throw new LedgerError(`${k} は 0 か 1 で入れてください`);
+    body[k] = n;
+  }
+}
+
 const EDITABLE = ["name", "liquid", "pay_method", "closing_day", "payment_day", "payment_account_id", "payment_amount",
   "check_interval_days", "statement_card_name", "statement_import", "sort_order", "archived"] as const;
 
@@ -66,7 +101,7 @@ app.post("/api/accounts", async (c) => {
   const type = body.type ?? "asset";
   const kind = type === "income" || type === "expense" ? "category" : body.kind ?? "";
   if (!ACCOUNT_KINDS[type]?.includes(kind)) throw new LedgerError("種類が正しくありません");
-  if (!body.name?.trim()) throw new LedgerError("名前を入れてください");
+  checkAccountFields(body as Record<string, unknown>);
   await checkPaymentAccount(c.env.DB, body.payment_account_id);
   // 財布、普通預金、電子マネーは手元の現金に数える。定期預金や投資は別枠
   const liquid = body.liquid ?? (["cash", "bank", "emoney"].includes(kind) ? 1 : 0);
@@ -76,7 +111,7 @@ app.post("/api/accounts", async (c) => {
         check_interval_days, statement_card_name, statement_import, sort_order, user_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM accounts WHERE type = ?)), ?)
       RETURNING *`)
-    .bind(body.name.trim(), type, kind, liquid, payMethod, body.closing_day ?? null, body.payment_day ?? null,
+    .bind(body.name!.trim(), type, kind, liquid, payMethod, body.closing_day ?? null, body.payment_day ?? null,
       body.payment_account_id ?? null, body.payment_amount ?? null, body.check_interval_days ?? null,
       body.statement_card_name ?? null, body.statement_import ?? 1, body.sort_order ?? null, type, c.get("user"))
     .first<Account>();
@@ -87,6 +122,7 @@ app.patch("/api/accounts/:id", async (c) => {
   const id = int(c.req.param("id"), "id");
   await getAccount(c.env.DB, id);
   const body = await c.req.json<Record<string, unknown>>();
+  checkAccountFields(body);
   const cols = EDITABLE.filter((k) => k in body);
   if (cols.length === 0) throw new LedgerError("変更する項目がありません");
   if ("payment_account_id" in body) await checkPaymentAccount(c.env.DB, body.payment_account_id);
@@ -238,7 +274,12 @@ app.get("/api/entries", async (c) => {
     args.push(Number(q.account_id));
   }
   if (q.provisional) where.push("e.provisional = 1");
-  const limit = Math.min(Number(q.limit ?? 500), 1000);
+  let limit = 500;
+  if (q.limit !== undefined) {
+    const n = int(q.limit, "limit");
+    if (n < 1) throw new LedgerError("limit は1以上で入れてください");
+    limit = Math.min(n, 1000);
+  }
   const { results } = await c.env.DB
     .prepare(`SELECT e.* FROM entries e ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY e.date DESC, e.id DESC LIMIT ${limit}`)
@@ -394,8 +435,27 @@ app.post("/api/entries/:id/recoveries", async (c) => {
   const { results: cats } = await db
     .prepare(`SELECT id FROM accounts WHERE type = 'expense' AND id IN (${ids.map(() => "?").join(",")})`)
     .bind(...ids).all<{ id: number }>();
-  const expenseLines = lines.filter((l) => cats.some((x) => x.id === l.account_id)).sort((a, b) => b.amount - a.amount);
-  if (expenseLines.length === 0) throw new LedgerError("元の取引に支出のカテゴリがありません");
+  // 品目ごとに分けた支出も、元の割合のまま回収分を減らす
+  const byCategory = new Map<number, number>();
+  for (const l of lines) if (cats.some((x) => x.id === l.account_id)) byCategory.set(l.account_id, (byCategory.get(l.account_id) ?? 0) + l.amount);
+  const total = [...byCategory.values()].reduce((s, v) => s + v, 0);
+  if (total <= 0) throw new LedgerError("元の取引に支出のカテゴリがありません");
+  const recovered = (await db
+    .prepare(`SELECT COALESCE(SUM(l.amount), 0) AS s FROM entries r JOIN lines l ON l.entry_id = r.id
+      JOIN accounts a ON a.id = l.account_id WHERE r.related_entry_id = ? AND r.kind = 'recovery' AND a.type = 'asset'`)
+    .bind(entry.id).first<{ s: number }>())?.s ?? 0;
+  if (amount > total - recovered) {
+    throw new LedgerError(`回収額が残り ${(total - recovered).toLocaleString("ja-JP")}円を超えています`);
+  }
+  const shares = [...byCategory].map(([account_id, v]) => {
+    const exact = (amount * v) / total;
+    const base = Math.floor(exact);
+    return { account_id, base, fraction: exact - base };
+  });
+  // 円未満の端数は、割合の大きいところから1円ずつ足す
+  const rest = amount - shares.reduce((s, x) => s + x.base, 0);
+  shares.sort((a, b) => b.fraction - a.fraction || b.base - a.base);
+  for (let i = 0; i < rest; i++) shares[i].base++;
   const id = await createEntry(db, {
     date: body.date ?? todayJST(),
     report_date: entry.report_date,
@@ -404,7 +464,8 @@ app.post("/api/entries/:id/recoveries", async (c) => {
     counterparty: body.counterparty ?? null,
     related_entry_id: entry.id,
     user_id: c.get("user"),
-  }, [{ account_id: to.id, amount }, { account_id: expenseLines[0].account_id, amount: -amount }]);
+  }, [{ account_id: to.id, amount },
+    ...shares.filter((s) => s.base !== 0).map((s) => ({ account_id: s.account_id, amount: -s.base }))]);
   return c.json({ id }, 201);
 });
 
@@ -554,7 +615,8 @@ app.post("/api/dev/receipt-eval", async (c) => {
   const form = await c.req.formData();
   const file = form.get("image");
   if (!(file instanceof File)) throw new LedgerError("image に画像を付けてください");
-  const models = String(form.get("models") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (file.size > 8_000_000) throw new LedgerError("写真が大きすぎます");
+  const models = String(form.get("models") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 4);
   return c.json(await evaluateReceipt(c.env, new Uint8Array(await file.arrayBuffer()), file.type || "image/jpeg", models));
 });
 

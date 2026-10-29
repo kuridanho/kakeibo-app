@@ -3,3 +3,4 @@ node_modules/
 .dev.vars
 *.log
 .wrangler-noai.jsonc
+.DS_Store

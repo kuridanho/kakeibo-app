@@ -29,13 +29,19 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
-Workers の URL には Cloudflare Access(Zero Trust のアプリケーション)をかけ、自分のメールアドレスだけを通してください。アプリはこのとき付くメールアドレスを記録者として残します。
+Workers の URL には Cloudflare Access(Zero Trust のアプリケーション)をかけ、自分のメールアドレスだけを通してください。アプリはこのとき付くメールアドレスを記録者として残します。API は Access が付けるメールのヘッダーが無ければ 401 を返すので、Access の対象から漏れたホスト名(`*.workers.dev` など)があっても記録は読めません。監視用の `/api/health` だけは認証なしで返します。
 
-手元で動かすときは `npm run db:migrate:local` のあと `npm run dev` です。AI の binding は手元でも Cloudflare に接続するため、`wrangler login` が要ります。テストは `npm test` で、Workers の実行環境の中で D1 を使って動きます。
+手元で動かすときは `npm run db:migrate:local` のあと、`.dev.vars` に次の1行を置いてから `npm run dev` です。Access を通らない手元だけ、この印で認証を外します。
+
+```sh
+echo 'ALLOW_LOCAL="1"' > .dev.vars
+```
+
+AI の binding は手元でも Cloudflare に接続するため、`wrangler login` が要ります。テストは `npm test` で、Workers の実行環境の中で D1 を使って動きます。
 
 ## レシート読み取りモデルの比較
 
-レシート読み取りを作る前に、実物のレシートで Workers AI の視覚モデルを比べるための仕組みがあります。`ENABLE_RECEIPT_EVAL` を `"1"` にした Worker に対して、画像と正解の `expected.csv` を置いたフォルダを指定して実行します。
+レシート読み取りを作る前に、実物のレシートで Workers AI の視覚モデルを比べるための仕組みがあります。`ENABLE_RECEIPT_EVAL` は既定で `"0"` です。比べるときだけ `"1"` にしてデプロイし、画像と正解の `expected.csv` を置いたフォルダを指定して実行します。1回のリクエストで最大4モデル・8MB の画像まで受け付けます。
 
 ```sh
 node scripts/receipt-eval.mjs --url https://kakeibo.<you>.workers.dev --dir ./receipts
