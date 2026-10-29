@@ -148,33 +148,15 @@ a.cell.plain::after { display: none; }
   background: var(--bar-bg); border: 0.5px solid var(--bar-border);
   -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8);
 }
-/* 選ばれたタブの下をすべるガラスの板。位置と大きさは app.js が入れる。
-   動きは translate だけで、途中で少し横に伸ばして液体が寄る感じを出す */
+/* 選ばれたタブの下をすべる板。見た目は元の選択色のまま、位置だけ動かす */
 .tab-glider {
   position: absolute; left: 0; top: var(--y, 5px); z-index: 0; pointer-events: none;
-  width: var(--w, 52px); height: var(--h, 52px); border-radius: 26px; opacity: 0;
-  background:
-    radial-gradient(120% 150% at 28% -10%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.34) 42%, rgba(255, 255, 255, 0) 72%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(150, 220, 248, 0.24));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
-    0 5px 16px rgba(0, 126, 180, 0.16);
+  width: var(--w, 52px); height: var(--h, 52px); border-radius: 26px;
+  background: var(--tint-soft); opacity: 0;
   transform: translate3d(var(--x, 0), 0, 0);
   will-change: transform;
 }
 .tabbar.ready .tab-glider { opacity: 1; }
-@media (prefers-color-scheme: dark) {
-  .tab-glider {
-    background:
-      radial-gradient(120% 150% at 28% -10%, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.07) 45%, rgba(255, 255, 255, 0) 72%),
-      linear-gradient(180deg, rgba(100, 210, 255, 0.26), rgba(100, 210, 255, 0.07));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.28),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.2),
-      0 6px 18px rgba(0, 0, 0, 0.35);
-  }
-}
 .tabbar a {
   position: relative; z-index: 1;
   flex: 1; height: 52px; border-radius: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
@@ -183,16 +165,6 @@ a.cell.plain::after { display: none; }
 }
 .tabbar a[aria-current="page"] { color: var(--tint); font-weight: 600; opacity: 1; }
 .tabbar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-
-/* タブを移ったときの中身。すべる板に合わせて、軽く浮き上がる */
-main.tab-fade { animation: tab-fade 240ms ease-out; }
-@keyframes tab-fade {
-  from { opacity: 0.55; transform: translateY(5px); }
-  to { opacity: 1; transform: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  main.tab-fade { animation: none; }
-}
 .dock .add {
   width: 62px; height: 62px; flex-shrink: 0; border-radius: 31px; background: var(--tint); color: var(--on-tint);
   display: flex; align-items: center; justify-content: center;
