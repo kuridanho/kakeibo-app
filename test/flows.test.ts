@@ -306,3 +306,34 @@ describe("品目ごとの支出の編集", () => {
     await balanced();
   });
 });
+
+describe("同じ月の明細の取り込み直し", () => {
+  it("前に取り込んだ行は重複として飛ばし、増えた行だけを足す。引き落とし額は新しい明細の合計になる", async () => {
+    const first = "様,1,流れカード\n2027/11/20,ローソン,500,１,１,500,\n2027/11/21,ローソン,500,１,１,500,\n,,,,,1000,\n";
+    const r1 = await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2028-01", text: first, choices: {} });
+    expect(r1).toMatchObject({ created: 2, duplicate: 0 });
+    const before = (await snapshot()).bal(card);
+    // 同じ日に同じ店、同じ額の行が増えた明細。増えた1行と別の1行だけが入る
+    const second = "様,1,流れカード\n2027/11/20,ローソン,500,１,１,500,\n2027/11/21,ローソン,500,１,１,500,\n2027/11/21,ローソン,500,１,１,500,\n2027/12/01,ＮＥＴＦＬＩＸ,1590,１,１,1590,\n,,,,,3090,\n";
+    const preview = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2028-01", text: second });
+    expect(preview.rows.map((x: any) => x.status)).toEqual(["duplicate", "duplicate", "new", "new"]);
+    const r2 = await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2028-01", text: second, choices: {} });
+    expect(r2).toMatchObject({ created: 2, duplicate: 2 });
+    expect((await snapshot()).bal(card)).toBe(before + 500 + 1590);
+    const due = nextBankDay(dayInMonth("2028-01", 10));
+    expect((await calendarMonth(db, "2028-01", "2028-01-01")).planned.find((p) => p.label === "流れカード 引き落とし")?.amount).toBe(3090);
+    await balanced();
+  });
+});
+
+describe("13列の形式の明細の取り込み", () => {
+  const wide = "2027/12/8,ミニストップ,ご本人,1回払い,,'28/02,500,500,,,,,\n2027/12/10,ＮＥＴＦＬＩＸ,ご本人,1回払い,,'28/02,990,,,6.00,USD,165.0,12/11\n";
+  it("請求月が合えば取り込め、取り込み直すと重複になる", async () => {
+    await expect(api("POST", "/api/statements/preview", { account_id: card, billing_month: "2028-01", text: wide })).rejects.toThrow("請求月");
+    const r = await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2028-02", text: wide, choices: {} });
+    expect(r).toMatchObject({ created: 2, payment_total: 1490 });
+    const again = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2028-02", text: wide });
+    expect(again.rows.every((x: any) => x.status === "duplicate")).toBe(true);
+    await balanced();
+  });
+});

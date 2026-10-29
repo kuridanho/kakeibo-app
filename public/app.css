@@ -105,6 +105,7 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .cell .grow { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 .cell .detail { font-size: 13px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell .value { color: var(--secondary); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.cell .value.inc { color: var(--tint); }
 .cell .amount { white-space: nowrap; }
 .cell .muted { color: var(--secondary); }
 a.cell::after, .cell.link::after {
@@ -141,17 +142,57 @@ a.cell.plain::after { display: none; }
 }
 .tabbar, .dock .add { pointer-events: auto; }
 .tabbar {
+  position: relative; isolation: isolate;
   flex: 1; max-width: 520px; height: 62px; border-radius: 31px; padding: 0 6px;
   display: flex; align-items: center; justify-content: space-around;
   background: var(--bar-bg); border: 0.5px solid var(--bar-border);
   -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8);
 }
+/* 選ばれたタブの下をすべるガラスの板。位置と大きさは app.js が入れる。
+   動きは translate だけで、途中で少し横に伸ばして液体が寄る感じを出す */
+.tab-glider {
+  position: absolute; left: 0; top: var(--y, 5px); z-index: 0; pointer-events: none;
+  width: var(--w, 52px); height: var(--h, 52px); border-radius: 26px; opacity: 0;
+  background:
+    radial-gradient(120% 150% at 28% -10%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.34) 42%, rgba(255, 255, 255, 0) 72%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(150, 220, 248, 0.24));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
+    0 5px 16px rgba(0, 126, 180, 0.16);
+  transform: translate3d(var(--x, 0), 0, 0);
+  will-change: transform;
+}
+.tabbar.ready .tab-glider { opacity: 1; }
+@media (prefers-color-scheme: dark) {
+  .tab-glider {
+    background:
+      radial-gradient(120% 150% at 28% -10%, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.07) 45%, rgba(255, 255, 255, 0) 72%),
+      linear-gradient(180deg, rgba(100, 210, 255, 0.26), rgba(100, 210, 255, 0.07));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+      0 6px 18px rgba(0, 0, 0, 0.35);
+  }
+}
 .tabbar a {
+  position: relative; z-index: 1;
   flex: 1; height: 52px; border-radius: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   font-size: 10px; font-weight: 500; color: var(--label); text-decoration: none; opacity: 0.8;
+  transition: color 180ms ease, opacity 180ms ease;
 }
-.tabbar a[aria-current="page"] { background: var(--tint-soft); color: var(--tint); font-weight: 600; opacity: 1; }
+.tabbar a[aria-current="page"] { color: var(--tint); font-weight: 600; opacity: 1; }
 .tabbar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* タブを移ったときの中身。すべる板に合わせて、軽く浮き上がる */
+main.tab-fade { animation: tab-fade 240ms ease-out; }
+@keyframes tab-fade {
+  from { opacity: 0.55; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  main.tab-fade { animation: none; }
+}
 .dock .add {
   width: 62px; height: 62px; flex-shrink: 0; border-radius: 31px; background: var(--tint); color: var(--on-tint);
   display: flex; align-items: center; justify-content: center;
@@ -286,17 +327,17 @@ details.more > summary + * { margin-top: 4px; }
 .item select { min-height: 36px; padding-top: 6px; padding-bottom: 6px; background-color: var(--fill); }
 
 /* カレンダー。iOS のカレンダーにならい、縦線と枠はなくして週の区切りの横線だけにする。
-   マスは金額が入るぶんだけの高さにし、月が縦に伸びないようにする */
+   マスは日付と金額2行が入る高さに固定し、どの週も同じ間隔にする */
 .cal-card { margin: 0 -4px; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--label); padding: 0 0 6px; }
 .cal-d {
-  min-height: 48px; padding: 4px 1px 5px; border-radius: 0; background: none; color: var(--label);
+  height: 56px; overflow: hidden; padding: 3px 1px 0; border-radius: 0; background: none; color: var(--label);
   border-top: 0.5px solid var(--separator);
   display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0; font-weight: 400; text-align: center;
 }
-.cal-d .n { font-size: 17px; line-height: 28px; width: 28px; height: 28px; border-radius: 14px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
-.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10.5px; line-height: 13px; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; color: var(--secondary); }
+.cal-d .n { flex: none; font-size: 16px; line-height: 26px; width: 26px; height: 26px; border-radius: 13px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
+.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10.5px; line-height: 12px; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; color: var(--secondary); }
 .cal-d .i, .cal-d .p.inc { color: var(--tint); }
 .cal-d .p { text-decoration: underline dashed; text-underline-offset: 2px; }
 .cal-w.sun, .cal-w.sat, .cal-d.sun .n, .cal-d.sat .n { color: var(--secondary); }
