@@ -59,21 +59,23 @@ body {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
-/* ホーム画面のアプリでは、iOS が画面の上の端にぼかしをかけ、時計の欄の下の文字までぼやける。
-   上の端に一色の不透明な板を固定しておくと、iOS はぼかしの代わりにその色で塗る。
-   iOS は時計の欄のすぐ下で板を探すので、板が時計の欄の高さで終わると見つからない。少し下まで伸ばし、
-   最初の行より上で止める。半透明や backdrop-filter にするとぼかしが戻るので使わない */
-body::before {
-  content: ""; position: fixed; top: 0; left: 0; right: 0; height: calc(env(safe-area-inset-top) + 12px);
-  background: var(--bg); z-index: 15; pointer-events: none;
-}
+/* ホーム画面のアプリでは、iOS が時計の欄とその下 30pt ほどにぼかしをかける。ぼかしは消せず、上に板を重ねても
+   その上からかかるので、文書は動かさず、ぼかしの帯より下に置いた main の中だけをスクロールさせる。
+   帯には地の色しか来ないので、ぼかしがかかっても見えない */
+html, body { height: 100%; overflow: hidden; }
 main {
-  max-width: 600px;
-  margin: 0 auto;
-  padding: calc(16px + env(safe-area-inset-top)) 16px calc(120px + env(safe-area-inset-bottom));
+  position: fixed; top: calc(env(safe-area-inset-top) + 32px); bottom: 0; left: 0; right: 0;
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  padding: 4px max(16px, calc(50% - 284px)) calc(120px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+main > * { flex-shrink: 0; }
+/* Safari のタブで開いたときはぼかしの帯がないので、上の余白はふつうに戻す */
+@media not all and (display-mode: standalone) {
+  main { top: env(safe-area-inset-top); padding-top: 16px; }
+  .sheetbar { margin-top: -16px; }
 }
 a { color: var(--tint); }
 
@@ -242,7 +244,7 @@ details.card[open] > summary::after { content: "－"; }
 body.sheet .dock { display: none; }
 body.sheet main { padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
 .sheetbar {
-  position: sticky; top: env(safe-area-inset-top); z-index: 16; margin: -16px -16px 0; padding: 4px 8px;
+  position: sticky; top: 0; z-index: 5; margin: -4px -16px 0; padding: 4px 8px;
   display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); align-items: center; min-height: 52px; background: var(--bg);
 }
 .sheetbar h1 { font-size: 17px; font-weight: 600; line-height: 22px; padding: 0; text-align: center; }
@@ -283,33 +285,30 @@ details.more > summary + * { margin-top: 4px; }
 .item input.item-amount { width: 96px; flex: none; text-align: right; min-height: 36px; padding: 6px 10px; background: var(--fill); }
 .item select { min-height: 36px; padding-top: 6px; padding-bottom: 6px; background-color: var(--fill); }
 
-/* カレンダー。端まで使う格子にし、金額は省略せずに出す */
-.cal-card { background: var(--card); border-radius: 22px; overflow: hidden; margin: 0 -4px; }
+/* カレンダー。iOS のカレンダーにならい、縦線と枠はなくして週の区切りの横線だけにする。
+   マスは金額が入るぶんだけの高さにし、月が縦に伸びないようにする */
+.cal-card { margin: 0 -4px; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.cal-w { border-bottom: 1px solid var(--separator); text-align: center; font-size: 11px; font-weight: 600; color: var(--secondary); padding: 8px 0 6px; }
+.cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--label); padding: 0 0 6px; }
 .cal-d {
-  min-height: 64px; padding: 4px 2px 4px; border-radius: 0; background: var(--card); color: var(--label);
-  border-bottom: 1px solid var(--separator); border-right: 1px solid var(--separator);
-  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 0; font-weight: 400; text-align: right;
+  min-height: 48px; padding: 4px 1px 5px; border-radius: 0; background: none; color: var(--label);
+  border-top: 0.5px solid var(--separator);
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0; font-weight: 400; text-align: center;
 }
-.cal-d .n { font-size: 12px; line-height: 20px; width: 20px; height: 20px; border-radius: 10px; text-align: center; align-self: flex-start; margin-bottom: auto; }
-.cal-d .e, .cal-d .i, .cal-d .p { font-size: 11px; line-height: 13px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; }
-.cal-d .i { color: var(--tint); }
-.cal-d .p { color: var(--secondary); text-decoration: underline dashed; text-underline-offset: 2px; }
-.cal-d .p.inc { color: var(--tint); }
-.cal-d.out .n { color: var(--secondary); opacity: 0.5; }
-.cal-d.today .n { color: var(--tint); font-weight: 700; }
-.cal-d.on { background: var(--tint-soft); }
-.cal-d.on .n { background: var(--tint); color: var(--on-tint); font-weight: 600; }
-.cal-w.sun, .cal-d.sun:not(.on) .n { color: var(--red); }
-.cal-sum { display: grid; grid-template-columns: repeat(3, 1fr); padding: 12px 8px 10px; text-align: center; }
-.cal-sum div { display: flex; flex-direction: column; gap: 2px; }
-.cal-sum span { font-size: 12px; color: var(--secondary); }
-.cal-sum b { font-size: 17px; font-weight: 600; }
+.cal-d .n { font-size: 17px; line-height: 28px; width: 28px; height: 28px; border-radius: 14px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
+.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10.5px; line-height: 13px; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; color: var(--secondary); }
+.cal-d .i, .cal-d .p.inc { color: var(--tint); }
+.cal-d .p { text-decoration: underline dashed; text-underline-offset: 2px; }
+.cal-w.sun, .cal-w.sat, .cal-d.sun .n, .cal-d.sat .n { color: var(--secondary); }
+.cal-d.on .n { background: var(--label); color: var(--bg); font-weight: 600; }
+.cal-d.today .n { background: var(--tint); color: var(--on-tint); font-weight: 600; }
+.cal-sum { display: flex; justify-content: space-between; gap: 8px; padding: 10px 4px 0; border-top: 0.5px solid var(--separator); font-variant-numeric: tabular-nums; }
+.cal-sum div { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.cal-sum span { font-size: 13px; color: var(--secondary); }
+.cal-sum b { font-size: 16px; font-weight: 600; }
 .cal-sum .inc { color: var(--tint); }
-.cal-plan { display: flex; justify-content: space-between; padding: 0 16px 12px; font-size: 13px; color: var(--secondary); }
+.cal-plan { display: flex; justify-content: space-between; padding: 6px 4px 0; font-size: 13px; color: var(--secondary); }
 .day-head { display: flex; justify-content: space-between; padding-right: 20px; scroll-margin-top: 12px; }
-.cal > :nth-child(7n) { border-right: none; }
 .item .row button.icon { width: 36px; min-height: 36px; margin-right: -6px; color: var(--secondary); }
 
 /* 並べ替え。右の取っ手をドラッグする */
@@ -320,3 +319,10 @@ details.more > summary + * { margin-top: 4px; }
 .grip { width: 44px; height: 44px; margin: -8px -12px -8px 0; display: flex; align-items: center; justify-content: center; color: var(--chevron); touch-action: none; cursor: grab; flex-shrink: 0; }
 .grip svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .reorder .cell.dragging { position: relative; z-index: 2; border-radius: 12px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2); cursor: grabbing; }
+
+/* カレンダーと集計のスワイプ。移った先の月は払った向きの反対から入る */
+.cal-card, .swipe-pane { touch-action: pan-y; }
+.in-right { animation: cal-in-right 220ms cubic-bezier(.2, .8, .2, 1); }
+.in-left { animation: cal-in-left 220ms cubic-bezier(.2, .8, .2, 1); }
+@keyframes cal-in-right { from { transform: translateX(40%); opacity: 0; } }
+@keyframes cal-in-left { from { transform: translateX(-40%); opacity: 0; } }

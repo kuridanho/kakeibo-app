@@ -590,22 +590,71 @@ async function list(params) {
 
 // ---- カレンダー ----
 
-/** 左右のスワイプで前後へ移る。縦のスクロールと見分けるため、横に大きく動いたときだけ受ける */
+/** 左右のスワイプで前後へ移る。指に付いて動かし、離したときに半分近く動いたか速く払ったら、その向きへ滑らせて移る。
+    縦のスクロールと見分けるため、動き始めに横の方が大きいときだけ受ける */
 function swipe(el, go) {
-  let x0 = null, y0 = 0;
-  el.addEventListener("touchstart", (ev) => { if (ev.touches.length === 1) [x0, y0] = [ev.touches[0].clientX, ev.touches[0].clientY]; }, { passive: true });
-  el.addEventListener("touchend", (ev) => {
-    if (x0 === null) return;
-    const dx = ev.changedTouches[0].clientX - x0, dy = ev.changedTouches[0].clientY - y0;
-    x0 = null;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1);
+  let x0 = null, y0 = 0, t0 = 0, dir = null, dx = 0;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const slide = (x, ms) => { el.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : "none"; el.style.transform = x ? `translateX(${x}px)` : ""; };
+  el.addEventListener("touchstart", (ev) => {
+    if (ev.touches.length !== 1) return;
+    [x0, y0, t0, dir, dx] = [ev.touches[0].clientX, ev.touches[0].clientY, ev.timeStamp, null, 0];
   }, { passive: true });
+  el.addEventListener("touchmove", (ev) => {
+    if (x0 === null) return;
+    const mx = ev.touches[0].clientX - x0, my = ev.touches[0].clientY - y0;
+    if (!dir && Math.hypot(mx, my) > 8) dir = Math.abs(mx) > Math.abs(my) ? "x" : "y";
+    if (dir !== "x") return;
+    ev.preventDefault();
+    dx = mx;
+    slide(dx, 0);
+  }, { passive: false });
+  const end = (ev) => {
+    if (x0 === null || dir !== "x") { x0 = null; return; }
+    x0 = null;
+    const w = el.offsetWidth;
+    const fast = Math.abs(dx) / Math.max(1, ev.timeStamp - t0) > 0.5;
+    if (Math.abs(dx) > w * 0.35 || (fast && Math.abs(dx) > 30)) {
+      const n = dx < 0 ? 1 : -1;
+      swipe.from = n;
+      if (reduce) { go(n); return; }
+      slide(-n * w, 180);
+      setTimeout(() => go(n), 170);
+    } else slide(0, 220);
+  };
+  el.addEventListener("touchend", end, { passive: true });
+  el.addEventListener("touchcancel", end, { passive: true });
 }
+
+// 前後の期間を先に読んでおき、スワイプで移ったときに待たせない。スワイプ以外で開いたときは読み直す
+const ahead = new Map();
+function loadAhead(key, load, swiped) {
+  const p = swiped && ahead.get(key);
+  ahead.clear();
+  return p ? p.catch(() => load()) : load();
+}
+function readAhead(keys, load) {
+  for (const k of keys) {
+    const p = load(k);
+    p.catch(() => {});
+    ahead.set(k, p);
+  }
+}
+
+/** スワイプで動かす中身。スワイプで来たときは、払った向きの反対から滑り込ませる */
+function swipePane(from, go, ...children) {
+  const pane = h("div", { class: "stack swipe-pane" }, ...children);
+  swipe(pane, go);
+  if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) pane.classList.add(from > 0 ? "in-right" : "in-left");
+  return pane;
+}
+
+const loadCalendar = (month) => Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
 
 function listTabs(current, month) {
   return h("div", { class: "seg", role: "group", "aria-label": "表示" },
-    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?view=list&month=${month}`; } }, "リスト"),
-    h("button", { "aria-pressed": String(current === "cal"), onclick: () => { location.hash = `#/list?view=cal&month=${month}`; } }, "カレンダー"));
+    h("button", { "aria-pressed": String(current === "cal"), onclick: () => { location.hash = `#/list?view=cal&month=${month}`; } }, "カレンダー"),
+    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?view=list&month=${month}`; } }, "リスト"));
 }
 
 function entryCell(e) {
@@ -621,12 +670,16 @@ function entryCell(e) {
 
 // 予定のうち手元のお金が減るもの。支出の繰り返しと、カードの引き落としと借入の返済。口座間の振替は数えない
 const flowsOut = (p) => p.kind === "expense" || p.kind === "payment";
-/** 予定の入りと出の差。入るほうが多ければ正 */
-const planNet = (ps) => ps.reduce((s, p) => s + (p.kind === "income" ? p.amount : flowsOut(p) ? -p.amount : 0), 0);
+/** 予定の入る額と出る額。差し引かずに別々に出す */
+const planIn = (ps) => ps.filter((p) => p.kind === "income").reduce((s, p) => s + p.amount, 0);
+const planOut = (ps) => ps.filter(flowsOut).reduce((s, p) => s + p.amount, 0);
 
 async function calendarView(params) {
   const month = params.get("month") ?? thisMonth();
-  const [cal, all] = await Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
+  const from = swipe.from;
+  swipe.from = 0;
+  const [cal, all] = await loadAhead(`cal:${month}`, () => loadCalendar(month), from);
+  readAhead([-1, 1].map((n) => `cal:${addMonths(month, n)}`), (k) => loadCalendar(k.slice(4)));
   const entries = all.filter((e) => e.kind !== "opening");
   const selected = params.get("day");
   // 日ごとの合計と同じく集計の日でまとめる。立て替えの回収は元の取引の日に並ぶ
@@ -635,7 +688,6 @@ async function calendarView(params) {
   const [y, m] = month.split("-").map(Number);
   const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const prevLast = new Date(Date.UTC(y, m - 1, 0)).getUTCDate();
   const cells = Math.ceil((first + last) / 7) * 7;
 
   // 日を押すと、下の一覧のその日へ移る
@@ -652,21 +704,24 @@ async function calendarView(params) {
       const i = k - first + 1;
       const w = k % 7;
       const tone = w === 0 ? " sun" : w === 6 ? " sat" : "";
-      if (i < 1 || i > last) return h("span", { class: `cal-d out${tone}` }, h("span", { class: "n" }, i < 1 ? prevLast + i : i - last));
+      // 前後の月の日は数字を出さず、空いたマスにする
+      if (i < 1 || i > last) return h("span", { class: "cal-d out" });
       const d = `${month}-${String(i).padStart(2, "0")}`;
       const t = cal.days[d];
-      const plan = planNet(plannedBy.get(d) ?? []);
+      const ps = plannedBy.get(d) ?? [];
+      const [pin, pout] = [planIn(ps), planOut(ps)];
       return h("button", {
         type: "button", "data-day": d,
         class: `cal-d${d === selected ? " on" : ""}${d === cal.today ? " today" : ""}${tone}`,
-        "aria-label": `${dayLabel(d)}${t?.expense ? ` 支出 ${t.expense}円` : ""}${t?.income ? ` 収入 ${t.income}円` : ""}${plan ? " 予定あり" : ""}`,
+        "aria-label": `${dayLabel(d)}${t?.income ? ` 収入 ${t.income}円` : ""}${t?.expense ? ` 支出 ${t.expense}円` : ""}${pin ? ` 入る予定 ${pin}円` : ""}${pout ? ` 出る予定 ${pout}円` : ""}`,
         onclick: () => jump(d),
       },
         h("span", { class: "n" }, i),
         t?.income ? h("span", { class: "i" }, num(t.income)) : null,
         t?.expense ? h("span", { class: "e" }, num(t.expense)) : null,
-        // 入る予定は + を付け、出る予定は額だけを出す。日ごとの合計の出し方と揃える
-        plan ? h("span", { class: `p${plan > 0 ? " inc" : ""}` }, plan > 0 ? plus(plan) : num(-plan)) : null);
+        // 収入と支出、入る予定と出る予定は差し引かずに別の行で出す。入るほうは水色
+        pin ? h("span", { class: "p inc" }, num(pin)) : null,
+        pout ? h("span", { class: "p" }, num(pout)) : null);
     }));
 
   const income = Object.values(cal.days).reduce((s, d) => s + d.income, 0);
@@ -680,11 +735,13 @@ async function calendarView(params) {
 
   // 月の取引と予定を日ごとに、新しい日から並べる
   const days = [...new Set([...byDay.keys(), ...plannedBy.keys()])].sort().reverse();
-  const dayTotal = (d) => (cal.days[d]?.income ?? 0) - (cal.days[d]?.expense ?? 0);
+  const dayIn = (d) => cal.days[d]?.income ?? 0;
+  const dayOut = (d) => cal.days[d]?.expense ?? 0;
   const listBody = days.length === 0 ? [h("p", { class: "empty" }, "取引はありません")] : days.map((d) => [
     h("div", { class: "section-head day-head", id: `day-${d}` }, h("span", {}, dayLabel(d)),
-      // 使った日は使った額を、受け取った日は + を付けて出す
-      dayTotal(d) ? h("span", { class: dayTotal(d) > 0 ? "inc" : "" }, dayTotal(d) > 0 ? plus(dayTotal(d)) : num(-dayTotal(d))) : null),
+      // 受け取った額と使った額を差し引かずに並べる
+      dayIn(d) || dayOut(d) ? h("span", {}, dayIn(d) ? h("span", { class: "inc" }, plus(dayIn(d))) : null,
+        dayIn(d) && dayOut(d) ? "　" : null, dayOut(d) ? num(dayOut(d)) : null) : null),
     h("div", { class: "group" },
       (byDay.get(d) ?? []).map(entryCell),
       (plannedBy.get(d) ?? []).map((p) => cell({},
@@ -698,6 +755,7 @@ async function calendarView(params) {
     comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
       h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${num(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
   swipe(card, go);
+  if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.classList.add(from > 0 ? "in-right" : "in-left");
   return [monthNav(month, go), listTabs("cal", month), card, listBody];
 }
 
@@ -709,12 +767,17 @@ async function summary(params) {
   const toggle = h("div", { class: "seg", role: "group", "aria-label": "期間" },
     h("button", { "aria-pressed": String(mode === "month"), onclick: () => { location.hash = `#/summary?month=${month}`; } }, "月"),
     h("button", { "aria-pressed": String(mode === "year"), onclick: () => { location.hash = `#/summary?view=year&month=${month}`; } }, "年"));
+  const from = swipe.from;
+  swipe.from = 0;
   if (mode === "year") {
-    const [nav, ...rest] = await yearView(params);
-    return [nav, toggle, ...rest];
+    const [nav, go, ...rest] = await yearView(params, from);
+    return [nav, toggle, swipePane(from, go, rest)];
   }
 
-  const s = await api("GET", `/api/summary/month?month=${month}`);
+  const loadMonth = (m) => api("GET", `/api/summary/month?month=${m}`);
+  const s = await loadAhead(`sum:${month}`, () => loadMonth(month), from);
+  readAhead([-1, 1].map((n) => `sum:${addMonths(month, n)}`), (k) => loadMonth(k.slice(4)));
+  const go = (n) => { location.hash = `#/summary?month=${addMonths(month, n)}`; };
   const expenses = s.categories.filter((c) => c.type === "expense").sort((a, b) => b.amount - a.amount);
   const incomes = s.categories.filter((c) => c.type === "income");
   const max = Math.max(1, ...expenses.map((c) => c.amount));
@@ -727,8 +790,9 @@ async function summary(params) {
     route();
   };
   return [
-    monthNav(month, (n) => { location.hash = `#/summary?month=${addMonths(month, n)}`; }),
+    monthNav(month, go),
     toggle,
+    swipePane(from, go,
     h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(s.expense))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(s.income))),
@@ -748,20 +812,23 @@ async function summary(params) {
       ]))),
     incomes.length ? [h("span", { class: "section-head" }, "収入"), h("div", { class: "group" },
       incomes.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value" }, num(c.amount)))))] : null,
-    !s.report && month < thisMonth() ? h("button", { class: "plain", onclick: makeReport }, "この月のまとめを作る") : null,
+    !s.report && month < thisMonth() ? h("button", { class: "plain", onclick: makeReport }, "この月のまとめを作る") : null),
   ];
 }
 
-async function yearView(params) {
+async function yearView(params, from) {
   const settings = await api("GET", "/api/settings");
   const year = params.get("year");
-  const y = await api("GET", `/api/summary/year${year ? `?year=${year}` : ""}`);
+  const loadYear = (n) => api("GET", `/api/summary/year${n ? `?year=${n}` : ""}`);
+  const y = await loadAhead(`year:${year}`, () => loadYear(year), from);
+  readAhead([y.year - 1, y.year + 1].map((n) => `year:${n}`), (k) => loadYear(k.slice(5)));
   const start = Number(settings.year_start_month);
   const go = (n) => { location.hash = `#/summary?view=year&year=${n}`; };
   const max = Math.max(1, ...y.months.map((m) => Math.max(m.expense, m.income)));
   const cats = y.categories.filter((c) => c.type === "expense").sort((a, b) => b.amount - a.amount);
   return [
     monthNav(String(y.year), (n) => go(y.year + n), start === 4 ? `${y.year}年度` : `${y.year}年`),
+    (n) => go(y.year + n),
     h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(y.months.reduce((s, m) => s + m.expense, 0)))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(y.months.reduce((s, m) => s + m.income, 0))))),
@@ -1340,7 +1407,7 @@ async function route() {
     view.replaceChildren(h("h1", {}, "読み込めませんでした"), h("p", { class: "sub" }, e.message),
       h("button", { onclick: route }, "もう一度"));
   }
-  window.scrollTo(0, 0);
+  view.scrollTo(0, 0);
 }
 
 // 保存したら前の画面に戻る。アプリを開いてすぐの画面なら、戻る先がないので決まった画面へ移る
