@@ -362,18 +362,13 @@ async function entryForm(existing) {
         if (existing) {
           await api("PUT", `/api/entries/${existing.id}`, data);
           toast("保存しました");
-          history.back();
+          goBack("#/list");
         } else {
           const r = await api("POST", "/api/entries", data);
           if (data.from_account_id) store.set("lastPay", data.from_account_id);
           const cat = list.find((a) => a.id === r.category_id);
           toast(cat && !data.category_id && !data.items ? `${cat.name}として記録しました` : "記録しました");
-          items = [];
-          form.reset();
-          showItems();
-          form.elements.date.value = today();
-          if (form.elements.from_account_id) form.elements.from_account_id.value = data.from_account_id ?? "";
-          form.elements.amount.focus();
+          goBack("#/");
         }
       } catch (e) { toast(e.message); }
     });
@@ -436,7 +431,7 @@ async function recoveryCard(e) {
       await api("POST", `/api/entries/${e.id}/recoveries`, data);
       store.set("lastRecv", data.account_id);
       toast("回収を記録しました");
-      route();
+      goBack("#/list");
     } catch (err) { toast(err.message); }
   });
   return h("div", { class: "card" },
@@ -706,7 +701,7 @@ async function newAccountView() {
       const a = await api("POST", "/api/accounts", d);
       toast("追加しました");
       accountsCache = null;
-      location.hash = `#/account/${a.id}`;
+      goBack("#/accounts");
     } catch (e) { toast(e.message); }
   });
   return [h("h1", {}, "追加"), form];
@@ -748,13 +743,13 @@ function checkForm(a, bal, history) {
     const diff = d.actual - bal;
     // 差がなければ、そのまま確かめた日だけ残す
     if (diff === 0 || investment) {
-      if (await save(d, true)) { toast(diff === 0 ? "差はありませんでした" : "評価額を更新しました"); route(); }
+      if (await save(d, true)) { toast(diff === 0 ? "差はありませんでした" : "評価額を更新しました"); goBack("#/accounts"); }
       return;
     }
     result.replaceChildren(h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "差"), h("b", {}, yen(diff))),
       h("div", { class: "buttons" },
-        h("button", { onclick: async () => { if (await save(d, true)) { toast("差を使途不明にしました"); route(); } } }, "差を使途不明にする"),
+        h("button", { onclick: async () => { if (await save(d, true)) { toast("差を使途不明にしました"); goBack("#/accounts"); } } }, "差を使途不明にする"),
         h("a", { class: "button plain", href: "#/new" }, "記録漏れを足す"))));
   });
   return [
@@ -787,7 +782,7 @@ function accountSettings(a, list) {
       await api("PATCH", `/api/accounts/${a.id}`, d);
       accountsCache = null;
       toast("保存しました");
-      route();
+      goBack("#/accounts");
     } catch (e) { toast(e.message); }
   });
   return form;
@@ -817,7 +812,7 @@ async function openingView() {
     try {
       await api("POST", "/api/opening", { date: form.elements.date.value, balances });
       toast("開始残高を保存しました");
-      location.hash = "#/";
+      goBack("#/");
     } catch (e) { toast(e.message); }
   });
   return [h("h1", {}, "開始残高"), h("p", { class: "sub", style: "margin:0;padding:0 4px" }, "分かるものだけ入れてください。後の棚卸しや明細の取り込みで埋まります。"), form];
@@ -1015,7 +1010,14 @@ async function route() {
   window.scrollTo(0, 0);
 }
 
-window.addEventListener("hashchange", route);
+// 保存したら前の画面に戻る。アプリを開いてすぐの画面なら、戻る先がないので決まった画面へ移る
+let navigated = false;
+function goBack(fallback) {
+  if (navigated) history.back();
+  else location.hash = fallback;
+}
+
+window.addEventListener("hashchange", () => { navigated = true; route(); });
 route();
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
