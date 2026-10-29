@@ -1,0 +1,9 @@
+{
+  "name": "家計簿",
+  "short_name": "家計簿",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#EAF3F8",
+  "theme_color": "#EAF3F8",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }, { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png" }]
+}
