@@ -59,21 +59,23 @@ body {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
-/* ホーム画面のアプリでは、iOS が画面の上の端にぼかしをかけ、時計の欄の下の文字までぼやける。
-   上の端に一色の不透明な板を固定しておくと、iOS はぼかしの代わりにその色で塗る。
-   iOS は時計の欄のすぐ下で板を探すので、板が時計の欄の高さで終わると見つからない。少し下まで伸ばし、
-   最初の行より上で止める。半透明や backdrop-filter にするとぼかしが戻るので使わない */
-body::before {
-  content: ""; position: fixed; top: 0; left: 0; right: 0; height: calc(env(safe-area-inset-top) + 12px);
-  background: var(--bg); z-index: 15; pointer-events: none;
-}
+/* ホーム画面のアプリでは、iOS が時計の欄とその下 30pt ほどにぼかしをかける。ぼかしは消せず、上に板を重ねても
+   その上からかかるので、文書は動かさず、ぼかしの帯より下に置いた main の中だけをスクロールさせる。
+   帯には地の色しか来ないので、ぼかしがかかっても見えない */
+html, body { height: 100%; overflow: hidden; }
 main {
-  max-width: 600px;
-  margin: 0 auto;
-  padding: calc(16px + env(safe-area-inset-top)) 16px calc(120px + env(safe-area-inset-bottom));
+  position: fixed; top: calc(env(safe-area-inset-top) + 32px); bottom: 0; left: 0; right: 0;
+  overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  padding: 4px max(16px, calc(50% - 284px)) calc(120px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+main > * { flex-shrink: 0; }
+/* Safari のタブで開いたときはぼかしの帯がないので、上の余白はふつうに戻す */
+@media not all and (display-mode: standalone) {
+  main { top: env(safe-area-inset-top); padding-top: 16px; }
+  .sheetbar { margin-top: -16px; }
 }
 a { color: var(--tint); }
 
@@ -242,7 +244,7 @@ details.card[open] > summary::after { content: "－"; }
 body.sheet .dock { display: none; }
 body.sheet main { padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
 .sheetbar {
-  position: sticky; top: env(safe-area-inset-top); z-index: 16; margin: -16px -16px 0; padding: 4px 8px;
+  position: sticky; top: 0; z-index: 5; margin: -4px -16px 0; padding: 4px 8px;
   display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); align-items: center; min-height: 52px; background: var(--bg);
 }
 .sheetbar h1 { font-size: 17px; font-weight: 600; line-height: 22px; padding: 0; text-align: center; }

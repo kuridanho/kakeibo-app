@@ -1407,7 +1407,7 @@ async function route() {
     view.replaceChildren(h("h1", {}, "読み込めませんでした"), h("p", { class: "sub" }, e.message),
       h("button", { onclick: route }, "もう一度"));
   }
-  window.scrollTo(0, 0);
+  view.scrollTo(0, 0);
 }
 
 // 保存したら前の画面に戻る。アプリを開いてすぐの画面なら、戻る先がないので決まった画面へ移る
