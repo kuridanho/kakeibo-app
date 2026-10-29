@@ -225,10 +225,12 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
       if (!lines && -oldLines.filter((l) => l.account_id === cardId).reduce((s, l) => s + l.amount, 0) !== scale) {
         throw new LedgerError(`取引 ${link} はカテゴリが複数に分かれていて、金額が明細と違うため自動で合わせられません`);
       }
+      // 手入力やレシートで日本語の店名が入っていればそちらを残し、明細の利用先はメモに回す
+      const keepPayee = !!old.payee && /[\u3040-\u30ff\u4e00-\u9fff]/.test(old.payee) && old.payee !== row.merchant;
       await updateEntry(db, link, {
         ...common,
-        payee: row.merchant,
-        memo: [old.memo, old.payee && old.payee !== row.merchant ? `入力時の利用先: ${old.payee}` : "", memo].filter(Boolean).join(" / "),
+        payee: keepPayee ? old.payee : row.merchant,
+        memo: [old.memo, keepPayee ? `明細の利用先: ${row.merchant}` : old.payee && old.payee !== row.merchant ? `入力時の利用先: ${old.payee}` : "", memo].filter(Boolean).join(" / "),
       }, lines, "明細と照合");
       result.linked++;
       continue;

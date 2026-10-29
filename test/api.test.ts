@@ -129,10 +129,11 @@ describe("カード明細の取り込み", () => {
     expect(r).toMatchObject({ linked: 1, created: 2, duplicate: 0 });
 
     const entries = await api<any[]>("GET", `/api/entries?account_id=${card}`);
-    const linked = entries.find((e) => e.payee === "ドトールコーヒー");
+    // 手入力の日本語の店名を残し、明細の利用先はメモに回す
+    const linked = entries.find((e) => e.payee === "ドトール");
     expect(linked.provisional).toBe(0);
     expect(linked.source).toBe("statement");
-    expect(linked.memo).toContain("ドトール");
+    expect(linked.memo).toContain("明細の利用先: ドトールコーヒー");
 
     // 2回目は重複として何もしない
     const again = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2026-12", text: csv });
