@@ -1,5 +1,5 @@
-// 来月の予算。来月末の手元資金の見込みから、残しておく額を引いて出す。
-// カードの利用は来月の手元からは出ないので、ここでは引かない。来月の引き落とし(先月までの利用)だけを引く。
+// 来月の予算。来月末の手元資金の見込みから、そのときまだ払っていないカードの利用と、残しておく額を引いて出す。
+// 来月にカードで使う分(カードで払う固定費など)は手元からは再来月に出るが、使える額からは来月のうちに引く。
 
 import type { Account, Env } from "../types";
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
@@ -26,6 +26,8 @@ export interface NextMonthBudget {
   /** カードで払う固定費。手元からは引かないので、参考として返す */
   card_fixed: BudgetItem[];
   projected_liquid: number;
+  /** 来月末の時点で、まだ引き落とされていないカードの利用 */
+  card_unpaid: number;
   buffer: number;
   budget: number;
 }
@@ -73,7 +75,10 @@ async function recordedKeys(db: D1Database, keys: string[]): Promise<Set<string>
  * 祝日で翌月にずれる回があるので、前月の回も見て、実際の日付がその月のものだけを拾う。
  * 問い合わせを1件ずつ待つと遅いので、候補を先に洗い出してまとめて調べる。
  */
-async function pendingItems(db: D1Database, month: string, liquidIds: Set<number>, today: string): Promise<BudgetItem[]> {
+async function pendingItems(db: D1Database, month: string, liquidIds: Set<number>, today: string,
+  cardOwed: Map<number, number>): Promise<BudgetItem[]> {
+  // まだ記録されていないカードの利用と引き落としを、カードごとの未払いに足し引きする
+  const owe = (id: number, amount: number) => { if (cardOwed.has(id)) cardOwed.set(id, cardOwed.get(id)! + amount); };
   const months = [addMonths(month, -1), month];
   const [{ results: recurring }, { results: payers }] = await Promise.all([
     db.prepare("SELECT * FROM recurring WHERE active = 1").all<Recurring>(),
@@ -102,6 +107,8 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
         r.from_account_id ? resolveAccount(db, r.from_account_id) : null,
       ]);
       cashDelta = lines.filter((l) => liquidIds.has(l.account_id)).reduce((s, l) => s + l.amount, 0);
+      // カードの行は負債が増える向きが負なので、符号を返して未払いに足す
+      for (const l of lines) owe(l.account_id, -l.amount);
       from = account;
     } catch {
       // 口座を消したなどで記録できない回は、予定にも入れない
@@ -117,6 +124,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
       ? await cardDue(db, a.id, billMonth)
       : Math.min(a.payment_amount ?? 0, Math.max(await balanceOf(db, a, today), 0));
     if (amount <= 0) return null;
+    owe(a.id, -amount);
     const cashDelta = liquidIds.has(a.payment_account_id!) ? -amount : 0;
     if (cashDelta === 0) return null;
     return {
@@ -139,9 +147,14 @@ export async function nextMonthBudget(db: D1Database, today = todayJST()): Promi
   const liquid = await liquidAccounts(db);
   const liquidIds = new Set(liquid.map((a) => a.id));
 
+  // カードごとの来月末の未払い。記録済みの残高から始める
+  const { results: cards } = await db.prepare("SELECT * FROM accounts WHERE kind = 'card' AND archived = 0").all<Account>();
+  const owed = await Promise.all(cards.map((c) => balanceOf(db, c, `${month}-31`)));
+  const cardOwed = new Map(cards.map((c, i) => [c.id, owed[i]]));
+
   const [pendingCurrent, pendingNext, recordedNext, balances, bufferSetting] = await Promise.all([
-    pendingItems(db, current, liquidIds, today),
-    pendingItems(db, month, liquidIds, today),
+    pendingItems(db, current, liquidIds, today, cardOwed),
+    pendingItems(db, month, liquidIds, today, cardOwed),
     recordedItems(db, `${month}-01`, `${month}-31`),
     Promise.all(liquid.map((a) => balanceOf(db, a, `${month}-31`))),
     getSetting(db, "budget_buffer", "0"),
@@ -154,6 +167,7 @@ export async function nextMonthBudget(db: D1Database, today = todayJST()): Promi
   const nextItems = [...recordedNext, ...pendingNext].sort((x, y) => x.date.localeCompare(y.date));
   const change = nextItems.reduce((s, item) => s + item.cash_delta, 0);
   const buffer = Number(bufferSetting) || 0;
+  const cardUnpaid = [...cardOwed.values()].reduce((s, v) => s + Math.max(v, 0), 0);
 
   return {
     month,
@@ -163,7 +177,8 @@ export async function nextMonthBudget(db: D1Database, today = todayJST()): Promi
     expenses: nextItems.filter((i) => i.cash_delta < 0),
     card_fixed: pendingNext.filter((i) => i.kind === "card" && i.cash_delta === 0),
     projected_liquid: projected,
+    card_unpaid: cardUnpaid,
     buffer,
-    budget: projected - buffer,
+    budget: projected - cardUnpaid - buffer,
   };
 }
