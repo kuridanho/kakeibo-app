@@ -4,6 +4,11 @@
 // - 名義行: `氏名　様,4980-00**-****-****,カード名`。ファイル途中にも現れ、それ以降は Apple Pay / iD などの区分になる
 // - 明細行: `利用日,利用店名,利用金額,支払区分(回数),今回回数,支払金額,備考`。回数は全角数字
 // - 合計行: `,,,,,合計,`
+//
+// もう1つの形式(Shift_JIS、ヘッダーと名義行なし、13列)も読む:
+// - 明細行: `利用日,利用店名,利用者,支払区分,回数,請求月,利用金額,支払金額,,現地通貨額,通貨,レート,換算日`
+//   日付は 2026/10/8 のように0を詰めない。回数は '2/3、請求月は '26/11 のように先頭に ' が付く。
+//   海外の利用は支払金額が空で、利用金額に円に換えた額が入る
 // 文字コードの変換はブラウザ側で行い、ここには文字列を渡す。
 
 export interface StatementRow {
@@ -22,7 +27,10 @@ export interface StatementRow {
 }
 
 export interface ParsedStatement {
+  /** 名義行のない形式では空 */
   cardName: string;
+  /** 明細行に請求月が載っている形式なら YYYY-MM */
+  billingMonth: string | null;
   rows: StatementRow[];
   declaredTotal: number | null;
   paymentTotal: number;
@@ -72,7 +80,39 @@ function toInt(s: string | undefined): number | null {
 }
 
 function toDate(s: string): string | null {
-  return /^\d{4}\/\d{2}\/\d{2}$/.test(s) ? s.replaceAll("/", "-") : null;
+  const m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s);
+  return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null;
+}
+
+/** 13列の形式の明細行か。請求月の列が '26/11 の形になっている */
+function isWideRow(cols: string[]): boolean {
+  return cols.length >= 8 && /^'?\d{2}\/\d{1,2}$/.test(cols[5].trim());
+}
+
+function wideRow(date: string, cols: string[]): StatementRow {
+  const usage = toInt(cols[6]) ?? 0;
+  // 回数は '2/3(3回のうち2回目)。1回払いは空
+  const n = /^'?(\d+)\/(\d+)$/.exec(cols[4].trim());
+  const once = cols[3].includes("1回");
+  const foreign = cols[10]?.trim() && cols[10].trim() !== "JPY"
+    ? `${cols[9].trim()} ${cols[10].trim()} レート ${cols[11]?.trim() ?? ""}`.trim() : "";
+  const user = normalizeText(cols[2] ?? "");
+  return {
+    usageDate: date,
+    merchant: normalizeText(cols[1] ?? ""),
+    usageAmount: usage,
+    installmentCount: n ? Number(n[2]) : once ? 1 : null,
+    installmentNumber: n ? Number(n[1]) : once ? 1 : null,
+    paymentAmount: toInt(cols[7]) ?? usage,
+    note: [once || n ? "" : normalizeText(cols[3]), foreign].filter(Boolean).join(" "),
+    subCardName: user && user !== "ご本人" ? user : null,
+    maskedCardNumber: "",
+  };
+}
+
+function wideBillingMonth(cols: string[]): string {
+  const [y, m] = cols[5].trim().replace(/^'/, "").split("/");
+  return `20${y}-${m.padStart(2, "0")}`;
 }
 
 /** ファイル名の "202610.csv" から請求月 "2026-10" を取る */
@@ -88,13 +128,17 @@ export function parseSMBC(text: string): ParsedStatement {
   let cardNumber = "";
   let subCard: string | null = null;
   let declaredTotal: number | null = null;
+  let billingMonth: string | null = null;
   const rows: StatementRow[] = [];
 
   for (const line of text.replace(/^﻿/, "").split(/\r\n|\n|\r/)) {
     const cols = splitCSVLine(line);
     if (cols.every((c) => c === "")) continue;
     const date = toDate(cols[0]);
-    if (date) {
+    if (date && isWideRow(cols)) {
+      rows.push(wideRow(date, cols));
+      billingMonth ??= wideBillingMonth(cols);
+    } else if (date) {
       if (cardName === null) throw new StatementParseError("カード名の行が見つかりませんでした");
       const usage = toInt(cols[2]) ?? 0;
       rows.push({
@@ -119,6 +163,6 @@ export function parseSMBC(text: string): ParsedStatement {
       cardNumber = cols[1];
     }
   }
-  if (cardName === null) throw new StatementParseError("カード名の行が見つかりませんでした");
-  return { cardName, rows, declaredTotal, paymentTotal: rows.reduce((s, r) => s + r.paymentAmount, 0) };
+  if (cardName === null && billingMonth === null) throw new StatementParseError("明細の行が見つかりませんでした");
+  return { cardName: cardName ?? "", billingMonth, rows, declaredTotal, paymentTotal: rows.reduce((s, r) => s + r.paymentAmount, 0) };
 }

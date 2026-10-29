@@ -44,3 +44,28 @@ describe("三井住友カードの明細", () => {
     expect(guessKeyword("なにかの店")).toBeNull();
   });
 });
+
+describe("13列の形式の明細", () => {
+  const wide = [
+    "2026/10/28,ビッグボーイ,ご本人,1回払い,,'26/11,1309,1309,,,,,",
+    "2026/10/23,ＤＥＥＰＳＥＥＲＷＥＡ,ご本人,1回払い,,'26/11,867,,,5.30,USD,163.744,10/24",
+    "2026/10/20,ＵＢＥＲ  ＊ＥＡＴＳ,ご本人,1回払い,,'26/11,1382,,,1382.00,JPY,1.0000,10/21",
+    "2026/10/8,マクドナルド,家族,1回払い,,'26/11,240,240,,,,,",
+    "2026/9/29,ヨークベニマル  食品,ご本人,分割払い,'2/3,'26/11,2390,2390,,,,,",
+    "",
+  ].join("\r\n");
+
+  it("名義行がなくても読み、海外の利用は円の額を使う", () => {
+    const s = parseSMBC(wide);
+    expect(s.cardName).toBe("");
+    expect(s.billingMonth).toBe("2026-11");
+    expect(s.declaredTotal).toBeNull();
+    expect(s.rows).toHaveLength(5);
+    expect(s.paymentTotal).toBe(1309 + 867 + 1382 + 240 + 2390);
+    expect(s.rows[1]).toMatchObject({ merchant: "DEEPSEERWEA", paymentAmount: 867, note: "5.30 USD レート 163.744" });
+    expect(s.rows[2]).toMatchObject({ paymentAmount: 1382, note: "" });
+    expect(s.rows[3]).toMatchObject({ usageDate: "2026-10-08", subCardName: "家族" });
+    expect(s.rows[4]).toMatchObject({ usageDate: "2026-09-29", installmentNumber: 2, installmentCount: 3, paymentAmount: 2390 });
+    expect(s.rows[0]).toMatchObject({ installmentCount: 1, subCardName: null });
+  });
+});

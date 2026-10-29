@@ -325,3 +325,15 @@ describe("同じ月の明細の取り込み直し", () => {
     await balanced();
   });
 });
+
+describe("13列の形式の明細の取り込み", () => {
+  const wide = "2027/12/8,ミニストップ,ご本人,1回払い,,'28/02,500,500,,,,,\n2027/12/10,ＮＥＴＦＬＩＸ,ご本人,1回払い,,'28/02,990,,,6.00,USD,165.0,12/11\n";
+  it("請求月が合えば取り込め、取り込み直すと重複になる", async () => {
+    await expect(api("POST", "/api/statements/preview", { account_id: card, billing_month: "2028-01", text: wide })).rejects.toThrow("請求月");
+    const r = await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2028-02", text: wide, choices: {} });
+    expect(r).toMatchObject({ created: 2, payment_total: 1490 });
+    const again = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2028-02", text: wide });
+    expect(again.rows.every((x: any) => x.status === "duplicate")).toBe(true);
+    await balanced();
+  });
+});

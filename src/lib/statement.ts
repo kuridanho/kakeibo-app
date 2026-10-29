@@ -86,6 +86,9 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
   if (card.kind !== "card") throw new LedgerError("取り込み先にはカードを選んでください");
   if (!/^\d{4}-\d{2}$/.test(billingMonth)) throw new LedgerError("請求月は YYYY-MM で入れてください");
   const parsed = parseSMBC(text);
+  if (parsed.billingMonth && parsed.billingMonth !== billingMonth) {
+    throw new LedgerError(`この明細の請求月は ${Number(parsed.billingMonth.slice(5))}月です。請求月を ${parsed.billingMonth} にしてください`);
+  }
   const keys = rowKeys(cardId, billingMonth, parsed.rows);
 
   const existing = new Set<string>();
