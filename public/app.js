@@ -182,15 +182,19 @@ function monthNav(month, go, label = monthTitle(month)) {
 
 // ---- ホーム ----
 
+// ホームで読んだ来月の予算。内訳を開いたときに読み直さずにすぐ出す
+let budgetCache = null;
+
 async function home() {
-  const [b, s, advances, provisional, budget] = await Promise.all([
+  const [b, s, advances, provisional, budget, entries] = await Promise.all([
     api("GET", "/api/balances"),
     api("GET", `/api/summary/month?month=${thisMonth()}`),
     api("GET", "/api/advances"),
     api("GET", "/api/entries?provisional=1&limit=200"),
     api("GET", "/api/budget"),
+    api("GET", `/api/entries?month=${thisMonth()}`),
   ]);
-  const entries = await api("GET", `/api/entries?month=${thisMonth()}`);
+  budgetCache = budget;
   const unsure = entries.filter((e) => e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source));
 
   if (b.accounts.length === 0) {
@@ -237,8 +241,7 @@ async function home() {
       h("div", { class: "row" },
         h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月使える額（概算）"),
         h("span", { class: "footnote" }, "内訳")),
-      h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yen(budget.budget)),
-      h("span", { class: "footnote" }, `${monthLabel(budget.month)}。来月末の手元からカードの未払いと余裕を引いた額`)),
+      h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yen(budget.budget))),
     h("span", { class: "section-head" }, `${Number(thisMonth().slice(5))}月の支出`),
     h("a", { class: "card", href: "#/summary", style: "text-decoration:none;color:inherit" },
       h("div", { class: "row" },
@@ -260,49 +263,53 @@ async function home() {
 // ---- 来月の予算 ----
 
 async function budgetView() {
-  const b = await api("GET", "/api/budget");
-  const list = (items, sign) => items.length === 0
-    ? h("p", { class: "empty" }, "ありません")
-    : h("div", { class: "group" }, items.map((x) => cell({},
-      h("span", { class: "grow" }, h("span", {}, x.label), h("span", { class: "detail" }, dayLabel(x.date))),
-      h("span", { class: `value${sign === "+" ? " inc" : ""}` }, `${sign}${yen(x.amount)}`))));
-  const form = h("form", { id: "budget-form" },
-    group(field("残しておく額", moneyInput({ name: "budget_buffer", "data-num": "", value: b.buffer }))),
-    h("button", { type: "submit" }, "保存"));
-  form.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const d = formData(form);
+  const b = budgetCache ?? await api("GET", "/api/budget");
+  budgetCache = null;
+  const sum = (items) => items.reduce((t, x) => t + x.amount, 0);
+  const hero = h("span", { class: `hero${b.budget < 0 ? " neg" : ""}` }, yen(b.budget));
+  const item = (label, date, amount) => h("div", { class: "cell sub" },
+    h("span", { class: "grow" }, h("span", {}, label), date ? h("span", { class: "detail" }, dayLabel(date)) : null),
+    h("span", { class: "amount" }, amount));
+  // 内訳を持つ行は押すと開く。使える額までを上から順に足し引きする式として並べる
+  const part = (label, total, rows) => rows.length === 0
+    ? h("div", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total))
+    : h("details", { class: "fold" }, h("summary", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total)), rows);
+
+  // カードの未払いのうち、来月の固定費だけ名前で出し、残りはまとめる
+  const fixed = sum(b.card_fixed);
+  const cardRows = b.card_fixed.length === 0 ? [] : [
+    ...b.card_fixed.map((x) => item(x.label, x.date, minus(x.amount))),
+    b.card_unpaid > fixed ? item("そのほかの利用", null, minus(b.card_unpaid - fixed)) : null,
+  ].filter(Boolean);
+
+  // 残しておく額は、その場で書き換えると保存して使える額を出し直す
+  const buffer = moneyInput({ "aria-label": "残しておく額", value: b.buffer, placeholder: "0" });
+  // 幅を数字の長さに合わせ、− の符号のすぐ右に数字が来るようにする
+  const fit = () => {
+    const digits = Math.max(1, buffer.value.replace(/[^0-9]/g, "").length);
+    buffer.style.width = `${digits + (buffer.value.split(",").length - 1) * 0.45 + 0.2}ch`;
+  };
+  fit();
+  buffer.addEventListener("input", fit);
+  buffer.addEventListener("change", async () => {
+    const v = Math.max(0, parseNum(buffer.value) || 0);
     try {
-      await api("PUT", "/api/settings", { budget_buffer: d.budget_buffer ?? 0 });
-      toast("保存しました");
-      route();
+      await api("PUT", "/api/settings", { budget_buffer: String(v) });
+      const budget = b.projected_liquid - b.card_unpaid - v;
+      hero.textContent = yen(budget);
+      hero.classList.toggle("neg", budget < 0);
     } catch (e) { toast(e.message); }
   });
 
   return [
-    h("h1", {}, "来月の予算"),
-    h("div", { class: "card" },
-      h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月使える額（概算）"),
-      h("span", { class: `hero${b.budget < 0 ? " neg" : ""}` }, yen(b.budget)),
-      h("div", { class: "group", style: "padding-left:0;border-radius:0" },
-        h("div", { class: "cell" }, h("span", { class: "grow" }, "来月初めの手元"), h("span", { class: "amount" }, yen(b.opening_liquid))),
-        h("div", { class: "cell" }, h("span", { class: "grow" }, "来月末の手元（見込み）"), h("span", { class: "amount" }, yen(b.projected_liquid))),
-        h("div", { class: "cell" }, h("span", { class: "grow" }, "来月末のカードの未払い"), h("span", { class: "amount" }, yen(-b.card_unpaid))),
-        h("div", { class: "cell" }, h("span", { class: "grow" }, "残しておく額"), h("span", { class: "amount" }, yen(b.buffer))))),
-    h("span", { class: "section-head" }, "入る予定"),
-    list(b.income, "+"),
-    h("span", { class: "section-head" }, "出る予定"),
-    list(b.expenses, "−"),
-    b.card_fixed.length ? [
-      h("span", { class: "section-head" }, "カードで払う固定費"),
-      h("div", { class: "group" }, b.card_fixed.map((x) => cell({},
-        h("span", { class: "grow" }, h("span", {}, x.label), h("span", { class: "detail" }, dayLabel(x.date))),
-        h("span", { class: "value" }, yen(x.amount))))),
-      h("p", { class: "footnote", style: "padding:0 4px" }, "手元からは再来月に出ますが、来月末のカードの未払いとして使える額から引いています。"),
-    ] : null,
-    h("span", { class: "section-head" }, "設定"),
-    form,
-    h("p", { class: "footnote", style: "padding:0 4px" }, "来月末の手元資金から、カードの未払いとこの額を引いた分が「使える額」です。"),
+    h("h1", {}, `${Number(b.month.slice(5))}月に使える額`),
+    h("div", { class: "card" }, hero,
+      h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
+      h("div", { class: "cell" }, h("span", { class: "grow" }, "月初めの手元"), h("span", { class: "amount" }, num(b.opening_liquid))),
+      part("入る予定", plus(sum(b.income)), b.income.map((x) => item(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
+      part("出る予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount)))),
+      part("月末に残るカードの未払い", minus(b.card_unpaid), cardRows),
+      h("label", { class: "cell field" }, h("span", { class: "grow" }, "残しておく額"), h("span", { class: "minus" }, "−"), buffer))),
   ];
 }
 
