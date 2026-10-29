@@ -156,6 +156,23 @@ describe("カード明細の取り込み", () => {
     });
     expect(r.linked).toBe(1);
   });
+
+  it("手入力した分割払いは利用額で照合し、その月の支払額に置き換える", async () => {
+    const shop = await category("買い物");
+    const manual = await api("POST", "/api/entries", {
+      kind: "expense", date: "2026-12-20", amount: 60000, from_account_id: card, category_id: shop, payee: "ヨドバシ", memo: "掃除機",
+    });
+    const text = "様,1,三井住友カード\n2026/12/20,ヨドバシカメラ,60000,３,１,20000,\n";
+    const p = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2027-02", text });
+    expect(p.rows[0].status).toBe("matched");
+    expect(p.rows[0].match_entry_id).toBe(manual.id);
+    await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2027-02", text });
+    const e = await api("GET", `/api/entries/${manual.id}`);
+    expect(e.provisional).toBe(0);
+    expect(e.lines.find((l: any) => l.type === "expense")).toMatchObject({ account_id: shop, amount: 20000 });
+    expect(e.memo).toContain("掃除機");
+    expect(e.memo).toContain("分割 1/3回");
+  });
 });
 
 describe("カテゴリの統合", () => {

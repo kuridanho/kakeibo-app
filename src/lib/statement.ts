@@ -111,7 +111,9 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
     };
     if (existing.has(key)) return { ...base, status: "duplicate" };
     const candidates = provisional
-      .filter((p) => p.amount === r.paymentAmount && Math.abs(diffDays(p.date, r.usageDate)) <= WEAK_DAYS)
+      // 分割払いは、手入力した利用額とも照合する。結びつけると、その月の支払額に置き換わる
+      .filter((p) => (p.amount === r.paymentAmount || ((r.installmentCount ?? 1) > 1 && p.amount === r.usageAmount))
+        && Math.abs(diffDays(p.date, r.usageDate)) <= WEAK_DAYS)
       .map((p) => ({ ...p, strong: Math.abs(diffDays(p.date, r.usageDate)) <= STRONG_DAYS && (similar(p.payee, r.merchant) || p.date === r.usageDate) }));
     if (candidates.length === 0) return base;
     // 返品や、日付が大きくずれる候補は自動では決めない
@@ -221,7 +223,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
         ? [{ account_id: others[0].account_id, amount: scale }, { account_id: cardId, amount: -scale }]
         : undefined;
       if (!lines && -oldLines.filter((l) => l.account_id === cardId).reduce((s, l) => s + l.amount, 0) !== scale) {
-        throw new LedgerError(`取引 ${link} は内訳が複数あり、金額が明細と違うため自動で合わせられません`);
+        throw new LedgerError(`取引 ${link} はカテゴリが複数に分かれていて、金額が明細と違うため自動で合わせられません`);
       }
       await updateEntry(db, link, {
         ...common,
