@@ -760,17 +760,39 @@ async function yearView(params) {
 // 棚卸しで実際の残高と照らし合わせるもの
 const CHECKABLE = ["cash", "bank", "emoney"];
 
-/** 並べ替えの画面。上下のボタンで動かし、終わったら順番を保存する */
-function reorderGroup(items, label, onDone) {
-  const order = [...items];
-  const group = h("div", { class: "group" });
-  const draw = () => fill(group, ...order.map((a, i) => cell({},
+/** 並べ替えの画面。右の取っ手をドラッグして動かし、完了で今の並びの id を返す */
+function reorderGroup(items, label) {
+  const group = h("div", { class: "group reorder" }, items.map((a) => cell({ "data-id": a.id },
     h("span", { class: "grow" }, label(a)),
-    h("button", { type: "button", class: "icon", "aria-label": `${a.name}を上へ`, disabled: i === 0, onclick: () => move(i, -1) }, icon("M6 15l6-6 6 6")),
-    h("button", { type: "button", class: "icon", "aria-label": `${a.name}を下へ`, disabled: i === order.length - 1, onclick: () => move(i, 1) }, icon("M6 9l6 6 6-6")))));
-  const move = (i, d) => { [order[i], order[i + d]] = [order[i + d], order[i]]; draw(); };
-  draw();
-  return { group, save: () => onDone(order.map((a) => a.id)) };
+    h("span", { class: "grip", "aria-hidden": "true" }, icon("M5 9h14M5 15h14")))));
+  group.addEventListener("pointerdown", (ev) => {
+    const grip = ev.target.closest(".grip");
+    if (!grip) return;
+    ev.preventDefault();
+    const row = grip.closest(".cell");
+    grip.setPointerCapture(ev.pointerId);
+    row.classList.add("dragging");
+    // 行を指に付いて動かし、隣の行の半分を越えたら入れ替える。入れ替えた分だけ起点をずらす
+    let base = ev.clientY;
+    const move = (e) => {
+      const dy = e.clientY - base;
+      const next = row.nextElementSibling, prev = row.previousElementSibling;
+      if (next && dy > next.offsetHeight / 2) { next.after(row); base += next.offsetHeight; }
+      else if (prev && dy < -prev.offsetHeight / 2) { prev.before(row); base -= prev.offsetHeight; }
+      row.style.transform = `translateY(${e.clientY - base}px)`;
+    };
+    const up = () => {
+      row.classList.remove("dragging");
+      row.style.transform = "";
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
+  return { group, save: () => [...group.children].map((r) => Number(r.dataset.id)) };
 }
 
 async function accountsView(params) {
@@ -783,14 +805,14 @@ async function accountsView(params) {
   }
   const sum = (as) => as.reduce((s, a) => s + a.balance, 0);
   const groups = [
-    ["すぐ使えるお金", b.accounts.filter((a) => a.type === "asset" && a.liquid)],
+    ["手元のお金", b.accounts.filter((a) => a.type === "asset" && a.liquid)],
     ["別枠の資産", b.accounts.filter((a) => a.type === "asset" && !a.liquid)],
     ["カード", b.accounts.filter((a) => a.kind === "card")],
     ["借入", b.accounts.filter((a) => a.kind === "loan")],
   ].filter(([, as]) => as.length);
 
   if (params?.get("reorder")) {
-    const parts = groups.map(([title, as]) => [title, reorderGroup(as, (a) => a.name, () => null)]);
+    const parts = groups.map(([title, as]) => [title, reorderGroup(as, (a) => a.name)]);
     return [
       h("div", { class: "navrow" }, h("h1", {}, "並べ替え"),
         h("div", {}, h("button", { class: "text", onclick: async () => {
@@ -854,7 +876,7 @@ function toggles(kind, a) {
   const isAsset = !["card", "loan"].includes(kind);
   const defPay = ["cash", "bank", "emoney", "card"].includes(kind);
   return [
-    isAsset ? toggle("すぐ使えるお金に数える", h("input", { type: "checkbox", name: "liquid", checked: a ? !!a.liquid : ["cash", "bank", "emoney"].includes(kind) })) : null,
+    isAsset ? toggle("手元のお金に数える", h("input", { type: "checkbox", name: "liquid", checked: a ? !!a.liquid : ["cash", "bank", "emoney"].includes(kind) })) : null,
     kind !== "loan" ? toggle("支払方法に出す", h("input", { type: "checkbox", name: "pay_method", checked: a ? !!a.pay_method : defPay })) : null,
   ];
 }
@@ -1017,7 +1039,7 @@ async function categoriesView(params) {
   const cats = byType(list, "expense", "income").filter((c) => c.origin !== "system");
   if (params?.get("reorder")) {
     const parts = [["支出", cats.filter((c) => c.type === "expense")], ["収入", cats.filter((c) => c.type === "income")]]
-      .map(([title, cs]) => [title, reorderGroup(cs, (c) => c.name, () => null)]);
+      .map(([title, cs]) => [title, reorderGroup(cs, (c) => c.name)]);
     return [
       h("div", { class: "navrow" }, h("h1", {}, "並べ替え"),
         h("div", {}, h("button", { class: "text", onclick: async () => {
