@@ -60,10 +60,11 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 /* ホーム画面のアプリでは、iOS が画面の上の端にぼかしをかけ、時計の欄の下の文字までぼやける。
-   上の端に一色の不透明な板を固定しておくと、iOS はぼかしの代わりにその色で塗る。Safari のタブでは高さ 0。
-   半透明や backdrop-filter にするとぼかしが戻るので使わない */
+   上の端に一色の不透明な板を固定しておくと、iOS はぼかしの代わりにその色で塗る。
+   iOS は時計の欄のすぐ下で板を探すので、板が時計の欄の高さで終わると見つからない。少し下まで伸ばし、
+   最初の行より上で止める。半透明や backdrop-filter にするとぼかしが戻るので使わない */
 body::before {
-  content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top);
+  content: ""; position: fixed; top: 0; left: 0; right: 0; height: calc(env(safe-area-inset-top) + 12px);
   background: var(--bg); z-index: 15; pointer-events: none;
 }
 main {
@@ -241,7 +242,7 @@ details.card[open] > summary::after { content: "－"; }
 body.sheet .dock { display: none; }
 body.sheet main { padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
 .sheetbar {
-  position: sticky; top: env(safe-area-inset-top); z-index: 5; margin: -16px -16px 0; padding: 4px 8px;
+  position: sticky; top: env(safe-area-inset-top); z-index: 16; margin: -16px -16px 0; padding: 4px 8px;
   display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); align-items: center; min-height: 52px; background: var(--bg);
 }
 .sheetbar h1 { font-size: 17px; font-weight: 600; line-height: 22px; padding: 0; text-align: center; }
