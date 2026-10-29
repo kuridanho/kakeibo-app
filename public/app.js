@@ -688,7 +688,6 @@ async function calendarView(params) {
   const [y, m] = month.split("-").map(Number);
   const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const prevLast = new Date(Date.UTC(y, m - 1, 0)).getUTCDate();
   const cells = Math.ceil((first + last) / 7) * 7;
 
   // 日を押すと、下の一覧のその日へ移る
@@ -705,7 +704,8 @@ async function calendarView(params) {
       const i = k - first + 1;
       const w = k % 7;
       const tone = w === 0 ? " sun" : w === 6 ? " sat" : "";
-      if (i < 1 || i > last) return h("span", { class: `cal-d out${tone}` }, h("span", { class: "n" }, i < 1 ? prevLast + i : i - last));
+      // 前後の月の日は数字を出さず、空いたマスにする
+      if (i < 1 || i > last) return h("span", { class: "cal-d out" });
       const d = `${month}-${String(i).padStart(2, "0")}`;
       const t = cal.days[d];
       const ps = plannedBy.get(d) ?? [];

@@ -285,33 +285,30 @@ details.more > summary + * { margin-top: 4px; }
 .item input.item-amount { width: 96px; flex: none; text-align: right; min-height: 36px; padding: 6px 10px; background: var(--fill); }
 .item select { min-height: 36px; padding-top: 6px; padding-bottom: 6px; background-color: var(--fill); }
 
-/* カレンダー。端まで使う格子にし、金額は省略せずに出す */
-.cal-card { background: var(--card); border-radius: 22px; overflow: hidden; margin: 0 -4px; }
+/* カレンダー。iOS のカレンダーにならい、縦線と枠はなくして週の区切りの横線だけにする。
+   マスは金額が入るぶんだけの高さにし、月が縦に伸びないようにする */
+.cal-card { margin: 0 -4px; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.cal-w { border-bottom: 1px solid var(--separator); text-align: center; font-size: 11px; font-weight: 600; color: var(--secondary); padding: 8px 0 6px; }
+.cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--label); padding: 0 0 6px; }
 .cal-d {
-  min-height: 64px; padding: 4px 2px 4px; border-radius: 0; background: var(--card); color: var(--label);
-  border-bottom: 1px solid var(--separator); border-right: 1px solid var(--separator);
-  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 0; font-weight: 400; text-align: right;
+  min-height: 48px; padding: 4px 1px 5px; border-radius: 0; background: none; color: var(--label);
+  border-top: 0.5px solid var(--separator);
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0; font-weight: 400; text-align: center;
 }
-.cal-d .n { font-size: 12px; line-height: 20px; width: 20px; height: 20px; border-radius: 10px; text-align: center; align-self: flex-start; margin-bottom: auto; }
-.cal-d .e, .cal-d .i, .cal-d .p { font-size: 11px; line-height: 13px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; }
-.cal-d .i { color: var(--tint); }
-.cal-d .p { color: var(--secondary); text-decoration: underline dashed; text-underline-offset: 2px; }
-.cal-d .p.inc { color: var(--tint); }
-.cal-d.out .n { color: var(--secondary); opacity: 0.5; }
-.cal-d.today .n { color: var(--tint); font-weight: 700; }
-.cal-d.on { background: var(--tint-soft); }
-.cal-d.on .n { background: var(--tint); color: var(--on-tint); font-weight: 600; }
-.cal-w.sun, .cal-d.sun:not(.on) .n { color: var(--red); }
-.cal-sum { display: grid; grid-template-columns: repeat(3, 1fr); padding: 12px 8px 10px; text-align: center; }
-.cal-sum div { display: flex; flex-direction: column; gap: 2px; }
-.cal-sum span { font-size: 12px; color: var(--secondary); }
-.cal-sum b { font-size: 17px; font-weight: 600; }
+.cal-d .n { font-size: 17px; line-height: 28px; width: 28px; height: 28px; border-radius: 14px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
+.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10.5px; line-height: 13px; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; color: var(--secondary); }
+.cal-d .i, .cal-d .p.inc { color: var(--tint); }
+.cal-d .p { text-decoration: underline dashed; text-underline-offset: 2px; }
+.cal-w.sun, .cal-w.sat, .cal-d.sun .n, .cal-d.sat .n { color: var(--secondary); }
+.cal-d.on .n { background: var(--label); color: var(--bg); font-weight: 600; }
+.cal-d.today .n { background: var(--tint); color: var(--on-tint); font-weight: 600; }
+.cal-sum { display: flex; justify-content: space-between; gap: 8px; padding: 10px 4px 0; border-top: 0.5px solid var(--separator); font-variant-numeric: tabular-nums; }
+.cal-sum div { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.cal-sum span { font-size: 13px; color: var(--secondary); }
+.cal-sum b { font-size: 16px; font-weight: 600; }
 .cal-sum .inc { color: var(--tint); }
-.cal-plan { display: flex; justify-content: space-between; padding: 0 16px 12px; font-size: 13px; color: var(--secondary); }
+.cal-plan { display: flex; justify-content: space-between; padding: 6px 4px 0; font-size: 13px; color: var(--secondary); }
 .day-head { display: flex; justify-content: space-between; padding-right: 20px; scroll-margin-top: 12px; }
-.cal > :nth-child(7n) { border-right: none; }
 .item .row button.icon { width: 36px; min-height: 36px; margin-right: -6px; color: var(--secondary); }
 
 /* 並べ替え。右の取っ手をドラッグする */
