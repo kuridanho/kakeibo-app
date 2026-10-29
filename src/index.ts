@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import type { Account, Entry, Env } from "./types";
-import { classifyMerchants, classifyOne, learnRule, merchantKey } from "./lib/classify";
+import { classifyItems, classifyMerchants, classifyOne, learnItemRule, learnRule, merchantKey } from "./lib/classify";
 import { addMonths, monthOf, todayJST } from "./lib/dates";
 import {
   balanceOf, buildSimple, createEntry, deleteEntry, getAccount, getEntry, LedgerError, logChange,
   resolveAccount, type SimpleInput, updateEntry,
 } from "./lib/ledger";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
-import { evaluateReceipt } from "./lib/receipt-eval";
+import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
 import { StatementParseError } from "./lib/smbc";
 import { commitStatement, previewStatement } from "./lib/statement";
 
@@ -35,7 +35,7 @@ const int = (v: unknown, what: string): number => {
   return n;
 };
 
-// ---- 口座と費目 ----
+// ---- 口座とカテゴリ ----
 
 const ACCOUNT_KINDS: Record<string, string[]> = {
   asset: ["cash", "bank", "emoney", "savings", "investment", "receivable"],
@@ -46,10 +46,10 @@ const ACCOUNT_KINDS: Record<string, string[]> = {
 async function checkPaymentAccount(db: D1Database, id: unknown) {
   if (id === undefined || id === null) return;
   const a = await getAccount(db, int(id, "引き落とし口座"));
-  if (a.type !== "asset") throw new LedgerError("引き落とし口座には銀行口座などの資産を選んでください");
+  if (a.type !== "asset") throw new LedgerError("引き落とし口座には銀行口座などを選んでください");
 }
 
-const EDITABLE = ["name", "liquid", "closing_day", "payment_day", "payment_account_id", "payment_amount",
+const EDITABLE = ["name", "liquid", "pay_method", "closing_day", "payment_day", "payment_account_id", "payment_amount",
   "check_interval_days", "statement_card_name", "statement_import", "sort_order", "archived"] as const;
 
 app.get("/api/accounts", async (c) => {
@@ -63,17 +63,18 @@ app.post("/api/accounts", async (c) => {
   const body = await c.req.json<Partial<Account>>();
   const type = body.type ?? "asset";
   const kind = type === "income" || type === "expense" ? "category" : body.kind ?? "";
-  if (!ACCOUNT_KINDS[type]?.includes(kind)) throw new LedgerError("口座の種類が正しくありません");
+  if (!ACCOUNT_KINDS[type]?.includes(kind)) throw new LedgerError("種類が正しくありません");
   if (!body.name?.trim()) throw new LedgerError("名前を入れてください");
   await checkPaymentAccount(c.env.DB, body.payment_account_id);
   // 財布、普通預金、電子マネーは手元の現金に数える。定期預金や投資は別枠
   const liquid = body.liquid ?? (["cash", "bank", "emoney"].includes(kind) ? 1 : 0);
+  const payMethod = body.pay_method ?? (["cash", "bank", "emoney", "card"].includes(kind) ? 1 : 0);
   const row = await c.env.DB
-    .prepare(`INSERT INTO accounts (name, type, kind, liquid, closing_day, payment_day, payment_account_id, payment_amount,
+    .prepare(`INSERT INTO accounts (name, type, kind, liquid, pay_method, closing_day, payment_day, payment_account_id, payment_amount,
         check_interval_days, statement_card_name, statement_import, sort_order, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM accounts WHERE type = ?)), ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM accounts WHERE type = ?)), ?)
       RETURNING *`)
-    .bind(body.name.trim(), type, kind, liquid, body.closing_day ?? null, body.payment_day ?? null,
+    .bind(body.name.trim(), type, kind, liquid, payMethod, body.closing_day ?? null, body.payment_day ?? null,
       body.payment_account_id ?? null, body.payment_amount ?? null, body.check_interval_days ?? null,
       body.statement_card_name ?? null, body.statement_import ?? 1, body.sort_order ?? null, type, c.get("user"))
     .first<Account>();
@@ -94,17 +95,26 @@ app.patch("/api/accounts/:id", async (c) => {
   return c.json(row);
 });
 
-/** 費目の統合。過去の取引と学んだ対応を統合先に移し、統合元は隠す */
+/** 並び順を、渡したidの順に付け直す */
+app.post("/api/accounts/order", async (c) => {
+  const { ids } = await c.req.json<{ ids: number[] }>();
+  if (!Array.isArray(ids) || ids.length === 0) throw new LedgerError("並べるものを渡してください");
+  const db = c.env.DB;
+  await db.batch(ids.map((id, i) => db.prepare("UPDATE accounts SET sort_order = ? WHERE id = ?").bind((i + 1) * 10, int(id, "id"))));
+  return c.json({ ok: true });
+});
+
+/** カテゴリの統合。過去の取引と学んだ対応を統合先に移し、統合元は隠す */
 app.post("/api/categories/:id/merge", async (c) => {
   const db = c.env.DB;
   const from = await getAccount(db, int(c.req.param("id"), "id"));
   const { into } = await c.req.json<{ into: number }>();
   const to = await resolveAccount(db, int(into, "統合先"));
-  if (from.id === to.id) throw new LedgerError("同じ費目には統合できません");
+  if (from.id === to.id) throw new LedgerError("同じカテゴリには統合できません");
   if (from.type !== to.type || (from.type !== "expense" && from.type !== "income")) {
-    throw new LedgerError("同じ種類の費目どうしだけ統合できます");
+    throw new LedgerError("同じ種類のカテゴリどうしだけ統合できます");
   }
-  if (from.origin === "system") throw new LedgerError("この費目は統合できません");
+  if (from.origin === "system") throw new LedgerError("このカテゴリは統合できません");
   const { results } = await db
     .prepare(`SELECT substr(e.report_date, 1, 7) AS month, SUM(l.amount) AS amount FROM lines l
       JOIN entries e ON e.id = l.entry_id WHERE l.account_id = ? GROUP BY month`)
@@ -120,7 +130,7 @@ app.post("/api/categories/:id/merge", async (c) => {
     db.prepare("UPDATE accounts SET archived = 1, merged_into_id = ? WHERE id = ?").bind(to.id, from.id),
   ]);
   // 予算の表ができたら、ここで予算も統合先に移す
-  await logChange(db, "merge_category", delta, `費目の統合 ${from.name} を ${to.name} へ`);
+  await logChange(db, "merge_category", delta, `カテゴリの統合 ${from.name} を ${to.name} へ`);
   return c.json({ merged: from.id, into: to.id, moved_months: results.length });
 });
 
@@ -136,7 +146,7 @@ app.post("/api/rules", async (c) => {
   const { pattern, match, account_id } = await c.req.json<{ pattern: string; match?: string; account_id: number }>();
   const key = merchantKey(pattern ?? "");
   if (!key) throw new LedgerError("利用先の文字を入れてください");
-  await resolveAccount(c.env.DB, int(account_id, "費目"));
+  await resolveAccount(c.env.DB, int(account_id, "カテゴリ"));
   await c.env.DB
     .prepare(`INSERT INTO category_rules (pattern, match, account_id, origin, user_id) VALUES (?, ?, ?, 'user', ?)
       ON CONFLICT (pattern, match) DO UPDATE SET account_id = excluded.account_id, origin = 'user'`)
@@ -171,7 +181,7 @@ app.post("/api/opening", async (c) => {
   for (const b of list ?? []) {
     const a = await getAccount(db, int(b.account_id, "口座"));
     const amount = int(b.amount, "残高");
-    if (a.type !== "asset" && a.type !== "liability") throw new LedgerError(`${a.name} は残高を持つ口座ではありません`);
+    if (a.type !== "asset" && a.type !== "liability") throw new LedgerError(`${a.name} には残高がありません`);
     const signed = a.type === "asset" ? amount : -amount;
     const autoKey = `opening:${a.id}`;
     const existing = await db.prepare("SELECT id FROM entries WHERE auto_key = ?").bind(autoKey).first<{ id: number }>();
@@ -243,14 +253,17 @@ app.get("/api/entries/:id", async (c) => {
   return c.json({ ...full, recoveries: await withLines(c.env.DB, recoveries) });
 });
 
-type EntryInput = SimpleInput & { learn?: boolean };
+type EntryInput = Omit<SimpleInput, "items"> & { learn?: boolean; items?: { name?: string; category_id: number; amount: number }[] };
 
 app.post("/api/entries", async (c) => {
   const env = c.env;
   const input = await c.req.json<EntryInput>();
   let categorySource = "user";
-  if (input.kind === "expense" && !input.category_id) {
-    // 費目が空ならAIに決めさせる
+  if (input.kind === "expense" && input.items?.length) {
+    // 品目ごとに選んだカテゴリを覚え、次のレシートから使う
+    for (const item of input.items) if (item.name) await learnItemRule(env.DB, item.name, item.category_id);
+  } else if (input.kind === "expense" && !input.category_id) {
+    // カテゴリが空ならAIに決めさせる
     const guess = input.payee ? await classifyOne(env, input.payee) : null;
     const fallback = await env.DB.prepare("SELECT id FROM accounts WHERE seed_key = 'other'").first<{ id: number }>();
     input.category_id = guess?.account_id ?? (await resolveAccount(env.DB, fallback!.id)).id;
@@ -320,13 +333,13 @@ app.post("/api/entries/:id/recoveries", async (c) => {
   const amount = int(body.amount, "金額");
   if (amount <= 0) throw new LedgerError("受け取った金額を入れてください");
   const to = await resolveAccount(db, int(body.account_id, "受け取った口座"));
-  if (to.type !== "asset") throw new LedgerError("受け取った口座を選んでください");
+  if (to.type !== "asset") throw new LedgerError("受け取り先を選んでください");
   const ids = lines.map((l) => l.account_id);
   const { results: cats } = await db
     .prepare(`SELECT id FROM accounts WHERE type = 'expense' AND id IN (${ids.map(() => "?").join(",")})`)
     .bind(...ids).all<{ id: number }>();
   const expenseLines = lines.filter((l) => cats.some((x) => x.id === l.account_id)).sort((a, b) => b.amount - a.amount);
-  if (expenseLines.length === 0) throw new LedgerError("元の取引に支出の費目がありません");
+  if (expenseLines.length === 0) throw new LedgerError("元の取引に支出のカテゴリがありません");
   const id = await createEntry(db, {
     date: body.date ?? todayJST(),
     report_date: entry.report_date,
@@ -385,7 +398,7 @@ app.post("/api/balance-checks", async (c) => {
   const db = c.env.DB;
   const body = await c.req.json<{ account_id: number; date?: string; actual: number; adjust?: boolean }>();
   const a = await getAccount(db, int(body.account_id, "口座"));
-  if (a.type !== "asset" && a.type !== "liability") throw new LedgerError("残高を持つ口座を選んでください");
+  if (a.type !== "asset" && a.type !== "liability") throw new LedgerError("残高のあるものを選んでください");
   const date = body.date ?? todayJST();
   const actual = int(body.actual, "残高");
   const book = await balanceOf(db, a, date);
@@ -461,6 +474,18 @@ app.put("/api/settings", async (c) => {
 });
 
 // ---- レシート読み取りの比較検証 ----
+
+/** レシートの写真を読み、店、日付、合計と、品目ごとのカテゴリの候補を返す。写真は保存しない */
+app.post("/api/receipts/read", async (c) => {
+  const form = await c.req.formData();
+  const file = form.get("image");
+  if (!(file instanceof File)) throw new LedgerError("レシートの写真を付けてください");
+  if (file.size > 8_000_000) throw new LedgerError("写真が大きすぎます");
+  const receipt = await readReceipt(c.env, new Uint8Array(await file.arrayBuffer()), file.type || "image/jpeg");
+  const items = receipt.items.filter((i) => i.name && Number.isInteger(i.amount));
+  const cats = await classifyItems(c.env, items.map((i) => i.name));
+  return c.json({ ...receipt, items: items.map((i, n) => ({ ...i, ...cats[n] })) });
+});
 
 app.post("/api/dev/receipt-eval", async (c) => {
   if (c.env.ENABLE_RECEIPT_EVAL !== "1") return c.json({ error: "比較検証は無効です" }, 404);

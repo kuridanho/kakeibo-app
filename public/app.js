@@ -80,7 +80,7 @@ function options(list, selected, blank) {
 }
 
 function field(label, input) {
-  return h("label", { class: "field" }, label, input);
+  return h("label", { class: "field" }, h("span", { class: "caption" }, label), input);
 }
 
 function toggle(label, input) {
@@ -136,12 +136,12 @@ async function home() {
       h("h1", {}, "はじめに"),
       h("div", { class: "card" },
         h("p", { style: "margin:0" }, "財布、銀行口座、電子マネー、カードを登録し、分かっている残高だけを入れると使い始められます。分からないものは空欄のままで構いません。"),
-        h("a", { class: "button", href: "#/accounts" }, "口座を登録する")),
+        h("a", { class: "button", href: "#/accounts/new" }, "財布や口座、カードを登録する")),
     ];
   }
 
   const todos = [
-    unsure.length && ["#/list?unsure=1", "AIが決めた費目の確認", unsure.length],
+    unsure.length && ["#/list?unsure=1", "AIが決めたカテゴリの確認", unsure.length],
     provisional.length && ["#/list?provisional=1", "明細と照合していないカード払い", provisional.length],
     advances.length && ["#/advances", "回収待ちの立て替え", advances.length],
     ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の棚卸し`, 1]),
@@ -167,7 +167,7 @@ async function home() {
         h("div", { style: `flex:${avail}` }), h("div", { style: `flex:${b.card_unpaid}` }), h("div", { style: `flex:${b.loan_due}` })),
       // 未払いと返済は、口座と財布の合計から引く額なのでマイナスで出す
       h("div", { class: "group", style: "padding-left:0;border-radius:0" },
-        h("div", { class: "cell" }, h("span", { class: "grow" }, "口座と財布"), h("span", { class: "amount" }, num(b.liquid_total))),
+        h("div", { class: "cell" }, h("span", { class: "grow" }, "手元のお金"), h("span", { class: "amount" }, num(b.liquid_total))),
         legend("--tint-2", "カードの未払い", -b.card_unpaid),
         b.loan_due ? legend("--tint-3", "次の返済", -b.loan_due) : null,
         b.non_liquid_total ? h("div", { class: "cell sub" }, h("span", { class: "grow" }, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null)),
@@ -191,9 +191,44 @@ async function home() {
 
 // ---- 記録 ----
 
+const NEW_CATEGORY = "__new__";
+
+/** カテゴリの選択肢。最後の「新しいカテゴリ」を選ぶと、その場で名前を聞いて作る */
+function categorySelect(attrs, list, type, selected, blank) {
+  const sel = h("select", { "data-num": "", ...attrs },
+    options(list, selected, blank), h("option", { value: NEW_CATEGORY }, "＋ 新しいカテゴリ"));
+  let last = sel.value;
+  sel.addEventListener("change", async () => {
+    if (sel.value !== NEW_CATEGORY) { last = sel.value; return; }
+    const name = prompt("新しいカテゴリの名前")?.trim();
+    if (!name) { sel.value = last; return; }
+    try {
+      const a = await api("POST", "/api/accounts", { name, type });
+      accountsCache = null;
+      list.push(a);
+      sel.insertBefore(h("option", { value: a.id }, a.name), sel.lastElementChild);
+      sel.value = String(a.id);
+      last = sel.value;
+      sel.dispatchEvent(new Event("change"));
+    } catch (e) { toast(e.message); sel.value = last; }
+  });
+  return sel;
+}
+
+/** 写真を長い辺 1600px までに縮め、JPEG にする。送る量とAIの読み込みを減らすため */
+async function shrinkImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+}
+
 async function entryForm(existing) {
   const list = await accounts();
-  const payable = byType(list, "asset", "liability");
+  const keep = (a, id) => a.id === Number(id);
   const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown");
   const income = byType(list, "income");
   const isStatement = existing?.source === "statement";
@@ -212,30 +247,98 @@ async function entryForm(existing) {
     to_account_id: kind === "income" || kind === "transfer" ? pos?.account_id : undefined,
     category_id: kind === "expense" ? pos?.account_id : kind === "income" ? neg?.account_id : undefined,
   } : { date: today(), from_account_id: store.get("lastPay", null) };
+  // 支払方法は選べるようにしたものだけ。編集中の取引で使っているものは残す
+  const payWith = live(list).filter((a) => (a.type === "asset" || a.type === "liability") && (a.pay_method || keep(a, init.from_account_id)));
+  const receiveTo = byType(list, "asset");
+  const movable = byType(list, "asset", "liability");
+  let items = [];
 
   const box = h("div", { class: "stack" });
   const render = () => {
     const seg = h("div", { class: "seg", role: "group", "aria-label": "種類" },
       [["expense", "支出"], ["income", "収入"], ["transfer", "振替"]].map(([k, label]) =>
-        h("button", { type: "button", "aria-pressed": String(kind === k), disabled: !!existing, onclick: () => { kind = k; render(); } }, label)));
+        h("button", { type: "button", "aria-pressed": String(kind === k), disabled: !!existing, onclick: () => { kind = k; items = []; render(); } }, label)));
+    const camera = h("input", { type: "file", accept: "image/*", capture: "environment", hidden: true });
+    const itemsBox = h("div", { class: "stack", hidden: true });
     const form = h("form", {},
+      kind === "expense" && !existing ? h("button", { type: "button", class: "plain", onclick: () => camera.click() }, "レシートを撮る") : null,
       field("金額", h("input", { name: "amount", class: "amount", inputmode: "numeric", "data-num": "", required: true, value: init.amount, disabled: isStatement })),
       field("日付", h("input", { name: "date", type: "date", value: init.date, required: true, disabled: isStatement })),
       kind !== "transfer" ? field(kind === "income" ? "どこから" : "店や内容", h("input", { name: "payee", value: init.payee, autocomplete: "off" })) : null,
-      kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true, disabled: isStatement }, options(payable, init.from_account_id, "選んでください"))) : null,
-      kind === "expense" ? field("費目", h("select", { name: "category_id", "data-num": "" }, options(expense, init.category_id, existing ? null : "AIに任せる"))) : null,
-      kind === "income" ? field("受け取った口座", h("select", { name: "to_account_id", "data-num": "", required: true }, options(payable, init.to_account_id, "選んでください"))) : null,
-      kind === "income" ? field("費目", h("select", { name: "category_id", "data-num": "", required: true }, options(income, init.category_id))) : null,
-      kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, options(payable, init.from_account_id, "選んでください"))) : null,
-      kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(payable, init.to_account_id, "選んでください"))) : null,
+      kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true, disabled: isStatement }, options(payWith, init.from_account_id, "選んでください"))) : null,
+      kind === "expense" ? field("カテゴリ", categorySelect({ name: "category_id" }, expense, "expense", init.category_id, existing ? null : "AIに任せる")) : null,
+      kind === "expense" ? itemsBox : null,
+      kind === "income" ? field("受け取り先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(receiveTo, init.to_account_id, "選んでください"))) : null,
+      kind === "income" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, income, "income", init.category_id)) : null,
+      kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, options(movable, init.from_account_id, "選んでください"))) : null,
+      kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(movable, init.to_account_id, "選んでください"))) : null,
       field("メモ", h("input", { name: "memo", value: init.memo })),
-      kind === "expense" ? toggle("立て替えあり", h("input", { type: "checkbox", name: "advance", checked: init.advance })) : null,
+      kind === "expense" ? h("details", { class: "more", open: init.advance || undefined },
+        h("summary", {}, "その他"),
+        toggle("立て替えあり", h("input", { type: "checkbox", name: "advance", checked: init.advance }))) : null,
       h("div", { class: "buttons" },
         h("button", { type: "submit" }, existing ? "保存" : "記録する"),
         existing ? h("button", { type: "button", class: "danger", onclick: remove }, "削除") : null));
+
+    const showItems = () => {
+      form.elements.category_id.closest("label").hidden = items.length > 0;
+      itemsBox.hidden = items.length === 0;
+      if (items.length === 0) { itemsBox.replaceChildren(); return; }
+      const sum = items.reduce((s, i) => s + i.amount, 0);
+      const total = Number(form.elements.amount.value || 0);
+      itemsBox.replaceChildren(
+        h("span", { class: "section-head", style: "padding:6px 4px 0" }, "品目"),
+        h("div", { class: "group" }, items.map((it, n) => h("div", { class: "item" },
+          it.unclear ? h("span", { class: "question" }, `${it.name} これは何ですか？`) : null,
+          h("div", { class: "row" },
+            h("span", { class: "grow" }, it.name),
+            h("input", { class: "item-amount", inputmode: "numeric", value: it.amount, "aria-label": `${it.name}の金額`, onchange: (ev) => {
+              it.amount = Number(ev.target.value.replaceAll(",", "")) || 0;
+              showItems();
+            } })),
+          categorySelect({ "aria-label": `${it.name}のカテゴリ`, required: true, onchange: (ev) => {
+            if (ev.target.value && ev.target.value !== NEW_CATEGORY) { it.category_id = Number(ev.target.value); it.unclear = false; }
+          } }, expense, "expense", it.category_id, it.category_id ? null : "選んでください")))),
+        sum !== total ? h("p", { class: "footnote neg", style: "margin:0;padding:0 4px" }, `品目の合計 ${yen(sum)} が金額と ${yen(total - sum)} 違います`) : null);
+    };
+
+    camera.addEventListener("change", async () => {
+      const file = camera.files[0];
+      if (!file) return;
+      toast("レシートを読んでいます");
+      try {
+        const body = new FormData();
+        body.append("image", await shrinkImage(file), "receipt.jpg");
+        const res = await fetch("/api/receipts/read", { method: "POST", body });
+        const r = await res.json();
+        if (!res.ok) throw new Error(r.error ?? `エラー ${res.status}`);
+        items = r.items.map((i) => ({ name: i.name, amount: i.amount, category_id: i.category_id, unclear: i.unclear }));
+        const sum = items.reduce((s, i) => s + i.amount, 0);
+        const total = r.total ?? sum;
+        // 値引きや端数で合計と合わない分は、いちばん大きい品目のカテゴリに寄せた行にする
+        if (items.length && sum !== total) {
+          const big = items.reduce((a, b) => (b.amount > a.amount ? b : a));
+          items.push({ name: "値引きと端数", amount: total - sum, category_id: big.category_id, unclear: false });
+        }
+        form.elements.amount.value = total || "";
+        if (r.date) form.elements.date.value = r.date;
+        if (r.store) form.elements.payee.value = r.store;
+        showItems();
+        const unclear = items.filter((i) => i.unclear).length;
+        toast(unclear ? `読みました。分からない品目が${unclear}件あります` : "読みました。内容を確かめてください");
+      } catch (e) { toast(e.message); }
+      camera.value = "";
+    });
+    form.elements.amount.addEventListener("input", () => { if (items.length) showItems(); });
+
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const data = { kind, ...formData(form) };
+      if (data.category_id === NEW_CATEGORY) delete data.category_id;
+      if (items.length) {
+        data.items = items.map(({ name, amount, category_id }) => ({ name, amount, category_id }));
+        delete data.category_id;
+      }
       try {
         if (existing) {
           await api("PUT", `/api/entries/${existing.id}`, data);
@@ -245,15 +348,17 @@ async function entryForm(existing) {
           const r = await api("POST", "/api/entries", data);
           if (data.from_account_id) store.set("lastPay", data.from_account_id);
           const cat = list.find((a) => a.id === r.category_id);
-          toast(cat && !data.category_id ? `${cat.name}として記録しました` : "記録しました");
+          toast(cat && !data.category_id && !data.items ? `${cat.name}として記録しました` : "記録しました");
+          items = [];
           form.reset();
+          showItems();
           form.elements.date.value = today();
           if (form.elements.from_account_id) form.elements.from_account_id.value = data.from_account_id ?? "";
           form.elements.amount.focus();
         }
       } catch (e) { toast(e.message); }
     });
-    box.replaceChildren(...[seg, isStatement ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "明細から取り込んだ取引なので、金額、日付、支払方法は明細のままです。") : null, form].filter(Boolean));
+    box.replaceChildren(...[seg, camera, isStatement ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "明細から取り込んだ取引なので、金額、日付、支払方法は明細のままです。") : null, form].filter(Boolean));
   };
   async function remove() {
     if (!confirm("この取引を削除しますか？")) return;
@@ -268,7 +373,7 @@ async function entryForm(existing) {
 }
 
 async function newEntry() {
-  return [h("h1", {}, "記録する"), await entryForm(null)];
+  return entryForm(null);
 }
 
 async function editEntry(id) {
@@ -295,7 +400,7 @@ async function recoveryCard(e) {
   const got = e.recoveries.reduce((s, r) => s + r.lines.filter((l) => l.type === "asset").reduce((x, l) => x + l.amount, 0), 0);
   const form = h("form", {},
     field("受け取った額", h("input", { name: "amount", inputmode: "numeric", "data-num": "", required: true })),
-    field("受け取った口座", h("select", { name: "account_id", "data-num": "", required: true }, options(byType(list, "asset"), store.get("lastRecv", null), "選んでください"))),
+    field("受け取り先", h("select", { name: "account_id", "data-num": "", required: true }, options(byType(list, "asset"), store.get("lastRecv", null), "選んでください"))),
     field("日付", h("input", { name: "date", type: "date", value: today() })),
     field("相手(任意)", h("input", { name: "counterparty" })),
     h("div", { class: "buttons" },
@@ -373,7 +478,7 @@ async function list(params) {
   ]);
 
   const title = params.get("provisional") ? h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い")
-    : params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めた費目")
+    : params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
     : monthNav(month, (n) => { location.hash = `#/list?month=${addMonths(month, n)}`; }, `${Number(month.slice(5))}月`);
   return [title, search, ...body];
 }
@@ -405,7 +510,7 @@ async function summary(params) {
       h("summary", {}, `まとめの後に支出が ${changedTotal >= 0 ? "+" : ""}${yen(changedTotal)} 変わりました`),
       h("table", { class: "table" }, s.changes.map((c) => h("tr", {}, h("td", {}, c.summary),
         h("td", {}, yen(Object.values(c.delta).reduce((x, y) => x + y, 0))))))) : null,
-    h("span", { class: "section-head" }, "費目ごと"),
+    h("span", { class: "section-head" }, "カテゴリごと"),
     h("div", { class: "card" },
       expenses.length === 0 ? h("p", { class: "empty" }, "支出はありません") : h("div", { class: "bars" }, expenses.map((c) => [
         h("span", {}, c.name),
@@ -449,25 +554,67 @@ async function yearView(params) {
       h("div", { class: "bar" }, h("div", { style: `width:${(m.expense / max) * 100}%` })),
       h("span", { style: "text-align:right" }, num(m.expense)),
     ]))),
-    cats.length ? [h("span", { class: "section-head" }, "費目ごと"), h("div", { class: "group" },
+    cats.length ? [h("span", { class: "section-head" }, "カテゴリごと"), h("div", { class: "group" },
       cats.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value" }, num(c.amount)))))] : null,
   ];
 }
 
-// ---- 口座と設定 ----
+// ---- 資産と設定 ----
 
-async function accountsView() {
+// 棚卸しで実際の残高と照らし合わせるもの
+const CHECKABLE = ["cash", "bank", "emoney"];
+
+/** 並べ替えの画面。上下のボタンで動かし、終わったら順番を保存する */
+function reorderGroup(items, label, onDone) {
+  const order = [...items];
+  const group = h("div", { class: "group" });
+  const draw = () => group.replaceChildren(...order.map((a, i) => cell({},
+    h("span", { class: "grow" }, label(a)),
+    h("button", { type: "button", class: "icon", "aria-label": `${a.name}を上へ`, disabled: i === 0, onclick: () => move(i, -1) }, icon("M6 15l6-6 6 6")),
+    h("button", { type: "button", class: "icon", "aria-label": `${a.name}を下へ`, disabled: i === order.length - 1, onclick: () => move(i, 1) }, icon("M6 9l6 6 6-6")))));
+  const move = (i, d) => { [order[i], order[i + d]] = [order[i + d], order[i]]; draw(); };
+  draw();
+  return { group, save: () => onDone(order.map((a) => a.id)) };
+}
+
+async function accountsView(params) {
   const [b, list] = await Promise.all([api("GET", "/api/balances"), accounts(true)]);
+  const hidden = list.filter((a) => (a.type === "asset" || a.type === "liability") && a.archived && !a.merged_into_id);
+  if (params?.get("hidden")) {
+    return [h("h1", {}, "非表示にしたもの"),
+      hidden.length ? h("div", { class: "group" }, hidden.map((a) => cell({ href: `#/account/${a.id}` }, h("span", { class: "grow" }, a.name), h("span", { class: "value" }, KIND_LABEL[a.kind]))))
+        : h("p", { class: "empty" }, "ありません")];
+  }
   const groups = [
     ["すぐ使えるお金", b.accounts.filter((a) => a.type === "asset" && a.liquid)],
     ["カードと借入", b.accounts.filter((a) => a.type === "liability")],
     ["別枠の資産", b.accounts.filter((a) => a.type === "asset" && !a.liquid)],
-  ];
+  ].filter(([, as]) => as.length);
+
+  if (params?.get("reorder")) {
+    const parts = groups.map(([title, as]) => [title, reorderGroup(as, (a) => a.name, () => null)]);
+    return [
+      h("div", { class: "navrow" }, h("h1", {}, "並べ替え"),
+        h("div", {}, h("button", { class: "text", onclick: async () => {
+          const ids = parts.flatMap(([, p]) => p.save());
+          try {
+            await api("POST", "/api/accounts/order", { ids });
+            accountsCache = null;
+            location.hash = "#/accounts";
+          } catch (e) { toast(e.message); }
+        } }, "完了"))),
+      parts.map(([title, p]) => [h("span", { class: "section-head" }, title), p.group]),
+    ];
+  }
+
   return [
-    h("h1", {}, "口座"),
-    ...groups.filter(([, as]) => as.length).map(([title, as]) => [
+    h("div", { class: "navrow" }, h("h1", {}, "資産"),
+      h("div", {},
+        h("a", { class: "text", href: "#/accounts?reorder=1" }, "並べ替え"),
+        h("a", { class: "icon", href: "#/accounts/new", "aria-label": "追加" }, icon("M12 5v14M5 12h14")))),
+    ...groups.map(([title, as]) => [
       h("span", { class: "section-head" }, title),
-      h("div", { class: "group" }, as.map((a) => cell({ href: `#/check/${a.id}` },
+      h("div", { class: "group" }, as.map((a) => cell({ href: `#/account/${a.id}` },
         h("span", { class: "grow" }, a.name),
         a.check_overdue ? h("span", { class: "pill" }, "棚卸し") : null,
         h("span", { class: "value" }, num(a.balance))))),
@@ -482,99 +629,140 @@ async function accountsView() {
       cell({ href: "#/import" }, h("span", { class: "grow" }, "カード明細を取り込む")),
       cell({ href: "#/advances" }, h("span", { class: "grow" }, "立て替え")),
       cell({ href: "#/opening" }, h("span", { class: "grow" }, "開始残高")),
-      cell({ href: "#/categories" }, h("span", { class: "grow" }, "費目と学んだ対応"))),
-    await accountEditor(list),
+      cell({ href: "#/categories" }, h("span", { class: "grow" }, "カテゴリと学んだ対応")),
+      hidden.length ? cell({ href: "#/accounts?hidden=1" }, h("span", { class: "grow" }, "非表示にしたもの"), h("span", { class: "value" }, hidden.length)) : null),
   ];
 }
 
-async function accountEditor(list) {
-  const banks = byType(list, "asset");
+/** 種類ごとに要る入力欄。追加と設定の両方で使う */
+function kindFields(kind, a, banks) {
+  const n = (name, label, value) => field(label, h("input", { name, inputmode: "numeric", "data-num": "", value }));
+  const payFrom = field("引き落とし口座", h("select", { name: "payment_account_id", "data-num": "" }, options(banks, a?.payment_account_id, "選んでください")));
+  if (kind === "card") return [
+    n("closing_day", "締め日 (月末は31)", a?.closing_day),
+    n("payment_day", "引き落とし日", a?.payment_day),
+    payFrom,
+    toggle("明細CSVを取り込む", h("input", { type: "checkbox", name: "statement_import", checked: a ? !!a.statement_import : true })),
+  ];
+  if (kind === "loan") return [n("payment_day", "返済日", a?.payment_day), payFrom, n("payment_amount", "毎月の返済額", a?.payment_amount)];
+  if (CHECKABLE.includes(kind)) return [n("check_interval_days", "棚卸しの間隔 (日)", a?.check_interval_days)];
+  return [];
+}
+
+function toggles(kind, a) {
+  const isAsset = !["card", "loan"].includes(kind);
+  const defPay = ["cash", "bank", "emoney", "card"].includes(kind);
+  return [
+    isAsset ? toggle("すぐ使えるお金に数える", h("input", { type: "checkbox", name: "liquid", checked: a ? !!a.liquid : ["cash", "bank", "emoney"].includes(kind) })) : null,
+    kind !== "loan" ? toggle("支払方法に出す", h("input", { type: "checkbox", name: "pay_method", checked: a ? !!a.pay_method : defPay })) : null,
+  ];
+}
+
+function normalize(d, kind) {
+  for (const k of ["liquid", "pay_method", "statement_import"]) if (k in d) d[k] = d[k] ? 1 : 0;
+  if (kind === "loan") d.pay_method = 0;
+  return d;
+}
+
+async function newAccountView() {
+  const list = await accounts(true);
+  const banks = byType(list, "asset").filter((a) => a.kind === "bank");
+  let kind = "cash";
+  const extra = h("div", { class: "stack" });
   const kindSel = h("select", { name: "kind" }, Object.entries(KIND_LABEL).map(([k, v]) => h("option", { value: k }, v)));
-  const cardFields = h("div", { class: "stack", hidden: true },
-    field("締め日 (月末は31)", h("input", { name: "closing_day", inputmode: "numeric", "data-num": "" })),
-    field("引き落とし日", h("input", { name: "payment_day", inputmode: "numeric", "data-num": "" })),
-    field("引き落とし口座", h("select", { name: "payment_account_id", "data-num": "" }, options(banks, null, "選んでください"))),
-    field("毎月の返済額 (借入)", h("input", { name: "payment_amount", inputmode: "numeric", "data-num": "" })),
-    toggle("明細CSVを取り込む", h("input", { type: "checkbox", name: "statement_import", checked: true })));
-  kindSel.addEventListener("change", () => { cardFields.hidden = !["card", "loan"].includes(kindSel.value); });
+  const draw = () => extra.replaceChildren(...[kindFields(kind, null, banks), toggles(kind, null)].flat().filter(Boolean));
+  kindSel.addEventListener("change", () => { kind = kindSel.value; draw(); });
+  draw();
   const form = h("form", {},
     field("名前", h("input", { name: "name", required: true })),
     field("種類", kindSel),
-    field("棚卸しの間隔 (日)", h("input", { name: "check_interval_days", inputmode: "numeric", "data-num": "" })),
-    cardFields,
+    extra,
     h("div", { class: "buttons" }, h("button", { type: "submit" }, "追加")));
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const d = formData(form);
-    d.type = ["card", "loan"].includes(d.kind) ? "liability" : "asset";
-    d.statement_import = d.statement_import ? 1 : 0;
+    const d = normalize(formData(form), kind);
+    d.type = ["card", "loan"].includes(kind) ? "liability" : "asset";
     try {
-      await api("POST", "/api/accounts", d);
+      const a = await api("POST", "/api/accounts", d);
       toast("追加しました");
       accountsCache = null;
-      route();
+      location.hash = `#/account/${a.id}`;
     } catch (e) { toast(e.message); }
   });
-  return h("details", { class: "card" }, h("summary", {}, h("h2", {}, "口座を追加")), form);
+  return [h("h1", {}, "追加"), form];
 }
 
-async function checkView(id) {
+async function accountView(id) {
   const list = await accounts(true);
   const a = list.find((x) => x.id === Number(id));
+  if (!a) throw new Error("見つかりません");
   const [b, history] = await Promise.all([api("GET", "/api/balances"), api("GET", `/api/balance-checks?account_id=${id}`)]);
   const bal = b.accounts.find((x) => x.id === a.id)?.balance ?? 0;
+  const out = [
+    h("h1", {}, a.name),
+    h("div", { class: "card" }, h("div", { class: "row" },
+      h("span", {}, a.type === "liability" ? "未払い" : "家計簿上の残高"), h("span", { class: "title2" }, yen(a.type === "liability" ? -bal : bal)))),
+  ];
+  if (CHECKABLE.includes(a.kind) || a.kind === "investment") out.push(checkForm(a, bal, history));
+  if (a.kind === "investment") out.push(h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "売買は、記録の振替で銀行口座との間を移します。"));
+  out.push(h("span", { class: "section-head", style: "padding-left:4px" }, "設定"), accountSettings(a, list));
+  return out;
+}
+
+function checkForm(a, bal, history) {
+  const investment = a.kind === "investment";
   const result = h("div", { class: "stack" });
   const form = h("form", {},
-    field("実際の残高", h("input", { name: "actual", class: "amount", inputmode: "numeric", "data-num": "", required: true })),
+    field(investment ? "今の評価額" : "実際の残高", h("input", { name: "actual", class: "amount", inputmode: "numeric", "data-num": "", required: true })),
     field("日付", h("input", { name: "date", type: "date", value: today() })),
-    h("div", { class: "buttons" }, h("button", { type: "submit" }, "差を確かめる")));
+    h("div", { class: "buttons" }, h("button", { type: "submit" }, investment ? "評価額を更新" : "差を確かめる")));
+  const save = async (d, adjust) => {
+    try {
+      await api("POST", "/api/balance-checks", { account_id: a.id, ...d, adjust });
+      return true;
+    } catch (e) { toast(e.message); return false; }
+  };
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const d = formData(form);
     const diff = d.actual - bal;
-    result.replaceChildren(h("div", { class: "card" },
-      h("div", { class: "row" }, h("span", {}, "家計簿上の残高"), h("span", {}, yen(bal))),
-      h("div", { class: "row" }, h("span", {}, "差"), h("b", {}, yen(diff))),
-      diff === 0 ? h("button", { onclick: () => save(false) }, "合っています。記録する") : h("div", { class: "buttons" },
-        h("button", { onclick: () => save(true) }, a.kind === "investment" ? "差を評価損益にする" : "差を使途不明にする"),
-        h("a", { class: "button plain", href: "#/new" }, "記録漏れを足す"))));
-    async function save(adjust) {
-      try {
-        await api("POST", "/api/balance-checks", { account_id: a.id, ...d, adjust });
-        toast("棚卸しを記録しました");
-        route();
-      } catch (e) { toast(e.message); }
+    // 差がなければ、そのまま確かめた日だけ残す
+    if (diff === 0 || investment) {
+      if (await save(d, true)) { toast(diff === 0 ? "差はありませんでした" : "評価額を更新しました"); route(); }
+      return;
     }
+    result.replaceChildren(h("div", { class: "card" },
+      h("div", { class: "row" }, h("span", {}, "差"), h("b", {}, yen(diff))),
+      h("div", { class: "buttons" },
+        h("button", { onclick: async () => { if (await save(d, true)) { toast("差を使途不明にしました"); route(); } } }, "差を使途不明にする"),
+        h("a", { class: "button plain", href: "#/new" }, "記録漏れを足す"))));
   });
   return [
-    h("h1", {}, `${a.name}の棚卸し`),
-    h("div", { class: "card" }, h("div", { class: "row" }, h("span", {}, "家計簿上の残高"), h("span", { class: "title2" }, yen(bal)))),
+    h("span", { class: "section-head", style: "padding-left:4px" }, investment ? "評価額" : "棚卸し"),
     form, result,
-    history.length ? h("div", { class: "card" }, h("h2", {}, "これまでの棚卸し"),
-      history.map((c) => h("div", { class: "row sub" }, h("span", {}, c.date), h("span", {}, `${yen(c.actual)} (差 ${yen(c.actual - c.book)})`)))) : null,
-    a.kind === "investment" ? h("p", { class: "sub" }, "投資の売買は、記録画面の振替で銀行口座とこの口座の間を移します。") : null,
-    await accountSettings(a, list),
+    history.length ? h("div", { class: "group" }, history.slice(0, 5).map((c) => cell({},
+      h("span", { class: "grow" }, c.date), h("span", { class: "value" }, c.actual === c.book ? yen(c.actual) : `${yen(c.actual)} 差 ${yen(c.actual - c.book)}`)))) : null,
   ];
 }
 
-async function accountSettings(a, list) {
+function accountSettings(a, list) {
+  const banks = byType(list, "asset").filter((x) => x.kind === "bank" || x.id === a.payment_account_id);
   const form = h("form", {},
     field("名前", h("input", { name: "name", value: a.name })),
-    field("棚卸しの間隔 (日)", h("input", { name: "check_interval_days", inputmode: "numeric", "data-num": "", value: a.check_interval_days })),
-    ["card", "loan"].includes(a.kind) ? [
-      field("締め日 (月末は31)", h("input", { name: "closing_day", inputmode: "numeric", "data-num": "", value: a.closing_day })),
-      field("引き落とし日", h("input", { name: "payment_day", inputmode: "numeric", "data-num": "", value: a.payment_day })),
-      field("引き落とし口座", h("select", { name: "payment_account_id", "data-num": "" }, options(byType(list, "asset"), a.payment_account_id, "選んでください"))),
-      a.kind === "loan" ? field("毎月の返済額", h("input", { name: "payment_amount", inputmode: "numeric", "data-num": "", value: a.payment_amount })) : null,
-    ] : null,
-    a.type === "asset" ? toggle("すぐ使えるお金に数える", h("input", { type: "checkbox", name: "liquid", checked: !!a.liquid })) : null,
-    toggle("使わなくなった", h("input", { type: "checkbox", name: "archived", checked: !!a.archived })),
-    h("div", { class: "buttons" }, h("button", { type: "submit" }, "保存")));
+    kindFields(a.kind, a, banks),
+    toggles(a.kind, a),
+    h("div", { class: "buttons" }, h("button", { type: "submit" }, "保存")),
+    h("button", { type: "button", class: "danger", onclick: async () => {
+      const hide = !a.archived;
+      if (hide && !confirm(`${a.name}を非表示にします。記録は残り、あとで戻せます。`)) return;
+      await api("PATCH", `/api/accounts/${a.id}`, { archived: hide ? 1 : 0 });
+      accountsCache = null;
+      toast(hide ? "非表示にしました" : "表示に戻しました");
+      location.hash = "#/accounts";
+    } }, a.archived ? "表示に戻す" : "非表示にする"));
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const d = formData(form);
-    if ("liquid" in d) d.liquid = d.liquid ? 1 : 0;
-    d.archived = d.archived ? 1 : 0;
+    const d = normalize(formData(form), a.kind);
     try {
       await api("PATCH", `/api/accounts/${a.id}`, d);
       accountsCache = null;
@@ -582,7 +770,7 @@ async function accountSettings(a, list) {
       route();
     } catch (e) { toast(e.message); }
   });
-  return h("details", { class: "card" }, h("summary", {}, h("h2", {}, "口座の設定")), form);
+  return form;
 }
 
 async function openingView() {
@@ -612,15 +800,30 @@ async function openingView() {
       location.hash = "#/";
     } catch (e) { toast(e.message); }
   });
-  return [h("h1", {}, "開始残高"), h("p", { class: "sub", style: "margin:0" }, "分かる口座だけ入れてください。後の棚卸しや明細の取り込みで埋まります。"), form];
+  return [h("h1", {}, "開始残高"), h("p", { class: "sub", style: "margin:0;padding:0 4px" }, "分かるものだけ入れてください。後の棚卸しや明細の取り込みで埋まります。"), form];
 }
 
-async function categoriesView() {
+async function categoriesView(params) {
   const [list, rules] = await Promise.all([accounts(true), api("GET", "/api/rules")]);
   const cats = byType(list, "expense", "income").filter((c) => c.origin !== "system");
+  if (params?.get("reorder")) {
+    const parts = [["支出", cats.filter((c) => c.type === "expense")], ["収入", cats.filter((c) => c.type === "income")]]
+      .map(([title, cs]) => [title, reorderGroup(cs, (c) => c.name, () => null)]);
+    return [
+      h("div", { class: "navrow" }, h("h1", {}, "並べ替え"),
+        h("div", {}, h("button", { class: "text", onclick: async () => {
+          try {
+            await api("POST", "/api/accounts/order", { ids: parts.flatMap(([, p]) => p.save()) });
+            accountsCache = null;
+            location.hash = "#/categories";
+          } catch (e) { toast(e.message); }
+        } }, "完了"))),
+      parts.map(([title, p]) => [h("span", { class: "section-head" }, title), p.group]),
+    ];
+  }
   const add = h("form", {},
     h("div", { class: "row" },
-      h("input", { name: "name", placeholder: "新しい費目", required: true }),
+      h("input", { name: "name", placeholder: "新しいカテゴリ", required: true }),
       h("select", { name: "type", style: "width:auto" }, h("option", { value: "expense" }, "支出"), h("option", { value: "income" }, "収入")),
       h("button", { type: "submit" }, "追加")));
   add.addEventListener("submit", async (ev) => {
@@ -656,12 +859,12 @@ async function categoriesView() {
         } }, "統合"))));
   });
   return [
-    h("h1", {}, "費目"),
+    h("div", { class: "navrow" }, h("h1", {}, "カテゴリ"), h("div", {}, h("a", { class: "text", href: "#/categories?reorder=1" }, "並べ替え"))),
     h("div", { class: "card" }, add, rows),
     h("details", { class: "card" },
       h("summary", {}, h("h2", {}, `学んだ対応 ${rules.length}件`)),
       h("table", { class: "table" }, rules.map((r) => h("tr", {},
-        h("td", {}, r.pattern, h("span", { class: "sub" }, r.origin === "ai" ? " AI" : "")),
+        h("td", {}, r.pattern.replace(/^ITEM:/, "品目 "), h("span", { class: "sub" }, r.origin === "ai" ? " AI" : "")),
         h("td", {}, r.account_name, " ", h("button", { class: "icon", "aria-label": "消す", onclick: async () => {
           await api("DELETE", `/api/rules/${r.id}`);
           route();
@@ -730,7 +933,7 @@ async function importView() {
           r.candidates.map((c) => h("option", { value: c.entry_id }, `${c.date.slice(5)} ${c.payee || "（内容なし）"} ${yen(c.amount)}`)),
           h("option", { value: "new" }, "新しい取引にする"),
           h("option", { value: "skip" }, "取り込まない")) : null,
-        status === "new" && !r.charge_account_id ? h("select", { "aria-label": "費目", onchange: (ev) => {
+        status === "new" && !r.charge_account_id ? h("select", { "aria-label": "カテゴリ", onchange: (ev) => {
           choices[r.index] = { ...choices[r.index], category_id: Number(ev.target.value) };
         } }, options(expense, r.category_id)) : null,
         status === "new" && r.charge_account_id ? h("span", { class: "sub" }, `${list.find((a) => a.id === r.charge_account_id)?.name}へのチャージ(振替)`) : null))));
@@ -753,7 +956,7 @@ async function importView() {
         } catch (e) { toast(e.message); }
       } }, "取り込む")));
   }
-  return [h("h1", {}, "カード明細の取り込み"), cards.length ? form : h("p", { class: "sub" }, "明細を取り込むカードを口座の画面で登録してください。"), out];
+  return [h("h1", {}, "カード明細の取り込み"), cards.length ? form : h("p", { class: "sub" }, "明細を取り込むカードを資産の画面で登録してください。"), out];
 }
 
 // ---- 画面の切り替え ----
@@ -765,7 +968,8 @@ const routes = [
   [/^\/entry\/(\d+)$/, editEntry, "list"],
   [/^\/summary$/, summary, "summary"],
   [/^\/accounts$/, accountsView, "accounts"],
-  [/^\/check\/(\d+)$/, checkView, "accounts"],
+  [/^\/accounts\/new$/, newAccountView, "accounts"],
+  [/^\/(?:account|check)\/(\d+)$/, accountView, "accounts"],
   [/^\/opening$/, openingView, "accounts"],
   [/^\/categories$/, categoriesView, "accounts"],
   [/^\/advances$/, advancesView, "accounts"],

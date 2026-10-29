@@ -1,7 +1,7 @@
 // 残高、集計、月末のまとめ(緩い締め)。
 
 import type { Account, Env } from "../types";
-import { addMonths, dayInMonth, diffDays, monthOf, monthsOfYear, periodYear, todayJST } from "./dates";
+import { addMonths, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
 import { createEntry } from "./ledger";
 
 export async function getSetting(db: D1Database, key: string, fallback: string): Promise<string> {
@@ -79,7 +79,7 @@ export async function balances(db: D1Database, today = todayJST()) {
   };
 }
 
-/** 月の費目ごとの合計。支出は正、収入も正で返す */
+/** 月のカテゴリごとの合計。支出は正、収入も正で返す */
 export async function categoryTotals(db: D1Database, months: string[]): Promise<Record<string, Record<number, number>>> {
   const out: Record<string, Record<number, number>> = {};
   if (months.length === 0) return out;
@@ -141,7 +141,7 @@ export async function monthSummary(db: D1Database, month: string) {
   };
 }
 
-/** 集計の年(1月始まりか4月始まり)の月ごとの推移と費目ごとの合計 */
+/** 集計の年(1月始まりか4月始まり)の月ごとの推移とカテゴリごとの合計 */
 export async function yearSummary(db: D1Database, year?: number) {
   const start = await yearStartMonth(db);
   const y = year ?? periodYear(monthOf(todayJST()), start);
@@ -187,9 +187,10 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
       AND payment_day IS NOT NULL AND payment_account_id IS NOT NULL`)
     .all<Account>();
   const created: number[] = [];
-  for (const a of results) {
-    const due = dayInMonth(month, a.payment_day!);
-    if (due > today) continue;
+  // 引き落とし日が休みなら翌営業日に落ちる。月末の休みで翌月にずれた前月分も拾う
+  const targets = results.flatMap((a) => [addMonths(month, -1), month].map((m) => ({ a, month: m, due: nextBankDay(dayInMonth(m, a.payment_day!)) })))
+    .filter((t) => t.due <= today && (t.month === month || monthOf(t.due) === month));
+  for (const { a, month, due } of targets) {
     const autoKey = `payment:${a.id}:${month}`;
     const exists = await db.prepare("SELECT id FROM entries WHERE auto_key = ?").bind(autoKey).first();
     if (exists) continue;

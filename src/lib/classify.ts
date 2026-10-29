@@ -1,6 +1,6 @@
-// 利用先名から費目を決める。
+// 利用先名からカテゴリを決める。
 // 順番は、利用者が直した対応、AIが前に決めた対応、AI、card-usage から移植したキーワード表、その他。
-// AIは既存の費目に合うものがなければ新しい費目を提案でき、提案された費目はその場で作る。
+// AIは既存のカテゴリに合うものがなければ新しいカテゴリを提案でき、提案されたカテゴリはその場で作る。
 // AIが決めた結果も対応として残し、同じ利用先でAIを何度も呼ばない。
 
 import type { Account, Env } from "../types";
@@ -33,7 +33,7 @@ async function bySeedKey(db: D1Database, key: string): Promise<Account | null> {
   return a ? resolveAccount(db, a.id) : null;
 }
 
-/** 利用者が費目を直したときに対応を覚える */
+/** 利用者がカテゴリを直したときに対応を覚える */
 export async function learnRule(db: D1Database, merchant: string, accountId: number): Promise<void> {
   const pattern = merchantKey(merchant);
   if (!pattern) return;
@@ -52,12 +52,12 @@ interface AIAnswer {
 async function askAI(env: Env, merchants: string[], categories: Account[]): Promise<AIAnswer[] | null> {
   if (!env.AI || merchants.length === 0) return null;
   const system = [
-    "家計簿の支出の費目を、クレジットカード明細や手入力の利用先名から決める。",
+    "家計簿の支出のカテゴリを、クレジットカード明細や手入力の利用先名から決める。",
     "利用先名は省略や英字、全角半角の混在があり、末尾に「/NFC」「/ID」や決済代行の名前が付くことがある。",
-    `今ある費目: ${categories.map((c) => c.name).join("、")}`,
-    "できるだけ今ある費目から選ぶ。どれにも当てはまらず、今後も同じ種類の支出が続きそうなときだけ、短い日本語の新しい費目名を答える。",
+    `今あるカテゴリ: ${categories.map((c) => c.name).join("、")}`,
+    "できるだけ今あるカテゴリから選ぶ。どれにも当てはまらず、今後も同じ種類の支出が続きそうなときだけ、短い日本語の新しいカテゴリ名を答える。",
     "店がわからないときは「その他」にする。",
-    '答えは {"results":[{"i":番号,"category":"費目名"}]} のJSONだけにする。',
+    '答えは {"results":[{"i":番号,"category":"カテゴリ名"}]} のJSONだけにする。',
   ].join("\n");
   const user = merchants.map((m, i) => `${i}: ${m}`).join("\n");
   try {
@@ -88,12 +88,12 @@ async function askAI(env: Env, merchants: string[], categories: Account[]): Prom
     const results = (parsed as { results?: AIAnswer[] })?.results;
     return Array.isArray(results) ? results : null;
   } catch (e) {
-    console.error("費目のAI判断に失敗しました", e);
+    console.error("カテゴリのAI判断に失敗しました", e);
     return null;
   }
 }
 
-/** AIの答えた費目名を、今ある費目か新しく作った費目に当てる */
+/** AIの答えたカテゴリ名を、今あるカテゴリか新しく作ったカテゴリに当てる */
 async function categoryForName(db: D1Database, name: string, categories: Account[]): Promise<Account | null> {
   const cleaned = name.trim().slice(0, 20);
   if (!cleaned) return null;
@@ -169,4 +169,62 @@ export async function classifyOne(env: Env, merchant: string): Promise<Classific
   const key = merchantKey(merchant);
   if (!key) return null;
   return (await classifyMerchants(env, [merchant])).get(key) ?? null;
+}
+
+// ---- レシートの品目 ----
+// 品目名は店名と混ざらないよう、頭に ITEM: を付けて対応を覚える。
+
+const ITEM_PREFIX = "ITEM:";
+
+export async function learnItemRule(db: D1Database, name: string, accountId: number): Promise<void> {
+  const key = merchantKey(name);
+  if (key) await learnRule(db, `${ITEM_PREFIX}${key}`, accountId);
+}
+
+export interface ItemClassification {
+  category_id: number | null;
+  category_source: CategorySource;
+  /** AIにも品目が何か分からなかった。画面で「これは何ですか？」と尋ねる */
+  unclear: boolean;
+}
+
+export async function classifyItems(env: Env, names: string[]): Promise<ItemClassification[]> {
+  const db = env.DB;
+  const out: ItemClassification[] = names.map(() => ({ category_id: null, category_source: "none", unclear: true }));
+  const { results: rules } = await db
+    .prepare("SELECT pattern, account_id, origin FROM category_rules WHERE pattern LIKE 'ITEM:%'")
+    .all<{ pattern: string; account_id: number; origin: string }>();
+  const known = new Map(rules.map((r) => [r.pattern.slice(ITEM_PREFIX.length), r]));
+  const ask: number[] = [];
+  for (const [i, name] of names.entries()) {
+    const rule = known.get(merchantKey(name));
+    if (rule) out[i] = { category_id: (await resolveAccount(db, rule.account_id)).id, category_source: "rule", unclear: false };
+    else ask.push(i);
+  }
+  if (ask.length === 0 || !env.AI) return out;
+
+  const categories = await expenseCategories(db);
+  const system = [
+    "日本のレシートの品目名から、家計簿の支出のカテゴリを決める。品目名は略されていたり、カタカナや英字だったりする。",
+    `カテゴリ: ${categories.map((c) => c.name).join("、")}`,
+    "必ずこの中から選ぶ。品目が何か見当がつかないときは category を「不明」にする。",
+    '答えは {"results":[{"i":番号,"category":"カテゴリ名"}]} のJSONだけにする。',
+  ].join("\n");
+  try {
+    const res = (await env.AI.run((env.CLASSIFY_MODEL || DEFAULT_CLASSIFY_MODEL) as keyof AiModels, {
+      messages: [{ role: "system", content: system }, { role: "user", content: ask.map((i, n) => `${n}: ${names[i]}`).join("\n") }],
+      max_tokens: 40 + ask.length * 30,
+      temperature: 0,
+    } as never)) as { response?: unknown };
+    const raw = res?.response;
+    const parsed = typeof raw === "string" ? JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)) : raw;
+    for (const ans of (parsed as { results?: AIAnswer[] })?.results ?? []) {
+      const i = ask[ans.i];
+      const cat = categories.find((c) => c.name === String(ans.category ?? "").trim());
+      if (i !== undefined && cat) out[i] = { category_id: cat.id, category_source: "ai", unclear: false };
+    }
+  } catch (e) {
+    console.error("品目のカテゴリのAI判断に失敗しました", e);
+  }
+  return out;
 }

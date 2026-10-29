@@ -22,11 +22,11 @@ const entryColumns = [
 
 export async function getAccount(db: D1Database, id: number): Promise<Account> {
   const a = await db.prepare("SELECT * FROM accounts WHERE id = ?").bind(id).first<Account>();
-  if (!a) throw new LedgerError(`口座または費目が見つかりません: ${id}`, 404);
+  if (!a) throw new LedgerError(`項目が見つかりません: ${id}`, 404);
   return a;
 }
 
-/** 統合された費目をたどって、今使われている費目を返す */
+/** 統合されたカテゴリをたどって、今使われているカテゴリを返す */
 export async function resolveAccount(db: D1Database, id: number): Promise<Account> {
   let a = await getAccount(db, id);
   for (let i = 0; a.merged_into_id && i < 10; i++) a = await getAccount(db, a.merged_into_id);
@@ -54,7 +54,7 @@ function validateLines(lines: Line[]) {
 
 type Delta = Record<string, Record<string, number>>;
 
-/** 費目(収入と支出)ごとの増減を、集計月ごとに求める */
+/** カテゴリ(収入と支出)ごとの増減を、集計月ごとに求める */
 async function categoryDelta(db: D1Database, before: { month: string; lines: Line[] } | null,
   after: { month: string; lines: Line[] } | null): Promise<Delta> {
   const ids = new Set([...(before?.lines ?? []), ...(after?.lines ?? [])].map((l) => l.account_id));
@@ -184,6 +184,8 @@ export interface SimpleInput {
   payee?: string;
   memo?: string;
   advance?: boolean;
+  /** 支出をレシートの品目ごとにカテゴリへ分けるとき。金額の合計は amount と同じにする */
+  items?: { category_id: number; amount: number }[];
 }
 
 export async function buildSimple(db: D1Database, input: SimpleInput): Promise<{ fields: EntryFields; lines: Line[] }> {
@@ -204,18 +206,33 @@ export async function buildSimple(db: D1Database, input: SimpleInput): Promise<{
   let paidWith: Account;
   if (input.kind === "expense") {
     paidWith = await need(input.from_account_id, "支払方法");
-    const cat = await need(input.category_id, "費目");
-    if (cat.type !== "expense") throw new LedgerError("支出には支出の費目を選んでください");
-    lines = [{ account_id: cat.id, amount: input.amount }, { account_id: paidWith.id, amount: -input.amount }];
+    if (input.items?.length) {
+      const byCat = new Map<number, number>();
+      for (const item of input.items) {
+        if (!Number.isInteger(item.amount)) throw new LedgerError("品目の金額は円単位で入れてください");
+        const cat = await need(item.category_id, "品目のカテゴリ");
+        if (cat.type !== "expense") throw new LedgerError("品目には支出のカテゴリを選んでください");
+        byCat.set(cat.id, (byCat.get(cat.id) ?? 0) + item.amount);
+      }
+      const sum = [...byCat.values()].reduce((s, v) => s + v, 0);
+      if (sum !== input.amount) throw new LedgerError(`品目の合計 ${sum}円が金額 ${input.amount}円と合いません`);
+      lines = [...byCat].filter(([, v]) => v !== 0).map(([id, v]) => ({ account_id: id, amount: v }));
+      lines.push({ account_id: paidWith.id, amount: -input.amount });
+    } else {
+      const cat = await need(input.category_id, "カテゴリ");
+      if (cat.type !== "expense") throw new LedgerError("支出には支出のカテゴリを選んでください");
+      lines = [{ account_id: cat.id, amount: input.amount }, { account_id: paidWith.id, amount: -input.amount }];
+    }
   } else if (input.kind === "income") {
-    const to = await need(input.to_account_id, "受け取った口座");
-    const cat = await need(input.category_id, "費目");
-    if (cat.type !== "income") throw new LedgerError("収入には収入の費目を選んでください");
+    const to = await need(input.to_account_id, "受け取り先");
+    if (to.type !== "asset") throw new LedgerError("受け取り先には財布や銀行口座などを選んでください");
+    const cat = await need(input.category_id, "カテゴリ");
+    if (cat.type !== "income") throw new LedgerError("収入には収入のカテゴリを選んでください");
     lines = [{ account_id: to.id, amount: input.amount }, { account_id: cat.id, amount: -input.amount }];
     paidWith = to;
   } else if (input.kind === "transfer") {
-    paidWith = await need(input.from_account_id, "移す元の口座");
-    const to = await need(input.to_account_id, "移す先の口座");
+    paidWith = await need(input.from_account_id, "移す元");
+    const to = await need(input.to_account_id, "移す先");
     if (paidWith.id === to.id) throw new LedgerError("移す元と先が同じです");
     lines = [{ account_id: to.id, amount: input.amount }, { account_id: paidWith.id, amount: -input.amount }];
   } else {

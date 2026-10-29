@@ -85,7 +85,7 @@ describe("取引", () => {
     expect((await api("GET", `/api/entries/${rent.id}`)).provisional).toBe(0);
   });
 
-  it("費目を空にするとキーワード表かAIで決まり、直すと次から同じ費目になる", async () => {
+  it("カテゴリを空にするとキーワード表かAIで決まり、直すと次から同じカテゴリになる", async () => {
     const { id, category_source } = await api("POST", "/api/entries", {
       kind: "expense", date: "2026-10-21", amount: 500, from_account_id: wallet, payee: "ローソン 仙台駅前店",
     });
@@ -158,7 +158,7 @@ describe("カード明細の取り込み", () => {
   });
 });
 
-describe("費目の統合", () => {
+describe("カテゴリの統合", () => {
   it("過去の取引と学んだ対応が統合先に移り、まとめとの差に理由が出る", async () => {
     const created = await api("POST", "/api/accounts", { name: "カフェ", type: "expense" });
     await api("POST", "/api/entries", {
@@ -230,8 +230,10 @@ describe("集計の年と自動の処理", () => {
     // 利用した時点で使えるお金は減っているので、引き落としでは動かない
     expect(after.available_cash).toBe(before.available_cash);
 
-    // 家賃カードの10/1の利用は11月請求なので、12/27に落ちるのは奨学金の返済だけ
-    const loanPaid = await recordDuePayments(testEnv.DB, "2026-12-27");
+    // 2026/12/27 は日曜なので、翌営業日の12/28に落ちる
+    expect(await recordDuePayments(testEnv.DB, "2026-12-27")).toHaveLength(0);
+    // 家賃カードの10/1の利用は11月請求なので、落ちるのは奨学金の返済だけ
+    const loanPaid = await recordDuePayments(testEnv.DB, "2026-12-28");
     expect(loanPaid).toHaveLength(1);
     const b = await api("GET", "/api/balances");
     expect(b.accounts.find((a: any) => a.id === loan).balance).toBe(900000 - 15000);
@@ -241,5 +243,40 @@ describe("集計の年と自動の処理", () => {
     await daily(testEnv, new Date("2026-11-01T00:00:00Z"));
     const s = await api("GET", "/api/summary/month?month=2026-10");
     expect(s.report).not.toBeNull();
+  });
+
+  it("レシートの品目ごとにカテゴリを分けて記録し、品目の対応を覚える", async () => {
+    const food = await category("食料品");
+    const shop = await category("買い物");
+    const r = await api("POST", "/api/entries", {
+      kind: "expense", date: "2026-10-20", amount: 1200, payee: "スーパー", from_account_id: wallet,
+      items: [{ name: "牛乳", amount: 250, category_id: food }, { name: "卵", amount: 300, category_id: food }, { name: "電池", amount: 650, category_id: shop }],
+    });
+    const e = await api("GET", `/api/entries/${r.id}`);
+    const byCat = Object.fromEntries(e.lines.filter((l: any) => l.type === "expense").map((l: any) => [l.account_id, l.amount]));
+    expect(byCat).toEqual({ [food]: 550, [shop]: 650 });
+    const rules = await api<any[]>("GET", "/api/rules");
+    expect(rules.some((x) => x.pattern === "ITEM:牛乳" && x.account_id === food)).toBe(true);
+    await expect(api("POST", "/api/entries", {
+      kind: "expense", date: "2026-10-20", amount: 1000, from_account_id: wallet, items: [{ name: "牛乳", amount: 250, category_id: food }],
+    })).rejects.toThrow("合いません");
+  });
+
+  it("収入の受け取り先にカードは選べない", async () => {
+    await expect(api("POST", "/api/entries", {
+      kind: "income", date: "2026-10-20", amount: 100, to_account_id: card, category_id: await category("その他の収入"),
+    })).rejects.toThrow("受け取り先");
+  });
+
+  it("支払方法に出すかどうかの初期値と、並べ替え", async () => {
+    const all = await api<any[]>("GET", "/api/accounts");
+    const get = (id: number) => all.find((a) => a.id === id);
+    expect(get(wallet).pay_method).toBe(1);
+    expect(get(card).pay_method).toBe(1);
+    expect(get(fund).pay_method).toBe(0);
+    expect(get(loan).pay_method).toBe(0);
+    await api("POST", "/api/accounts/order", { ids: [suica, wallet, bank] });
+    const after = (await api<any[]>("GET", "/api/accounts")).filter((a) => [suica, wallet, bank].includes(a.id)).map((a) => a.id);
+    expect(after).toEqual([suica, wallet, bank]);
   });
 });

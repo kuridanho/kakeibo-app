@@ -3,10 +3,12 @@ export interface Env {
   BUCKET?: R2Bucket;
   AI?: Ai;
   ASSETS?: Fetcher;
-  /** 費目の判断に使うテキストモデル */
+  /** カテゴリの判断に使うテキストモデル */
   CLASSIFY_MODEL?: string;
   /** "1" のとき、レシート読み取りの比較検証用APIを有効にする */
   ENABLE_RECEIPT_EVAL?: string;
+  /** レシートの読み取りに使う視覚モデル */
+  RECEIPT_MODEL?: string;
 }
 
 export type AccountType = "asset" | "liability" | "equity" | "income" | "expense";
@@ -28,6 +30,7 @@ export interface Account {
   origin: string;
   seed_key: string | null;
   archived: number;
+  pay_method: number;
   merged_into_id: number | null;
   created_at: string;
 }

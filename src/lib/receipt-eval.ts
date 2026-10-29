@@ -2,6 +2,7 @@
 // 本番の読み取り機能を作る前に、どのモデルで日本語のレシートを読めるかを確かめるためのもの。
 
 import type { Env } from "../types";
+import { LedgerError } from "./ledger";
 
 export const RECEIPT_MODELS = [
   "@cf/meta/llama-4-scout-17b-16e-instruct",
@@ -44,7 +45,7 @@ export function extractJSON(text: string): unknown {
   }
 }
 
-async function runModel(env: Env, model: string, image: Uint8Array, mime: string): Promise<{ text: string; usage: unknown }> {
+export async function runModel(env: Env, model: string, image: Uint8Array, mime: string): Promise<{ text: string; usage: unknown }> {
   const ai = env.AI!;
   let input: Record<string, unknown>;
   if (model.includes("llama-3.2-11b-vision")) {
@@ -92,4 +93,33 @@ export async function evaluateReceipt(env: Env, image: Uint8Array, mime: string,
     }
   }
   return { results };
+}
+
+export const DEFAULT_RECEIPT_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
+
+export interface Receipt {
+  store: string | null;
+  date: string | null;
+  total: number | null;
+  items: { name: string; amount: number; quantity: number | null }[];
+}
+
+const toInt = (v: unknown): number | null => {
+  const n = typeof v === "string" ? Number(v.replace(/[,円¥\s]/g, "")) : Number(v);
+  return v === null || v === undefined || v === "" || !Number.isFinite(n) ? null : Math.round(n);
+};
+
+/** 本番のレシート読み取り。モデルは RECEIPT_MODEL で替えられる */
+export async function readReceipt(env: Env, image: Uint8Array, mime: string): Promise<Receipt> {
+  if (!env.AI) throw new LedgerError("AIが使えないため、レシートを読めません", 503);
+  const { text } = await runModel(env, env.RECEIPT_MODEL || DEFAULT_RECEIPT_MODEL, image, mime);
+  const p = extractJSON(text) as Record<string, unknown> | null;
+  if (!p) throw new LedgerError("レシートを読み取れませんでした。明るい場所で、レシート全体が入るように撮ってください");
+  const date = typeof p.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : null;
+  const items = Array.isArray(p.items) ? p.items.map((i: Record<string, unknown>) => ({
+    name: String(i?.name ?? "").trim(),
+    amount: toInt(i?.amount) ?? NaN,
+    quantity: toInt(i?.quantity),
+  })) : [];
+  return { store: typeof p.store === "string" ? p.store : null, date, total: toInt(p.total), items };
 }

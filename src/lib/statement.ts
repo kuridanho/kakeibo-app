@@ -29,7 +29,7 @@ export interface PreviewRow extends StatementRow {
   candidates: Candidate[];
   /** 自動で結びつける仮の取引 */
   match_entry_id: number | null;
-  /** 新しい取引にするときの費目、またはチャージ先の電子マネー */
+  /** 新しい取引にするときのカテゴリ、またはチャージ先の電子マネー */
   category_id: number | null;
   category_source: string | null;
   charge_account_id: number | null;
@@ -122,7 +122,7 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
     return { ...base, status: "choose", candidates };
   });
 
-  // 新しく作る行の費目を決める。電子マネーへのチャージらしい行は振替の候補にする
+  // 新しく作る行のカテゴリを決める。電子マネーへのチャージらしい行は振替の候補にする
   const toClassify: string[] = [];
   for (const row of rows) {
     if (row.status === "duplicate" || row.status === "matched") continue;
@@ -212,7 +212,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
       used.add(link);
       const old = await db.prepare("SELECT * FROM entries WHERE id = ?").bind(link).first<Entry>();
       if (!old || !old.provisional) throw new LedgerError(`仮の取引 ${link} が見つかりません`);
-      // 費目、メモ、立て替えの印は手入力のものを引き継ぎ、日付と金額は明細に合わせる
+      // カテゴリ、メモ、立て替えの印は手入力のものを引き継ぎ、日付と金額は明細に合わせる
       const { results: oldLines } = await db
         .prepare("SELECT account_id, amount FROM lines WHERE entry_id = ?").bind(link).all<{ account_id: number; amount: number }>();
       const scale = row.paymentAmount;
@@ -239,7 +239,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
       ]);
     } else {
       const categoryId = choice.category_id ?? row.category_id;
-      if (!categoryId) throw new LedgerError(`${row.merchant} の費目が決まっていません`);
+      if (!categoryId) throw new LedgerError(`${row.merchant} のカテゴリが決まっていません`);
       await createEntry(db, {
         ...common, kind: "expense", memo,
         category_source: choice.category_id ? "user" : row.category_source,
