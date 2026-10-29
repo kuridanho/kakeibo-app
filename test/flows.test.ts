@@ -337,3 +337,32 @@ describe("13列の形式の明細の取り込み", () => {
     await balanced();
   });
 });
+
+describe("カードから電子マネーへのチャージ", () => {
+  it("カードの請求に乗り、銀行からはカードの引き落とし日に出る", async () => {
+    const debut = (await api("POST", "/api/accounts", {
+      name: "流れチャージカード", type: "liability", kind: "card", closing_day: 31, payment_day: 26, payment_account_id: bank,
+    })).id;
+    const due = await api("GET", `/api/accounts/${debut}/due?date=2029-10-29`);
+    expect(due).toEqual({ billing_month: "2029-11", date: nextBankDay("2029-11-26"), payment_account_id: bank });
+
+    const before = await snapshot();
+    const { id } = await api("POST", "/api/entries", { kind: "transfer", date: "2029-10-29", amount: 2000, from_account_id: debut, to_account_id: paypay });
+    expect((await api("GET", `/api/entries/${id}`)).billing_month).toBe("2029-11");
+    // チャージした日は、電子マネーが増えてカードの未払いが増えるだけで、銀行は動かない
+    const after = await snapshot();
+    expect(after.bal(paypay) - before.bal(paypay)).toBe(2000);
+    expect(after.bal(bank)).toBe(before.bal(bank));
+
+    expect(await recordDuePayments(db, "2029-11-25")).toHaveLength(0);
+    const paid = await recordDuePayments(db, due.date);
+    const entry = await api("GET", `/api/entries/${paid.find(Boolean)}`);
+    expect(entry.date).toBe(due.date);
+    expect(entry.lines.find((l: any) => l.account_id === bank).amount).toBe(-2000);
+    await balanced();
+  });
+
+  it("カードでない口座は引き落とし日を返さない", async () => {
+    expect((await api("GET", `/api/accounts/${bank}/due?date=2029-10-29`)).date).toBeNull();
+  });
+});

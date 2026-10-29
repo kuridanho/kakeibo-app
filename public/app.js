@@ -385,6 +385,21 @@ async function entryForm(existing) {
     const camera = h("input", { type: "file", accept: "image/*", capture: "environment", hidden: true });
     const itemsBox = h("div", { class: "stack", hidden: true });
     const amount = moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: init.amount, disabled: isStatement, "aria-label": "金額" });
+    // カードで払う、またはカードからチャージするときは、銀行から落ちる日を添える
+    const dueRow = h("div", { class: "cell", hidden: true }, h("span", { class: "grow" }, "引き落とし"), h("span", { class: "value" }));
+    const showDue = async () => {
+      const card = list.find((a) => a.id === Number(form.elements.from_account_id?.value) && a.kind === "card");
+      const date = form.elements.date.value;
+      dueRow.hidden = true;
+      if (!card || !date) return;
+      try {
+        const d = await api("GET", `/api/accounts/${card.id}/due?date=${date}`);
+        if (!d.date || form.elements.from_account_id.value !== String(card.id) || form.elements.date.value !== date) return;
+        const bank = list.find((a) => a.id === d.payment_account_id);
+        dueRow.lastChild.textContent = `${dayLabel(d.date)}${bank ? `　${bank.name}` : ""}`;
+        dueRow.hidden = false;
+      } catch { /* 出せなくても記録はできる */ }
+    };
     const form = h("form", { id: "entry-form" },
       amountField(amount, kind === "expense" && !existing
         ? h("button", { type: "button", class: "icon", "aria-label": "レシートを撮る", onclick: () => camera.click() }, icon(CAMERA)) : null),
@@ -398,6 +413,7 @@ async function entryForm(existing) {
         kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, sideOptions(movable, init.from_account_id, "選んでください"))) : null,
         kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true, onchange: () => showInterest() }, sideOptions(movable, init.to_account_id, "選んでください"))) : null,
         kind === "transfer" ? field("うち利息・手数料", moneyInput({ name: "interest", "data-num": "", value: init.interest })) : null,
+        kind !== "income" ? dueRow : null,
         field("メモ", h("input", { name: "memo", value: init.memo }))),
       kind === "expense" ? itemsBox : null,
       kind === "expense" ? h("details", { class: "more", open: init.advance || undefined },
@@ -517,6 +533,9 @@ async function entryForm(existing) {
       isStatement ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "明細から取り込んだ取引なので、金額、日付、支払方法は明細のままです。") : null,
       form);
     showInterest();
+    form.elements.from_account_id?.addEventListener("change", showDue);
+    form.elements.date.addEventListener("change", showDue);
+    showDue();
     if (items.length) showItems();
     if (!existing) setTimeout(() => amount.focus({ preventScroll: true }), 0);
   };
