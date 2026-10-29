@@ -480,7 +480,9 @@ function entryAmount(e) {
 }
 
 async function list(params) {
-  if (params.get("view") === "cal") return calendarView(params);
+  // 一覧のタブはカレンダーで開く。検索や確かめる項目から来たときはリストにする
+  const asList = params.get("view") === "list" || params.get("q") || params.get("provisional") || params.get("unsure");
+  if (!asList) return calendarView(params);
   const month = params.get("month") ?? thisMonth();
   const qs = new URLSearchParams();
   if (params.get("provisional")) qs.set("provisional", "1");
@@ -504,7 +506,7 @@ async function list(params) {
 
   const title = params.get("provisional") ? h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い")
     : params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
-    : monthNav(month, (n) => { location.hash = `#/list?month=${addMonths(month, n)}`; }, `${Number(month.slice(5))}月`);
+    : monthNav(month, (n) => { location.hash = `#/list?view=list&month=${addMonths(month, n)}`; }, `${Number(month.slice(5))}月`);
   const plain = !params.get("provisional") && !params.get("unsure");
   return [plain ? listTabs("list", month) : null, title, search, ...body];
 }
@@ -513,7 +515,7 @@ async function list(params) {
 
 function listTabs(current, month) {
   return h("div", { class: "seg", role: "group", "aria-label": "表示" },
-    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?month=${month}`; } }, "リスト"),
+    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?view=list&month=${month}`; } }, "リスト"),
     h("button", { "aria-pressed": String(current === "cal"), onclick: () => { location.hash = `#/list?view=cal&month=${month}`; } }, "カレンダー"));
 }
 
