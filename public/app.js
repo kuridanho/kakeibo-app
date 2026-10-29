@@ -238,7 +238,7 @@ async function home() {
         h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月使える額（概算）"),
         h("span", { class: "footnote" }, "内訳")),
       h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yen(budget.budget)),
-      h("span", { class: "footnote" }, `${monthLabel(budget.month)}。来月末の手元から余裕を引いた額`)),
+      h("span", { class: "footnote" }, `${monthLabel(budget.month)}。来月末の手元からカードの未払いと余裕を引いた額`)),
     h("span", { class: "section-head" }, `${Number(thisMonth().slice(5))}月の支出`),
     h("a", { class: "card", href: "#/summary", style: "text-decoration:none;color:inherit" },
       h("div", { class: "row" },
@@ -287,6 +287,7 @@ async function budgetView() {
       h("div", { class: "group", style: "padding-left:0;border-radius:0" },
         h("div", { class: "cell" }, h("span", { class: "grow" }, "来月初めの手元"), h("span", { class: "amount" }, yen(b.opening_liquid))),
         h("div", { class: "cell" }, h("span", { class: "grow" }, "来月末の手元（見込み）"), h("span", { class: "amount" }, yen(b.projected_liquid))),
+        h("div", { class: "cell" }, h("span", { class: "grow" }, "来月末のカードの未払い"), h("span", { class: "amount" }, yen(-b.card_unpaid))),
         h("div", { class: "cell" }, h("span", { class: "grow" }, "残しておく額"), h("span", { class: "amount" }, yen(b.buffer))))),
     h("span", { class: "section-head" }, "入る予定"),
     list(b.income, "+"),
@@ -297,11 +298,11 @@ async function budgetView() {
       h("div", { class: "group" }, b.card_fixed.map((x) => cell({},
         h("span", { class: "grow" }, h("span", {}, x.label), h("span", { class: "detail" }, dayLabel(x.date))),
         h("span", { class: "value" }, yen(x.amount))))),
-      h("p", { class: "footnote", style: "padding:0 4px" }, "カードの利用は来月の手元からは引いていません。この分も「使える額」に含まれています。来月の引き落としは出る予定に入っています。"),
+      h("p", { class: "footnote", style: "padding:0 4px" }, "手元からは再来月に出ますが、来月末のカードの未払いとして使える額から引いています。"),
     ] : null,
     h("span", { class: "section-head" }, "設定"),
     form,
-    h("p", { class: "footnote", style: "padding:0 4px" }, "来月末の手元資金から、この額を残した分が「使える額」です。"),
+    h("p", { class: "footnote", style: "padding:0 4px" }, "来月末の手元資金から、カードの未払いとこの額を引いた分が「使える額」です。"),
   ];
 }
 
