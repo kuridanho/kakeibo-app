@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Account, Entry, Env } from "./types";
 import { classifyItems, classifyMerchants, classifyOne, learnItemRule, learnRule, merchantKey } from "./lib/classify";
-import { addMonths, monthOf, todayJST } from "./lib/dates";
+import { addMonths, billingMonth, dayInMonth, monthOf, nextBankDay, todayJST } from "./lib/dates";
 import {
   balanceOf, buildSimple, createEntry, deleteEntry, getAccount, getEntry, LedgerError, logChange,
   resolveAccount, type SimpleInput, updateEntry,
@@ -89,6 +89,16 @@ function checkAccountFields(body: Record<string, unknown>) {
 
 const EDITABLE = ["name", "liquid", "pay_method", "closing_day", "payment_day", "payment_account_id", "payment_amount",
   "check_interval_days", "statement_card_name", "statement_import", "sort_order", "archived"] as const;
+
+// カードで払ったり、カードから電子マネーにチャージしたりした日に対する、銀行からの引き落とし日
+app.get("/api/accounts/:id/due", async (c) => {
+  const a = await getAccount(c.env.DB, int(c.req.param("id"), "id"));
+  const date = c.req.query("date") ?? todayJST();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new LedgerError("日付が正しくありません");
+  if (a.kind !== "card" || !a.closing_day || !a.payment_day) return c.json({ billing_month: null, date: null, payment_account_id: null });
+  const month = billingMonth(date, a.closing_day, a.payment_day);
+  return c.json({ billing_month: month, date: nextBankDay(dayInMonth(month, a.payment_day)), payment_account_id: a.payment_account_id });
+});
 
 app.get("/api/accounts", async (c) => {
   const { results } = await c.env.DB
