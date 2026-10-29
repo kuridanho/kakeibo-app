@@ -286,17 +286,17 @@ details.more > summary + * { margin-top: 4px; }
 .item select { min-height: 36px; padding-top: 6px; padding-bottom: 6px; background-color: var(--fill); }
 
 /* カレンダー。iOS のカレンダーにならい、縦線と枠はなくして週の区切りの横線だけにする。
-   マスは金額が入るぶんだけの高さにし、月が縦に伸びないようにする */
+   マスは日付と金額2行が入る高さに固定し、どの週も同じ間隔にする */
 .cal-card { margin: 0 -4px; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--label); padding: 0 0 6px; }
 .cal-d {
-  min-height: 48px; padding: 4px 1px 5px; border-radius: 0; background: none; color: var(--label);
+  height: 56px; overflow: hidden; padding: 3px 1px 0; border-radius: 0; background: none; color: var(--label);
   border-top: 0.5px solid var(--separator);
   display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0; font-weight: 400; text-align: center;
 }
-.cal-d .n { font-size: 17px; line-height: 28px; width: 28px; height: 28px; border-radius: 14px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
-.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10.5px; line-height: 13px; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; color: var(--secondary); }
+.cal-d .n { flex: none; font-size: 16px; line-height: 26px; width: 26px; height: 26px; border-radius: 13px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
+.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10.5px; line-height: 12px; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; color: var(--secondary); }
 .cal-d .i, .cal-d .p.inc { color: var(--tint); }
 .cal-d .p { text-decoration: underline dashed; text-underline-offset: 2px; }
 .cal-w.sun, .cal-w.sat, .cal-d.sun .n, .cal-d.sat .n { color: var(--secondary); }

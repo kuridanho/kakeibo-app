@@ -42,7 +42,7 @@ const monthTitle = (m) => (m.slice(0, 4) === thisMonth().slice(0, 4) ? `${Number
 const plus = (n) => `${n > 0 ? "+" : ""}${num(n)}`;
 const dayLabel = (d) => {
   const w = "日月火水木金土"[new Date(`${d}T00:00:00Z`).getUTCDay()];
-  return `${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日 ${w}`;
+  return `${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日(${w})`;
 };
 
 function toast(msg) {
@@ -698,8 +698,9 @@ async function calendarView(params) {
     document.getElementById(`day-${d}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  const head = h("div", { class: "cal" },
+    "日月火水木金土".split("").map((w, i) => h("span", { class: `cal-w${i === 0 ? " sun" : i === 6 ? " sat" : ""}` }, w)));
   const grid = h("div", { class: "cal" },
-    "日月火水木金土".split("").map((w, i) => h("span", { class: `cal-w${i === 0 ? " sun" : i === 6 ? " sat" : ""}` }, w)),
     Array.from({ length: cells }, (_, k) => {
       const i = k - first + 1;
       const w = k % 7;
@@ -717,11 +718,9 @@ async function calendarView(params) {
         onclick: () => jump(d),
       },
         h("span", { class: "n" }, i),
-        t?.income ? h("span", { class: "i" }, num(t.income)) : null,
-        t?.expense ? h("span", { class: "e" }, num(t.expense)) : null,
-        // 収入と支出、入る予定と出る予定は差し引かずに別の行で出す。入るほうは水色
-        pin ? h("span", { class: "p inc" }, num(pin)) : null,
-        pout ? h("span", { class: "p" }, num(pout)) : null);
+        // 入る額と出る額を差し引かずに1行ずつ出す。記録がなければ予定を点線で出す。入るほうは水色
+        t?.income ? h("span", { class: "i" }, num(t.income)) : pin ? h("span", { class: "p inc" }, num(pin)) : null,
+        t?.expense ? h("span", { class: "e" }, num(t.expense)) : pout ? h("span", { class: "p" }, num(pout)) : null);
     }));
 
   const income = Object.values(cal.days).reduce((s, d) => s + d.income, 0);
@@ -751,7 +750,7 @@ async function calendarView(params) {
 
   if (selected) setTimeout(() => document.getElementById(`day-${selected}`)?.scrollIntoView({ block: "start" }), 0);
   const go = (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; };
-  const card = h("div", { class: "cal-card" }, grid, totals,
+  const card = h("div", { class: "cal-card" }, head, grid, totals,
     comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
       h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${num(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
   swipe(card, go);
