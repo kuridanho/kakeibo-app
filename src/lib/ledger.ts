@@ -215,7 +215,7 @@ export async function buildSimple(db: D1Database, input: SimpleInput): Promise<{
         byCat.set(cat.id, (byCat.get(cat.id) ?? 0) + item.amount);
       }
       const sum = [...byCat.values()].reduce((s, v) => s + v, 0);
-      if (sum !== input.amount) throw new LedgerError(`品目の合計 ${sum}円が金額 ${input.amount}円と合いません`);
+      if (sum !== input.amount) throw new LedgerError(`品目の合計 ${sum.toLocaleString("ja-JP")}円が金額 ${input.amount.toLocaleString("ja-JP")}円と合いません`);
       lines = [...byCat].filter(([, v]) => v !== 0).map(([id, v]) => ({ account_id: id, amount: v }));
       lines.push({ account_id: paidWith.id, amount: -input.amount });
     } else {

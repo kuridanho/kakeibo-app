@@ -91,12 +91,31 @@ function cell(attrs, ...children) {
   return h(attrs?.href ? "a" : "div", { ...attrs, class: `cell${attrs?.class ? ` ${attrs.class}` : ""}` }, ...children);
 }
 
+const parseNum = (v) => Number(String(v).replaceAll(",", ""));
+const fmtNum = (v) => (v === "" || v === null || v === undefined || Number.isNaN(parseNum(v)) ? (v ?? "") : parseNum(v).toLocaleString("ja-JP"));
+
+/** 金額の入力欄。打つたびに3桁ごとのカンマを付ける */
+function moneyInput(attrs) {
+  const el = h("input", { inputmode: "numeric", autocomplete: "off", ...attrs, value: fmtNum(attrs.value) });
+  el.addEventListener("input", () => {
+    // カーソルより右の数字の数を保って、カンマを付け直す
+    const right = el.value.slice(el.selectionEnd ?? el.value.length).replace(/[^0-9]/g, "").length;
+    const neg = el.value.trim().startsWith("-") || el.value.trim().startsWith("−");
+    const digits = el.value.replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "");
+    el.value = digits ? `${neg ? "-" : ""}${Number(digits).toLocaleString("ja-JP")}` : neg ? "-" : "";
+    let pos = el.value.length;
+    for (let seen = 0; pos > 0 && seen < right; pos--) if (/\d/.test(el.value[pos - 1])) seen++;
+    el.setSelectionRange(pos, pos);
+  });
+  return el;
+}
+
 function formData(form) {
   const out = {};
   for (const el of form.elements) {
     if (!el.name) continue;
     if (el.type === "checkbox") out[el.name] = el.checked;
-    else if (el.value !== "") out[el.name] = el.dataset.num !== undefined ? Number(el.value) : el.value;
+    else if (el.value !== "") out[el.name] = el.dataset.num !== undefined ? parseNum(el.value) : el.value;
   }
   return out;
 }
@@ -262,7 +281,7 @@ async function entryForm(existing) {
     const itemsBox = h("div", { class: "stack", hidden: true });
     const form = h("form", {},
       kind === "expense" && !existing ? h("button", { type: "button", class: "plain", onclick: () => camera.click() }, "レシートを撮る") : null,
-      field("金額", h("input", { name: "amount", class: "amount", inputmode: "numeric", "data-num": "", required: true, value: init.amount, disabled: isStatement })),
+      field("金額", moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: init.amount, disabled: isStatement })),
       field("日付", h("input", { name: "date", type: "date", value: init.date, required: true, disabled: isStatement })),
       kind !== "transfer" ? field(kind === "income" ? "どこから" : "店や内容", h("input", { name: "payee", value: init.payee, autocomplete: "off" })) : null,
       kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true, disabled: isStatement }, options(payWith, init.from_account_id, "選んでください"))) : null,
@@ -285,15 +304,15 @@ async function entryForm(existing) {
       itemsBox.hidden = items.length === 0;
       if (items.length === 0) { itemsBox.replaceChildren(); return; }
       const sum = items.reduce((s, i) => s + i.amount, 0);
-      const total = Number(form.elements.amount.value || 0);
+      const total = parseNum(form.elements.amount.value || 0);
       itemsBox.replaceChildren(
         h("span", { class: "section-head", style: "padding:6px 4px 0" }, "品目"),
         h("div", { class: "group" }, items.map((it, n) => h("div", { class: "item" },
           it.unclear ? h("span", { class: "question" }, `${it.name} これは何ですか？`) : null,
           h("div", { class: "row" },
             h("span", { class: "grow" }, it.name),
-            h("input", { class: "item-amount", inputmode: "numeric", value: it.amount, "aria-label": `${it.name}の金額`, onchange: (ev) => {
-              it.amount = Number(ev.target.value.replaceAll(",", "")) || 0;
+            moneyInput({ class: "item-amount", value: it.amount, "aria-label": `${it.name}の金額`, onchange: (ev) => {
+              it.amount = parseNum(ev.target.value) || 0;
               showItems();
             } })),
           categorySelect({ "aria-label": `${it.name}のカテゴリ`, required: true, onchange: (ev) => {
@@ -320,7 +339,7 @@ async function entryForm(existing) {
           const big = items.reduce((a, b) => (b.amount > a.amount ? b : a));
           items.push({ name: "値引きと端数", amount: total - sum, category_id: big.category_id, unclear: false });
         }
-        form.elements.amount.value = total || "";
+        form.elements.amount.value = total ? fmtNum(total) : "";
         if (r.date) form.elements.date.value = r.date;
         if (r.store) form.elements.payee.value = r.store;
         showItems();
@@ -399,7 +418,7 @@ async function recoveryCard(e) {
   const total = e.lines.filter((l) => l.type === "expense").reduce((s, l) => s + l.amount, 0);
   const got = e.recoveries.reduce((s, r) => s + r.lines.filter((l) => l.type === "asset").reduce((x, l) => x + l.amount, 0), 0);
   const form = h("form", {},
-    field("受け取った額", h("input", { name: "amount", inputmode: "numeric", "data-num": "", required: true })),
+    field("受け取った額", moneyInput({ name: "amount", "data-num": "", required: true })),
     field("受け取り先", h("select", { name: "account_id", "data-num": "", required: true }, options(byType(list, "asset"), store.get("lastRecv", null), "選んでください"))),
     field("日付", h("input", { name: "date", type: "date", value: today() })),
     field("相手(任意)", h("input", { name: "counterparty" })),
@@ -644,7 +663,8 @@ function kindFields(kind, a, banks) {
     payFrom,
     toggle("明細CSVを取り込む", h("input", { type: "checkbox", name: "statement_import", checked: a ? !!a.statement_import : true })),
   ];
-  if (kind === "loan") return [n("payment_day", "返済日", a?.payment_day), payFrom, n("payment_amount", "毎月の返済額", a?.payment_amount)];
+  if (kind === "loan") return [n("payment_day", "返済日", a?.payment_day), payFrom,
+    field("毎月の返済額", moneyInput({ name: "payment_amount", "data-num": "", value: a?.payment_amount }))];
   if (CHECKABLE.includes(kind)) return [n("check_interval_days", "棚卸しの間隔 (日)", a?.check_interval_days)];
   return [];
 }
@@ -713,7 +733,7 @@ function checkForm(a, bal, history) {
   const investment = a.kind === "investment";
   const result = h("div", { class: "stack" });
   const form = h("form", {},
-    field(investment ? "今の評価額" : "実際の残高", h("input", { name: "actual", class: "amount", inputmode: "numeric", "data-num": "", required: true })),
+    field(investment ? "今の評価額" : "実際の残高", moneyInput({ name: "actual", class: "amount", "data-num": "", required: true })),
     field("日付", h("input", { name: "date", type: "date", value: today() })),
     h("div", { class: "buttons" }, h("button", { type: "submit" }, investment ? "評価額を更新" : "差を確かめる")));
   const save = async (d, adjust) => {
@@ -784,7 +804,7 @@ async function openingView() {
   const form = h("form", {},
     field("いつ時点の残高か", h("input", { name: "date", type: "date", value: today() })),
     targets.map((a) => field(`${a.name}${a.type === "liability" ? " (借りている額)" : ""}`,
-      h("input", { name: `a${a.id}`, inputmode: "numeric", value: opening.get(a.id), placeholder: "分からなければ空欄" }))),
+      moneyInput({ name: `a${a.id}`, value: opening.get(a.id), placeholder: "分からなければ空欄" }))),
     h("div", { class: "buttons" }, h("button", { type: "submit" }, "保存")));
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();

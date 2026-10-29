@@ -198,7 +198,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
       continue;
     }
     const memo = [row.subCardName, row.installmentCount && row.installmentCount > 1
-      ? `分割 ${row.installmentNumber}/${row.installmentCount}回 (利用額 ${row.usageAmount}円)` : "", row.note]
+      ? `分割 ${row.installmentNumber}/${row.installmentCount}回 (利用額 ${row.usageAmount.toLocaleString("ja-JP")}円)` : "", row.note]
       .filter(Boolean).join(" ");
     const common = {
       date: row.usageDate,
