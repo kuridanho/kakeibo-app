@@ -23,7 +23,8 @@
   "ai": { "binding": "AI" },
   "vars": {
     "CLASSIFY_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    "ENABLE_RECEIPT_EVAL": "1"
+    // レシートの読み取りモデルを実物で比べるときだけ "1" にする。普段は閉じておく
+    "ENABLE_RECEIPT_EVAL": "0"
   },
   // 毎日 日本時間7時。引き落としの記録、月初の前月のまとめ、R2への控え
   "triggers": { "crons": ["0 22 * * *"] },

@@ -329,3 +329,73 @@ describe("繰り返し", () => {
     await expect(api("POST", "/api/recurring", { kind: "income", amount: 100, day: 1, first_date: "2026-11-01", to_account_id: card })).rejects.toThrow("400");
   });
 });
+
+describe("認証", () => {
+  it("Cloudflare Access のヘッダーが無ければ API を通さない", async () => {
+    const res = await app.request("/api/accounts", {}, testEnv);
+    expect(res.status).toBe(401);
+    // 監視用の health だけは認証なしで返す
+    expect((await app.request("/api/health", {}, testEnv)).status).toBe(200);
+  });
+});
+
+describe("入力の検証", () => {
+  it("limit と口座の日付に変な値を入れられない", async () => {
+    await expect(api("GET", "/api/entries?limit=abc")).rejects.toThrow("400");
+    await expect(api("GET", "/api/entries?limit=0")).rejects.toThrow("400");
+    await expect(api("PATCH", `/api/accounts/${card}`, { closing_day: 99 })).rejects.toThrow("400");
+  });
+});
+
+describe("明細の取り込みに失敗したとき", () => {
+  it("結びつけ先が仮の取引でなければ、明細も仕訳も残さない", async () => {
+    const confirmed = (await api<any[]>("GET", `/api/entries?account_id=${card}`)).find((e) => !e.provisional);
+    expect(confirmed).toBeTruthy();
+    const text = "様,1,三井住友カード\n2027/04/01,テスト商店,500,１,１,500,\n";
+    const importsBefore = await api<any[]>("GET", "/api/statements");
+    const entriesBefore = await api<any[]>("GET", `/api/entries?account_id=${card}`);
+
+    await expect(api("POST", "/api/statements/commit", {
+      account_id: card, billing_month: "2027-06", text, choices: { 0: { link: confirmed.id } },
+    })).rejects.toThrow("仮の取引");
+
+    // 失敗した取り込みは、明細の記録も仕訳も残さない
+    expect(await api<any[]>("GET", "/api/statements")).toHaveLength(importsBefore.length);
+    expect(await api<any[]>("GET", `/api/entries?account_id=${card}`)).toHaveLength(entriesBefore.length);
+  });
+});
+
+describe("同じ額の明細が2行あるとき", () => {
+  it("1つの仮の取引を2行に自動で結びつけない", async () => {
+    const dining = await category("外食");
+    await api("POST", "/api/entries", {
+      kind: "expense", date: "2027-05-05", amount: 800, from_account_id: card, category_id: dining, payee: "ドトール",
+    });
+    const text = "様,1,三井住友カード\n2027/05/05,ドトールコーヒー,800,１,１,800,\n2027/05/05,ドトールコーヒー,800,１,１,800,\n";
+    const p = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2027-07", text });
+    expect(p.rows.map((r: any) => r.status)).toEqual(["matched", "new"]);
+
+    const r = await api("POST", "/api/statements/commit", {
+      account_id: card, billing_month: "2027-07", text, choices: { 1: { link: "new", category_id: dining } },
+    });
+    expect(r).toMatchObject({ linked: 1, created: 1, duplicate: 0 });
+  });
+});
+
+describe("品目ごとに分けた立て替え", () => {
+  it("回収した額を元の割合で分け、残りを超えては受け取れない", async () => {
+    const food = await category("食料品");
+    const dining = await category("外食");
+    const { id } = await api("POST", "/api/entries", {
+      kind: "expense", date: "2026-07-10", amount: 3000, from_account_id: wallet, payee: "スーパー", advance: true,
+      items: [{ category_id: food, amount: 2000 }, { category_id: dining, amount: 1000 }],
+    });
+    await api("POST", `/api/entries/${id}/recoveries`, { date: "2026-07-20", account_id: bank, amount: 1500 });
+
+    const jul = await api("GET", "/api/summary/month?month=2026-07");
+    expect(jul.categories.find((c: any) => c.id === food).amount).toBe(1000);
+    expect(jul.categories.find((c: any) => c.id === dining).amount).toBe(500);
+    expect((await api<any[]>("GET", "/api/advances?all=1")).find((a) => a.id === id).remaining).toBe(1500);
+    await expect(api("POST", `/api/entries/${id}/recoveries`, { amount: 2000, account_id: bank })).rejects.toThrow("超えています");
+  });
+});

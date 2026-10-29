@@ -16,7 +16,7 @@ const db = testEnv.DB;
 async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await app.request(path, {
     method,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "cf-access-authenticated-user-email": "me@example.com" },
     body: body === undefined ? undefined : JSON.stringify(body),
   }, testEnv);
   const json = await res.json();

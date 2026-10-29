@@ -7,6 +7,8 @@ export interface Env {
   CLASSIFY_MODEL?: string;
   /** "1" のとき、レシート読み取りの比較検証用APIを有効にする */
   ENABLE_RECEIPT_EVAL?: string;
+  /** "1" のとき、Cloudflare Access のヘッダー無しでも API を通す。手元で動かすときだけ使う */
+  ALLOW_LOCAL?: string;
   /** レシートの読み取りに使う視覚モデル */
   RECEIPT_MODEL?: string;
 }
