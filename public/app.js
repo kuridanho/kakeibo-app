@@ -590,16 +590,46 @@ async function list(params) {
 
 // ---- カレンダー ----
 
-/** 左右のスワイプで前後へ移る。縦のスクロールと見分けるため、横に大きく動いたときだけ受ける */
+/** 左右のスワイプで前後へ移る。指に付いて動かし、離したときに半分近く動いたか速く払ったら、その向きへ滑らせて移る。
+    縦のスクロールと見分けるため、動き始めに横の方が大きいときだけ受ける */
 function swipe(el, go) {
-  let x0 = null, y0 = 0;
-  el.addEventListener("touchstart", (ev) => { if (ev.touches.length === 1) [x0, y0] = [ev.touches[0].clientX, ev.touches[0].clientY]; }, { passive: true });
-  el.addEventListener("touchend", (ev) => {
-    if (x0 === null) return;
-    const dx = ev.changedTouches[0].clientX - x0, dy = ev.changedTouches[0].clientY - y0;
-    x0 = null;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1);
+  let x0 = null, y0 = 0, t0 = 0, dir = null, dx = 0;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const slide = (x, ms) => { el.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : "none"; el.style.transform = x ? `translateX(${x}px)` : ""; };
+  el.addEventListener("touchstart", (ev) => {
+    if (ev.touches.length !== 1) return;
+    [x0, y0, t0, dir, dx] = [ev.touches[0].clientX, ev.touches[0].clientY, ev.timeStamp, null, 0];
   }, { passive: true });
+  el.addEventListener("touchmove", (ev) => {
+    if (x0 === null) return;
+    const mx = ev.touches[0].clientX - x0, my = ev.touches[0].clientY - y0;
+    if (!dir && Math.hypot(mx, my) > 8) dir = Math.abs(mx) > Math.abs(my) ? "x" : "y";
+    if (dir !== "x") return;
+    ev.preventDefault();
+    dx = mx;
+    slide(dx, 0);
+  }, { passive: false });
+  const end = (ev) => {
+    if (x0 === null || dir !== "x") { x0 = null; return; }
+    x0 = null;
+    const w = el.offsetWidth;
+    const fast = Math.abs(dx) / Math.max(1, ev.timeStamp - t0) > 0.5;
+    if (Math.abs(dx) > w * 0.35 || (fast && Math.abs(dx) > 30)) {
+      const n = dx < 0 ? 1 : -1;
+      swipe.from = n;
+      if (reduce) { go(n); return; }
+      slide(-n * w, 180);
+      setTimeout(() => go(n), 170);
+    } else slide(0, 220);
+  };
+  el.addEventListener("touchend", end, { passive: true });
+  el.addEventListener("touchcancel", end, { passive: true });
+}
+
+// 前後の月を先に読んでおき、スワイプで移ったときに待たせない。スワイプ以外で開いたときは読み直す
+const calPrefetch = new Map();
+function loadCalendar(month) {
+  return Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
 }
 
 function listTabs(current, month) {
@@ -626,7 +656,16 @@ const planNet = (ps) => ps.reduce((s, p) => s + (p.kind === "income" ? p.amount 
 
 async function calendarView(params) {
   const month = params.get("month") ?? thisMonth();
-  const [cal, all] = await Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
+  const from = swipe.from;
+  swipe.from = 0;
+  const [cal, all] = await (from && calPrefetch.has(month) ? calPrefetch.get(month).catch(() => loadCalendar(month)) : loadCalendar(month));
+  calPrefetch.clear();
+  for (const n of [-1, 1]) {
+    const m = addMonths(month, n);
+    const p = loadCalendar(m);
+    p.catch(() => {});
+    calPrefetch.set(m, p);
+  }
   const entries = all.filter((e) => e.kind !== "opening");
   const selected = params.get("day");
   // 日ごとの合計と同じく集計の日でまとめる。立て替えの回収は元の取引の日に並ぶ
@@ -698,6 +737,8 @@ async function calendarView(params) {
     comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
       h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${num(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
   swipe(card, go);
+  // スワイプで来たときは、払った向きの反対から滑り込ませる
+  if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.classList.add(from > 0 ? "in-right" : "in-left");
   return [monthNav(month, go), listTabs("cal", month), card, listBody];
 }
 
