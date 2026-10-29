@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:embedded": "node scripts/deploy-embedded.mjs",
     "db:migrate:local": "wrangler d1 migrations apply kakeibo --local",
     "db:migrate:remote": "wrangler d1 migrations apply kakeibo --remote",
     "test": "vitest run",

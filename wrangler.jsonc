@@ -15,8 +15,7 @@
     {
       "binding": "DB",
       "database_name": "kakeibo",
-      // wrangler d1 create kakeibo で作ったidに置き換える
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "393c028b-63f3-4988-bcee-c38bf468d961",
       "migrations_dir": "migrations"
     }
   ],
