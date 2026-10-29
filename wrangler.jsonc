@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kakeibo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // 画面は public/ の静的ファイルとして配信し、/api/ だけ Worker が受ける
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kakeibo",
+      "database_id": "393c028b-63f3-4988-bcee-c38bf468d961",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "kakeibo" }],
+  "ai": { "binding": "AI" },
+  "vars": {
+    "CLASSIFY_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "ENABLE_RECEIPT_EVAL": "1"
+  },
+  // 毎日 日本時間7時。引き落としの記録、月初の前月のまとめ、R2への控え
+  "triggers": { "crons": ["0 22 * * *"] },
+  "observability": { "enabled": true },
+  "workers_dev": true,
+  // プレビュー用のURLは使わないので閉じておく
+  "preview_urls": false
+}

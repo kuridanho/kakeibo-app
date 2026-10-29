@@ -1,0 +1,24 @@
+{
+  "name": "kakeibo-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:embedded": "node scripts/deploy-embedded.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply kakeibo --local",
+    "db:migrate:remote": "wrangler d1 migrations apply kakeibo --remote",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.13.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261029.1",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.155.0",
+    "@cloudflare/vitest-plugin": "^1.4.10"
+  }
+}
