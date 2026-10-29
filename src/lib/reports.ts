@@ -177,6 +177,25 @@ export async function closeMonth(db: D1Database, month: string) {
 }
 
 /**
+ * カードの請求月に引き落とされる額。
+ * 明細を取り込んだ月は明細の支払額の合計が実際に落ちる額なので、それを使う。照合できずに残った仮の取引は
+ * カードの未払いに残り、照合し直すまで目に見えるようにする。明細がまだない月は、その請求月の利用の合計にする。
+ */
+export async function cardDue(db: D1Database, cardId: number, month: string): Promise<number> {
+  const imported = await db
+    .prepare("SELECT imported_total FROM statement_imports WHERE account_id = ? AND billing_month = ? ORDER BY id DESC LIMIT 1")
+    .bind(cardId, month)
+    .first<{ imported_total: number }>();
+  if (imported) return imported.imported_total;
+  const row = await db
+    .prepare(`SELECT -COALESCE(SUM(l.amount), 0) AS s FROM lines l JOIN entries e ON e.id = l.entry_id
+      WHERE l.account_id = ? AND e.billing_month = ? AND e.kind != 'card_payment'`)
+    .bind(cardId, month)
+    .first<{ s: number }>();
+  return row?.s ?? 0;
+}
+
+/**
  * 引き落とし日が来たカードと借入の引き落としを記録する。
  * カードは請求月の利用の合計を、引き落とし口座からカードへの振替にする。
  * 借入は返済額を元金として扱う。利息の内訳は後から直せる。
@@ -197,12 +216,7 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
     if (exists) continue;
     let amount: number;
     if (a.kind === "card") {
-      const row = await db
-        .prepare(`SELECT -COALESCE(SUM(l.amount), 0) AS s FROM lines l JOIN entries e ON e.id = l.entry_id
-          WHERE l.account_id = ? AND e.billing_month = ?`)
-        .bind(a.id, month)
-        .first<{ s: number }>();
-      amount = row?.s ?? 0;
+      amount = await cardDue(db, a.id, month);
     } else {
       const bal = await db.prepare("SELECT -COALESCE(SUM(amount), 0) AS s FROM lines WHERE account_id = ?").bind(a.id).first<{ s: number }>();
       amount = Math.min(a.payment_amount ?? 0, bal?.s ?? 0);
