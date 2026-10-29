@@ -42,7 +42,7 @@ const monthTitle = (m) => (m.slice(0, 4) === thisMonth().slice(0, 4) ? `${Number
 const plus = (n) => `${n > 0 ? "+" : ""}${num(n)}`;
 const dayLabel = (d) => {
   const w = "日月火水木金土"[new Date(`${d}T00:00:00Z`).getUTCDay()];
-  return `${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日 ${w}`;
+  return `${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日(${w})`;
 };
 
 function toast(msg) {
