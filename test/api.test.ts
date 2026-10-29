@@ -244,8 +244,9 @@ describe("集計の年と自動の処理", () => {
     expect(created).toHaveLength(1);
     expect(await recordDuePayments(testEnv.DB, "2026-12-11")).toHaveLength(0);
     const after = await api("GET", "/api/balances");
-    // 12月請求は明細の5790円と、まだ照合していない11/1の仮の取引999円
-    expect(after.accounts.find((a: any) => a.id === bank).balance).toBe(bankBefore - 5790 - 999);
+    // 12月請求は明細を取り込んだので、明細の5790円が落ちる。照合していない11/1の仮の取引999円はカードの未払いに残る
+    expect(after.accounts.find((a: any) => a.id === bank).balance).toBe(bankBefore - 5790);
+    expect(after.accounts.find((a: any) => a.id === card).balance).toBe(before.accounts.find((a: any) => a.id === card).balance - 5790);
     // 利用した時点で使えるお金は減っているので、引き落としでは動かない
     expect(after.available_cash).toBe(before.available_cash);
 

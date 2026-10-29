@@ -295,6 +295,7 @@ details.more > summary + * { margin-top: 4px; }
 .cal-d .e, .cal-d .i, .cal-d .p { font-size: 11px; line-height: 13px; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; }
 .cal-d .i { color: var(--tint); }
 .cal-d .p { color: var(--secondary); text-decoration: underline dashed; text-underline-offset: 2px; }
+.cal-d .p.inc { color: var(--tint); }
 .cal-d.out .n { color: var(--secondary); opacity: 0.5; }
 .cal-d.today .n { color: var(--tint); font-weight: 700; }
 .cal-d.on { background: var(--tint-soft); }

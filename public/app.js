@@ -281,23 +281,30 @@ async function entryForm(existing) {
 
   let kind = existing?.kind ?? "expense";
   const lines = existing?.lines ?? [];
-  const pos = lines.find((l) => l.amount > 0);
+  const pos = lines.find((l) => l.amount > 0 && l.type !== "expense" && l.type !== "income") ?? lines.find((l) => l.amount > 0);
   const neg = lines.find((l) => l.amount < 0);
+  // 品目ごとに分けた支出や、利息を分けた返済もあるので、金額は払った側の額にする
+  const expenseLines = lines.filter((l) => l.type === "expense");
+  const paid = kind === "expense" ? expenseLines.reduce((s, l) => s + l.amount, 0)
+    : -lines.filter((l) => l.amount < 0).reduce((s, l) => s + l.amount, 0);
   const init = existing ? {
-    amount: pos?.amount,
+    amount: kind === "income" ? pos?.amount : paid,
+    interest: kind === "transfer" ? expenseLines.reduce((s, l) => s + l.amount, 0) || undefined : undefined,
     date: existing.date,
     payee: existing.payee,
     memo: existing.memo,
     advance: !!existing.advance,
     from_account_id: kind === "income" ? undefined : neg?.account_id,
     to_account_id: kind === "income" || kind === "transfer" ? pos?.account_id : undefined,
-    category_id: kind === "expense" ? pos?.account_id : kind === "income" ? neg?.account_id : undefined,
+    category_id: kind === "expense" ? expenseLines[0]?.account_id : kind === "income" ? neg?.account_id : undefined,
   } : { date: today(), from_account_id: store.get("lastPay", null) };
   // 支払方法は選べるようにしたものだけ。編集中の取引で使っているものは残す
   const payWith = live(list).filter((a) => (a.type === "asset" || a.type === "liability") && (a.pay_method || keep(a, init.from_account_id)));
   const receiveTo = byType(list, "asset");
   const movable = byType(list, "asset", "liability");
-  let items = [];
+  // カテゴリが複数に分かれた支出は、カテゴリごとの品目として開く。名前は覚えさせない
+  let items = kind === "expense" && expenseLines.length > 1
+    ? expenseLines.map((l) => ({ name: l.name, amount: l.amount, category_id: l.account_id, unclear: false, fromLines: true })) : [];
 
   const box = h("div", { class: "stack" });
   const render = () => {
@@ -318,7 +325,8 @@ async function entryForm(existing) {
         kind === "income" ? field("受け取り先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(receiveTo, init.to_account_id, "選んでください"))) : null,
         kind === "income" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, income, "income", init.category_id)) : null,
         kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, options(movable, init.from_account_id, "選んでください"))) : null,
-        kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(movable, init.to_account_id, "選んでください"))) : null,
+        kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true, onchange: () => showInterest() }, options(movable, init.to_account_id, "選んでください"))) : null,
+        kind === "transfer" ? field("うち利息・手数料", moneyInput({ name: "interest", "data-num": "", value: init.interest })) : null,
         field("メモ", h("input", { name: "memo", value: init.memo }))),
       kind === "expense" ? itemsBox : null,
       kind === "expense" ? h("details", { class: "more", open: init.advance || undefined },
@@ -330,6 +338,16 @@ async function entryForm(existing) {
         h("summary", {}, "その他"),
         group(toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })))) : null,
       existing ? group(h("button", { type: "button", class: "cell danger", onclick: remove }, "削除")) : null);
+
+    // 借入への返済のときだけ、利息を分けて入れられる
+    const showInterest = () => {
+      const input = form.elements.interest;
+      if (!input) return;
+      const to = list.find((a) => a.id === Number(form.elements.to_account_id.value));
+      const loan = to?.kind === "loan";
+      input.closest("label").hidden = !loan;
+      if (!loan) input.value = "";
+    };
 
     const showItems = () => {
       form.elements.category_id.closest("label").hidden = items.length > 0;
@@ -393,7 +411,7 @@ async function entryForm(existing) {
       const repeat = data.repeat;
       delete data.repeat;
       if (items.length) {
-        data.items = items.map(({ name, amount, category_id }) => ({ name, amount, category_id }));
+        data.items = items.map(({ name, amount, category_id, fromLines }) => ({ name: fromLines ? undefined : name, amount, category_id }));
         delete data.category_id;
       }
       try {
@@ -427,6 +445,8 @@ async function entryForm(existing) {
       camera,
       isStatement ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "明細から取り込んだ取引なので、金額、日付、支払方法は明細のままです。") : null,
       form);
+    showInterest();
+    if (items.length) showItems();
     if (!existing) setTimeout(() => amount.focus({ preventScroll: true }), 0);
   };
   async function remove() {
@@ -516,7 +536,8 @@ function describeEntry(e) {
 
 function entryAmount(e) {
   const cat = e.lines.filter((l) => l.type === "expense" || l.type === "income");
-  if (cat.length) return Math.abs(cat.reduce((s, l) => s + l.amount, 0));
+  // 利息を分けた返済は、元金と利息を合わせた払った額を出す
+  if (cat.length && e.kind !== "transfer") return Math.abs(cat.reduce((s, l) => s + l.amount, 0));
   return e.lines.filter((l) => l.amount > 0).reduce((s, l) => s + l.amount, 0);
 }
 
@@ -584,12 +605,18 @@ function entryCell(e) {
       : h("span", { class: `amount${transfer ? " muted" : ""}` }, num(entryAmount(e))));
 }
 
+// 予定のうち手元のお金が減るもの。支出の繰り返しと、カードの引き落としと借入の返済。口座間の振替は数えない
+const flowsOut = (p) => p.kind === "expense" || p.kind === "payment";
+/** 予定の入りと出の差。入るほうが多ければ正 */
+const planNet = (ps) => ps.reduce((s, p) => s + (p.kind === "income" ? p.amount : flowsOut(p) ? -p.amount : 0), 0);
+
 async function calendarView(params) {
   const month = params.get("month") ?? thisMonth();
   const [cal, all] = await Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
   const entries = all.filter((e) => e.kind !== "opening");
   const selected = params.get("day");
-  const byDay = Map.groupBy(entries, (e) => e.date);
+  // 日ごとの合計と同じく集計の日でまとめる。立て替えの回収は元の取引の日に並ぶ
+  const byDay = Map.groupBy(entries, (e) => e.report_date);
   const plannedBy = Map.groupBy(cal.planned, (p) => p.date);
   const [y, m] = month.split("-").map(Number);
   const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
@@ -614,7 +641,7 @@ async function calendarView(params) {
       if (i < 1 || i > last) return h("span", { class: `cal-d out${tone}` }, h("span", { class: "n" }, i < 1 ? prevLast + i : i - last));
       const d = `${month}-${String(i).padStart(2, "0")}`;
       const t = cal.days[d];
-      const plan = (plannedBy.get(d) ?? []).reduce((s, p) => s + (p.kind === "income" ? -p.amount : p.amount), 0);
+      const plan = planNet(plannedBy.get(d) ?? []);
       return h("button", {
         type: "button", "data-day": d,
         class: `cal-d${d === selected ? " on" : ""}${d === cal.today ? " today" : ""}${tone}`,
@@ -624,12 +651,14 @@ async function calendarView(params) {
         h("span", { class: "n" }, i),
         t?.income ? h("span", { class: "i" }, num(t.income)) : null,
         t?.expense ? h("span", { class: "e" }, num(t.expense)) : null,
-        plan ? h("span", { class: "p" }, num(plan)) : null);
+        // 入る予定は + を付け、出る予定は額だけを出す。日ごとの合計の出し方と揃える
+        plan ? h("span", { class: `p${plan > 0 ? " inc" : ""}` }, plan > 0 ? plus(plan) : num(-plan)) : null);
     }));
 
   const income = Object.values(cal.days).reduce((s, d) => s + d.income, 0);
   const spent = Object.values(cal.days).reduce((s, d) => s + d.expense, 0);
-  const upcoming = cal.planned.filter((p) => p.kind !== "income").reduce((s, p) => s + p.amount, 0);
+  const comingIn = cal.planned.filter((p) => p.kind === "income").reduce((s, p) => s + p.amount, 0);
+  const comingOut = cal.planned.filter((p) => flowsOut(p)).reduce((s, p) => s + p.amount, 0);
   const totals = h("div", { class: "cal-sum" },
     h("div", {}, h("span", {}, "収入"), h("b", { class: "inc" }, num(income))),
     h("div", {}, h("span", {}, "支出"), h("b", {}, num(spent))),
@@ -652,7 +681,8 @@ async function calendarView(params) {
   if (selected) setTimeout(() => document.getElementById(`day-${selected}`)?.scrollIntoView({ block: "start" }), 0);
   const go = (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; };
   const card = h("div", { class: "cal-card" }, grid, totals,
-    upcoming ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"), h("span", {}, num(upcoming))) : null);
+    comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
+      h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${num(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
   swipe(card, go);
   return [monthNav(month, go), listTabs("cal", month), card, listBody];
 }
