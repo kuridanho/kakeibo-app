@@ -590,17 +590,66 @@ async function list(params) {
 
 // ---- カレンダー ----
 
-/** 左右のスワイプで前後へ移る。縦のスクロールと見分けるため、横に大きく動いたときだけ受ける */
+/** 左右のスワイプで前後へ移る。指に付いて動かし、離したときに半分近く動いたか速く払ったら、その向きへ滑らせて移る。
+    縦のスクロールと見分けるため、動き始めに横の方が大きいときだけ受ける */
 function swipe(el, go) {
-  let x0 = null, y0 = 0;
-  el.addEventListener("touchstart", (ev) => { if (ev.touches.length === 1) [x0, y0] = [ev.touches[0].clientX, ev.touches[0].clientY]; }, { passive: true });
-  el.addEventListener("touchend", (ev) => {
-    if (x0 === null) return;
-    const dx = ev.changedTouches[0].clientX - x0, dy = ev.changedTouches[0].clientY - y0;
-    x0 = null;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1);
+  let x0 = null, y0 = 0, t0 = 0, dir = null, dx = 0;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const slide = (x, ms) => { el.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : "none"; el.style.transform = x ? `translateX(${x}px)` : ""; };
+  el.addEventListener("touchstart", (ev) => {
+    if (ev.touches.length !== 1) return;
+    [x0, y0, t0, dir, dx] = [ev.touches[0].clientX, ev.touches[0].clientY, ev.timeStamp, null, 0];
   }, { passive: true });
+  el.addEventListener("touchmove", (ev) => {
+    if (x0 === null) return;
+    const mx = ev.touches[0].clientX - x0, my = ev.touches[0].clientY - y0;
+    if (!dir && Math.hypot(mx, my) > 8) dir = Math.abs(mx) > Math.abs(my) ? "x" : "y";
+    if (dir !== "x") return;
+    ev.preventDefault();
+    dx = mx;
+    slide(dx, 0);
+  }, { passive: false });
+  const end = (ev) => {
+    if (x0 === null || dir !== "x") { x0 = null; return; }
+    x0 = null;
+    const w = el.offsetWidth;
+    const fast = Math.abs(dx) / Math.max(1, ev.timeStamp - t0) > 0.5;
+    if (Math.abs(dx) > w * 0.35 || (fast && Math.abs(dx) > 30)) {
+      const n = dx < 0 ? 1 : -1;
+      swipe.from = n;
+      if (reduce) { go(n); return; }
+      slide(-n * w, 180);
+      setTimeout(() => go(n), 170);
+    } else slide(0, 220);
+  };
+  el.addEventListener("touchend", end, { passive: true });
+  el.addEventListener("touchcancel", end, { passive: true });
 }
+
+// 前後の期間を先に読んでおき、スワイプで移ったときに待たせない。スワイプ以外で開いたときは読み直す
+const ahead = new Map();
+function loadAhead(key, load, swiped) {
+  const p = swiped && ahead.get(key);
+  ahead.clear();
+  return p ? p.catch(() => load()) : load();
+}
+function readAhead(keys, load) {
+  for (const k of keys) {
+    const p = load(k);
+    p.catch(() => {});
+    ahead.set(k, p);
+  }
+}
+
+/** スワイプで動かす中身。スワイプで来たときは、払った向きの反対から滑り込ませる */
+function swipePane(from, go, ...children) {
+  const pane = h("div", { class: "stack swipe-pane" }, ...children);
+  swipe(pane, go);
+  if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) pane.classList.add(from > 0 ? "in-right" : "in-left");
+  return pane;
+}
+
+const loadCalendar = (month) => Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
 
 function listTabs(current, month) {
   return h("div", { class: "seg", role: "group", "aria-label": "表示" },
@@ -626,7 +675,10 @@ const planNet = (ps) => ps.reduce((s, p) => s + (p.kind === "income" ? p.amount 
 
 async function calendarView(params) {
   const month = params.get("month") ?? thisMonth();
-  const [cal, all] = await Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
+  const from = swipe.from;
+  swipe.from = 0;
+  const [cal, all] = await loadAhead(`cal:${month}`, () => loadCalendar(month), from);
+  readAhead([-1, 1].map((n) => `cal:${addMonths(month, n)}`), (k) => loadCalendar(k.slice(4)));
   const entries = all.filter((e) => e.kind !== "opening");
   const selected = params.get("day");
   // 日ごとの合計と同じく集計の日でまとめる。立て替えの回収は元の取引の日に並ぶ
@@ -698,6 +750,7 @@ async function calendarView(params) {
     comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
       h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${num(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
   swipe(card, go);
+  if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.classList.add(from > 0 ? "in-right" : "in-left");
   return [monthNav(month, go), listTabs("cal", month), card, listBody];
 }
 
@@ -709,12 +762,17 @@ async function summary(params) {
   const toggle = h("div", { class: "seg", role: "group", "aria-label": "期間" },
     h("button", { "aria-pressed": String(mode === "month"), onclick: () => { location.hash = `#/summary?month=${month}`; } }, "月"),
     h("button", { "aria-pressed": String(mode === "year"), onclick: () => { location.hash = `#/summary?view=year&month=${month}`; } }, "年"));
+  const from = swipe.from;
+  swipe.from = 0;
   if (mode === "year") {
-    const [nav, ...rest] = await yearView(params);
-    return [nav, toggle, ...rest];
+    const [nav, go, ...rest] = await yearView(params, from);
+    return [nav, toggle, swipePane(from, go, rest)];
   }
 
-  const s = await api("GET", `/api/summary/month?month=${month}`);
+  const loadMonth = (m) => api("GET", `/api/summary/month?month=${m}`);
+  const s = await loadAhead(`sum:${month}`, () => loadMonth(month), from);
+  readAhead([-1, 1].map((n) => `sum:${addMonths(month, n)}`), (k) => loadMonth(k.slice(4)));
+  const go = (n) => { location.hash = `#/summary?month=${addMonths(month, n)}`; };
   const expenses = s.categories.filter((c) => c.type === "expense").sort((a, b) => b.amount - a.amount);
   const incomes = s.categories.filter((c) => c.type === "income");
   const max = Math.max(1, ...expenses.map((c) => c.amount));
@@ -727,8 +785,9 @@ async function summary(params) {
     route();
   };
   return [
-    monthNav(month, (n) => { location.hash = `#/summary?month=${addMonths(month, n)}`; }),
+    monthNav(month, go),
     toggle,
+    swipePane(from, go,
     h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(s.expense))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(s.income))),
@@ -748,20 +807,23 @@ async function summary(params) {
       ]))),
     incomes.length ? [h("span", { class: "section-head" }, "収入"), h("div", { class: "group" },
       incomes.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value" }, num(c.amount)))))] : null,
-    !s.report && month < thisMonth() ? h("button", { class: "plain", onclick: makeReport }, "この月のまとめを作る") : null,
+    !s.report && month < thisMonth() ? h("button", { class: "plain", onclick: makeReport }, "この月のまとめを作る") : null),
   ];
 }
 
-async function yearView(params) {
+async function yearView(params, from) {
   const settings = await api("GET", "/api/settings");
   const year = params.get("year");
-  const y = await api("GET", `/api/summary/year${year ? `?year=${year}` : ""}`);
+  const loadYear = (n) => api("GET", `/api/summary/year${n ? `?year=${n}` : ""}`);
+  const y = await loadAhead(`year:${year}`, () => loadYear(year), from);
+  readAhead([y.year - 1, y.year + 1].map((n) => `year:${n}`), (k) => loadYear(k.slice(5)));
   const start = Number(settings.year_start_month);
   const go = (n) => { location.hash = `#/summary?view=year&year=${n}`; };
   const max = Math.max(1, ...y.months.map((m) => Math.max(m.expense, m.income)));
   const cats = y.categories.filter((c) => c.type === "expense").sort((a, b) => b.amount - a.amount);
   return [
     monthNav(String(y.year), (n) => go(y.year + n), start === 4 ? `${y.year}年度` : `${y.year}年`),
+    (n) => go(y.year + n),
     h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(y.months.reduce((s, m) => s + m.expense, 0)))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(y.months.reduce((s, m) => s + m.income, 0))))),
