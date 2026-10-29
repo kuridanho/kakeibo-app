@@ -27,5 +27,8 @@
   },
   // 毎日 日本時間7時。引き落としの記録、月初の前月のまとめ、R2への控え
   "triggers": { "crons": ["0 22 * * *"] },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  "workers_dev": true,
+  // プレビュー用のURLは使わないので閉じておく
+  "preview_urls": false
 }
