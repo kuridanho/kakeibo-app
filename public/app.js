@@ -182,15 +182,19 @@ function monthNav(month, go, label = monthTitle(month)) {
 
 // ---- ホーム ----
 
+// ホームで読んだ来月の予算。内訳を開いたときに読み直さずにすぐ出す
+let budgetCache = null;
+
 async function home() {
-  const [b, s, advances, provisional, budget] = await Promise.all([
+  const [b, s, advances, provisional, budget, entries] = await Promise.all([
     api("GET", "/api/balances"),
     api("GET", `/api/summary/month?month=${thisMonth()}`),
     api("GET", "/api/advances"),
     api("GET", "/api/entries?provisional=1&limit=200"),
     api("GET", "/api/budget"),
+    api("GET", `/api/entries?month=${thisMonth()}`),
   ]);
-  const entries = await api("GET", `/api/entries?month=${thisMonth()}`);
+  budgetCache = budget;
   const unsure = entries.filter((e) => e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source));
 
   if (b.accounts.length === 0) {
@@ -237,8 +241,7 @@ async function home() {
       h("div", { class: "row" },
         h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月使える額（概算）"),
         h("span", { class: "footnote" }, "内訳")),
-      h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yen(budget.budget)),
-      h("span", { class: "footnote" }, `${monthLabel(budget.month)}。来月末の手元から余裕を引いた額`)),
+      h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yen(budget.budget))),
     h("span", { class: "section-head" }, `${Number(thisMonth().slice(5))}月の支出`),
     h("a", { class: "card", href: "#/summary", style: "text-decoration:none;color:inherit" },
       h("div", { class: "row" },
@@ -260,7 +263,8 @@ async function home() {
 // ---- 来月の予算 ----
 
 async function budgetView() {
-  const b = await api("GET", "/api/budget");
+  const b = budgetCache ?? await api("GET", "/api/budget");
+  budgetCache = null;
   const list = (items, sign) => items.length === 0
     ? h("p", { class: "empty" }, "ありません")
     : h("div", { class: "group" }, items.map((x) => cell({},
