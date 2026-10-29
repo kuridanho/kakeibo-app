@@ -1406,8 +1406,8 @@ function placeTabGlider(animate = true) {
   if (!active) return;
   const bar = tabbar.getBoundingClientRect();
   const tab = active.getBoundingClientRect();
-  const x = tab.left - bar.left - tabbar.clientLeft;
-  const y = tab.top - bar.top - tabbar.clientTop;
+  const x = tab.left - bar.left - tabbar.clientLeft - 3;
+  const y = tab.top - bar.top - tabbar.clientTop - 3;
   // 動いている途中に切り替えられたら、いま見えている位置からつなぐ
   let from = gliderX;
   const running = typeof tabGlider.getAnimations === "function" ? tabGlider.getAnimations() : [];
@@ -1422,8 +1422,8 @@ function placeTabGlider(animate = true) {
   }
   tabGlider.style.setProperty("--x", `${x}px`);
   tabGlider.style.setProperty("--y", `${y}px`);
-  tabGlider.style.setProperty("--w", `${tab.width}px`);
-  tabGlider.style.setProperty("--h", `${tab.height}px`);
+  tabGlider.style.setProperty("--w", `${tab.width + 6}px`);
+  tabGlider.style.setProperty("--h", `${tab.height + 6}px`);
   tabGlider.style.transform = `translate3d(${x}px, 0, 0)`;
   if (!gliderShown) {
     gliderShown = true;
