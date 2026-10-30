@@ -5,6 +5,7 @@ import type { Account, Env } from "../types";
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import { balanceOf, buildSimple, resolveAccount } from "./ledger";
 import { cardDue, getSetting } from "./reports";
+import { type Planned, plannedInput } from "./planned";
 import { occurrence, toInput, type Recurring } from "./recurring";
 
 export interface BudgetItem {
@@ -80,10 +81,14 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
   // まだ記録されていないカードの利用と引き落としを、カードごとの未払いに足し引きする
   const owe = (id: number, amount: number) => { if (cardOwed.has(id)) cardOwed.set(id, cardOwed.get(id)! + amount); };
   const months = [addMonths(month, -1), month];
-  const [{ results: recurring }, { results: payers }] = await Promise.all([
+  // 一度きりの予定は、その月の分と、今月なら日が過ぎてまだ確かめていない分も見る
+  const plannedFrom = month === monthOf(today) ? "0000-00-00" : `${month}-01`;
+  const [{ results: recurring }, { results: payers }, { results: planned }] = await Promise.all([
     db.prepare("SELECT * FROM recurring WHERE active = 1").all<Recurring>(),
     db.prepare(`SELECT * FROM accounts WHERE kind IN ('card', 'loan') AND archived = 0
       AND payment_day IS NOT NULL AND payment_account_id IS NOT NULL`).all<Account>(),
+    db.prepare("SELECT * FROM planned WHERE entry_id IS NULL AND date BETWEEN ? AND ?")
+      .bind(plannedFrom, `${month}-31`).all<Planned>(),
   ]);
 
   const recurringDue = recurring.flatMap((r) => months.flatMap((m) => {
@@ -136,7 +141,26 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
     };
   }));
 
-  const items = [...await fromRecurring, ...await fromPayments].filter((x): x is BudgetItem => x !== null);
+  const fromPlanned = Promise.all(planned.map(async (p): Promise<BudgetItem | null> => {
+    let cashDelta = 0;
+    let from: Account | null;
+    try {
+      const [{ lines }, account] = await Promise.all([
+        buildSimple(db, plannedInput(p)),
+        p.from_account_id ? resolveAccount(db, p.from_account_id) : null,
+      ]);
+      cashDelta = lines.filter((l) => liquidIds.has(l.account_id)).reduce((s, l) => s + l.amount, 0);
+      for (const l of lines) owe(l.account_id, -l.amount);
+      from = account;
+    } catch {
+      return null;
+    }
+    const kind = p.kind === "expense" && from?.kind === "card" ? "card" : p.kind;
+    if (cashDelta === 0 && kind !== "card") return null;
+    return { date: p.date, label: p.payee || "予定", amount: p.amount, cash_delta: cashDelta, kind };
+  }));
+
+  const items = [...await fromRecurring, ...await fromPayments, ...await fromPlanned].filter((x): x is BudgetItem => x !== null);
   return items.sort((x, y) => x.date.localeCompare(y.date));
 }
 
