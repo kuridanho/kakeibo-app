@@ -686,6 +686,7 @@ function entryAmount(e) {
 }
 
 async function list(params) {
+  if (params.get("unsure")) return reviewCategories();
   // 一覧のタブはカレンダーで開く。検索や確かめる項目から来たときはリストにする
   const asList = params.get("view") === "list" || params.get("q") || params.get("provisional") || params.get("unsure");
   if (!asList) return calendarView(params);
@@ -716,6 +717,42 @@ async function list(params) {
     : monthNav(month, (n) => { location.hash = `#/list?view=list&month=${addMonths(month, n)}`; });
   const plain = !params.get("provisional") && !params.get("unsure");
   return [title, plain ? listTabs("list", month) : null, search, ...body];
+}
+
+/** AIやキーワード表が決めたカテゴリを、店ごとにまとめて確かめる。直したい店だけカテゴリを変え、残りはそのまま確定する */
+async function reviewCategories() {
+  const [entries, list] = await Promise.all([api("GET", `/api/entries?month=${thisMonth()}`), accounts()]);
+  const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown");
+  const unsure = entries.filter((e) => e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source));
+  const title = h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ");
+  if (unsure.length === 0) return [title, h("p", { class: "empty" }, "確かめる取引はありません")];
+
+  const categoryOf = (e) => e.lines.find((l) => l.type === "expense")?.account_id;
+  const stores = [...Map.groupBy(unsure, (e) => e.payee || "（内容なし）")].map(([payee, es]) => {
+    const counts = Map.groupBy(es, categoryOf);
+    const main = [...counts].sort((a, b) => b[1].length - a[1].length)[0][0];
+    return { payee, es, category: main, total: es.reduce((s, e) => s + entryAmount(e), 0) };
+  }).sort((a, b) => b.es.length - a.es.length || b.total - a.total);
+
+  const button = h("button", { type: "button", class: "wide", onclick: async () => {
+    button.disabled = true;
+    try {
+      const items = stores.flatMap((s) => s.es.map((e) => ({ id: e.id, category_id: s.category })));
+      const r = await api("POST", "/api/entries/confirm-categories", { items });
+      toast(r.changed ? `${r.confirmed}件を確定し、${r.changed}件のカテゴリを変えました` : `${r.confirmed}件を確定しました`);
+      location.hash = "#/";
+    } catch (e) { toast(e.message); button.disabled = false; }
+  } }, `${unsure.length}件をこの内容で確定`);
+
+  return [
+    title,
+    h("div", { class: "group" }, stores.map((s) => cell({ class: "tall" },
+      h("div", { class: "grow" }, h("span", {}, s.payee),
+        h("span", { class: "detail" }, `${s.es.length}件　${num(s.total)}円　${s.es.map((e) => e.date.slice(5).replace("-", "/")).join("・")}`)),
+      categorySelect({ "aria-label": `${s.payee}のカテゴリ`, style: "flex:none;max-width:45%", onchange: (ev) => { const v = Number(ev.target.value); if (Number.isInteger(v) && v > 0) s.category = v; } },
+        expense, "expense", s.category)))),
+    button,
+  ];
 }
 
 // ---- カレンダー ----

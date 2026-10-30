@@ -375,6 +375,48 @@ app.put("/api/entries/:id", async (c) => {
   return c.json({ id });
 });
 
+/**
+ * AIやキーワード表が決めたカテゴリを、まとめて確かめる。
+ * 各行の category_id がいまのカテゴリと違えば付け替え、同じならそのまま確定する。
+ * どちらも利用先とカテゴリの対応を覚えるので、次から同じ店は確かめる一覧に出ない。
+ */
+app.post("/api/entries/confirm-categories", async (c) => {
+  const db = c.env.DB;
+  const { items } = await c.req.json<{ items?: { id: number; category_id: number }[] }>();
+  if (!Array.isArray(items) || items.length === 0) throw new LedgerError("確かめる取引がありません");
+  if (items.length > 500) throw new LedgerError("一度に確かめられるのは500件までです");
+  const categories = new Map<number, Account>();
+  let changed = 0;
+  let confirmed = 0;
+  const learned = new Map<string, number>();
+  for (const item of items) {
+    const { entry, lines } = await getEntry(db, int(item.id, "id"));
+    if (entry.kind !== "expense" || !["ai", "keyword", "none"].includes(entry.category_source ?? "")) continue;
+    const cid = int(item.category_id, "カテゴリ");
+    if (!categories.has(cid)) {
+      const a = await resolveAccount(db, cid);
+      if (a.type !== "expense") throw new LedgerError("支出のカテゴリを選んでください");
+      categories.set(cid, a);
+    }
+    const category = categories.get(cid)!;
+    const { results: types } = await db
+      .prepare(`SELECT id FROM accounts WHERE type = 'expense' AND id IN (${lines.map(() => "?").join(",")})`)
+      .bind(...lines.map((l) => l.account_id))
+      .all<{ id: number }>();
+    const expenseIds = new Set(types.map((t) => t.id));
+    const expenseLines = lines.filter((l) => expenseIds.has(l.account_id));
+    // 品目ごとに分けた取引は、1つのカテゴリに付け替えると内訳が消えるので、カテゴリはそのままにする
+    const swap = expenseLines.length === 1 && expenseLines[0].account_id !== category.id;
+    const newLines = swap ? lines.map((l) => (l === expenseLines[0] ? { ...l, account_id: category.id } : l)) : undefined;
+    await updateEntry(db, entry.id, { category_source: "user" }, newLines, "カテゴリを確認");
+    if (swap) changed++;
+    confirmed++;
+    if (entry.payee && expenseLines.length === 1) learned.set(entry.payee, swap ? category.id : expenseLines[0].account_id);
+  }
+  for (const [payee, accountId] of learned) await learnRule(db, payee, accountId);
+  return c.json({ confirmed, changed });
+});
+
 app.delete("/api/entries/:id", async (c) => {
   const id = int(c.req.param("id"), "id");
   // 予定から記録した取引を消したときは、予定もいっしょに消す
