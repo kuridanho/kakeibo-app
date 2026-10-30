@@ -7,7 +7,7 @@ iPhone の Safari で使う個人用の家計簿。Cloudflare Workers(Hono)で�
 - `src/index.ts` API のルートと、毎日7時(JST)の Cron(`scheduled`、末尾)。ルートは `app.get("/api/...")` で grep すれば一覧が出る。
 - `src/lib/ledger.ts` 仕訳の作成と残高。`reports.ts` 月と年の集計、月末のまとめ。`budget.ts` 来月の予算。`calendar.ts` カレンダー。
 - `src/lib/statement.ts` 明細の照合と取り込み。`smbc.ts` 三井住友カードCSVの読み取り。`classify.ts` と `keywords.ts` と `merchant-names.ts` カテゴリ判定。
-- `src/lib/recurring.ts` 繰り返し、`planned.ts` 予定、`dates.ts` 日付(JST)、`receipt-eval.ts` レシート読み取り。
+- `src/lib/recurring.ts` 繰り返し、`planned.ts` 予定、`installments.ts` カードの分割払い(明細の分割の行との照合は statement.ts)、`dates.ts` 日付(JST)、`receipt-eval.ts` レシート読み取り。
 - `src/types.ts` 型。`migrations/` D1 のスキーマ(連番 SQL)。
 - `public/app.js` 画面すべて(SPA、ビルドなし)。画面の対応は末尾近くの `const routes` にある。`public/app.css` 見た目、`public/sw.js` Service Worker。
 - `test/` vitest。資金の流れの決まりは `test/flows.test.ts`、API は `test/api.test.ts`。

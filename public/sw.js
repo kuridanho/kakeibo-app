@@ -1,7 +1,7 @@
 // ホーム画面に追加して開けるようにするための最小限のService Worker。
 // 画面のファイルもAPIのGETもネットワーク優先。つながらないときだけ、前に読んだ控えを返す。
 // 残高や引き落としの不足を古いまま見せないよう、控えを先に返すことはしない。
-const CACHE = "kakeibo-v11";
+const CACHE = "kakeibo-v12";
 const API_CACHE = "kakeibo-api-v1";
 const KEEP = new Set([CACHE, API_CACHE]);
 const SHELL = ["/", "/app.js", "/app.css", "/manifest.webmanifest", "/icon.svg", "/icon-180.png"];

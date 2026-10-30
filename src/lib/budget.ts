@@ -3,6 +3,7 @@
 
 import type { Account, Env } from "../types";
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
+import { pendingPayments } from "./installments";
 import { balanceOf, buildSimple, resolveAccount } from "./ledger";
 import { cardDue, getSetting } from "./reports";
 import { type Planned, plannedInput } from "./planned";
@@ -160,7 +161,15 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
     return { date: p.date, label: p.payee || "予定", amount: p.amount, cash_delta: cashDelta, kind };
   }));
 
-  const items = [...await fromRecurring, ...await fromPayments, ...await fromPlanned].filter((x): x is BudgetItem => x !== null);
+  // まだ記録していない分割払いの回。カードの未払いに足すだけで、手元からは引き落としのときに出る
+  const fromInstallments = (await pendingPayments(db, { from: month === monthOf(today) ? "0000-00-00" : `${month}-01`, to: `${month}-31` }))
+    .filter((p) => month === monthOf(today) || monthOf(p.date) === month)
+    .map((p): BudgetItem => {
+      owe(p.plan.card_id, p.amount);
+      return { date: p.date, label: `${p.plan.payee || "分割払い"} ${p.number}/${p.plan.count}回`, amount: p.amount, cash_delta: 0, kind: "card" };
+    });
+
+  const items = [...await fromRecurring, ...await fromPayments, ...await fromPlanned, ...fromInstallments].filter((x): x is BudgetItem => x !== null);
   return items.sort((x, y) => x.date.localeCompare(y.date));
 }
 

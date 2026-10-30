@@ -5,13 +5,19 @@
 //   new:     候補がない。新しい取引になる
 //   duplicate: 前に取り込んだ行と同じ。何もしない
 // どの行とも結びつかなかった仮の取引は leftovers として返す。
+// 分割払いの行(回数が2回以上)は、登録してある分割払いの回と結びつける。登録がなければ、取り込むときに分割払いとして登録し、
+// 残りの回を見込みに入れる。手入力した1回払いの取引と結びついたときは、その取引をあとから分割にしたものとして扱う。
 // 利用者はどの行も、候補に出なかった取引(ほかの支払方法で入れたものを含む)に結びつけられる。
 // 利用者が選んだ結びつきは statement_links に残し、次からは金額が違っても候補に出す。
 
 import type { Account, Entry, Env, Line } from "../types";
 import { classifyMerchants, learnRule, merchantKey } from "./classify";
-import { diffDays } from "./dates";
+import { addMonths, diffDays } from "./dates";
 import { looksLikeCharge } from "./keywords";
+import {
+  getInstallment, type Installment, insertInstallment, installmentKey, parseInstallmentKey, paymentLines, paymentMemo,
+  recordedPayments, resyncPlan, saveInstallment, schedule,
+} from "./installments";
 import { createEntry, getAccount, getEntry, LedgerError, resolveAccount, updateEntry } from "./ledger";
 import { merchantMemos, rememberName, rememberNote, suggestName } from "./merchant-names";
 import { parseSMBC, type StatementRow } from "./smbc";
@@ -40,6 +46,8 @@ export interface PreviewRow extends StatementRow {
   suggested_payee: string | null;
   /** 何の店か分からない。画面で「これは何ですか？」と尋ねる */
   unclear: boolean;
+  /** 結びつける分割払い */
+  installment_id: number | null;
 }
 
 export interface Preview {
@@ -83,10 +91,21 @@ async function provisionalEntries(db: D1Database, cardId: number): Promise<Candi
         (SELECT l2.account_id FROM lines l2 JOIN accounts a ON a.id = l2.account_id
           WHERE l2.entry_id = e.id AND a.type = 'expense' ORDER BY l2.amount DESC LIMIT 1) AS category_id
       FROM entries e JOIN lines l ON l.entry_id = e.id
-      WHERE e.provisional = 1 AND l.account_id = ? AND l.amount < 0 ORDER BY e.date`)
+      WHERE e.provisional = 1 AND l.account_id = ? AND l.amount < 0
+        AND (e.auto_key IS NULL OR e.auto_key NOT LIKE 'installment:%') ORDER BY e.date`)
     .bind(cardId)
     .all<Omit<Candidate, "strong">>();
   return results.map((r) => ({ ...r, strong: false }));
+}
+
+const isInstallment = (r: StatementRow) => (r.installmentCount ?? 1) > 1 && !!r.installmentNumber;
+
+/** 明細の分割の行にあたる、登録済みの分割払い。回数と利用日が合い、利用先か利用額も合うもの */
+function findPlan(plans: Installment[], r: StatementRow, taken: Set<number>): Installment | null {
+  return plans
+    .filter((p) => !taken.has(p.id) && p.count === r.installmentCount && Math.abs(diffDays(p.purchase_date, r.usageDate)) <= WEAK_DAYS
+      && (similar(p.payee, r.merchant) || p.purchase_date === r.usageDate || p.principal === r.usageAmount))
+    .sort((a, b) => Math.abs(diffDays(a.purchase_date, r.usageDate)) - Math.abs(diffDays(b.purchase_date, r.usageDate)))[0] ?? null;
 }
 
 /** 前に利用者が結びつけた、明細の利用先と取引の内容の組み合わせ */
@@ -131,6 +150,8 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
   const provisional = await provisionalEntries(db, cardId);
   const learned = await learnedLinks(db, parsed.rows.map((r) => r.merchant));
   const taken = new Set<number>();
+  const { results: plans } = await db.prepare("SELECT * FROM installments WHERE card_id = ?").bind(cardId).all<Installment>();
+  const plansTaken = new Set<number>();
   const { results: emoney } = await db
     .prepare("SELECT * FROM accounts WHERE type = 'asset' AND kind = 'emoney' AND archived = 0").all<Account>();
 
@@ -138,9 +159,16 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
     const key = keys[index];
     const base: PreviewRow = {
       ...r, index, key, status: "new", candidates: [], match_entry_id: null,
-      category_id: null, category_source: null, charge_account_id: null, suggested_payee: null, unclear: false,
+      category_id: null, category_source: null, charge_account_id: null, suggested_payee: null, unclear: false, installment_id: null,
     };
     if (existing.has(key)) return { ...base, status: "duplicate" };
+    if (isInstallment(r)) {
+      const plan = findPlan(plans, r, plansTaken);
+      if (plan) {
+        plansTaken.add(plan.id);
+        return { ...base, status: "matched", installment_id: plan.id };
+      }
+    }
     // 前にこの利用先と結びつけた内容の取引は、外貨の換算などで金額が違っても候補にする
     const known = learned.get(merchantKey(r.merchant));
     const knows = (p: Candidate) => !!known?.has(merchantKey(p.payee));
@@ -165,7 +193,7 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
   const toClassify: string[] = [];
   for (const row of rows) {
     if (row.status === "duplicate" || row.status === "matched") continue;
-    if (looksLikeCharge(row.merchant)) {
+    if (!isInstallment(row) && looksLikeCharge(row.merchant)) {
       const target = emoney.find((a) => {
         const name = a.name.toUpperCase();
         return merchantKey(row.merchant).includes(name) || name.split(/\s/).some((w) => w.length >= 3 && merchantKey(row.merchant).includes(w));
@@ -217,7 +245,7 @@ export interface CommitChoice {
 interface CommitPlan {
   row: PreviewRow;
   choice: CommitChoice;
-  link: number | "new" | "skip";
+  link: number | "new" | "skip" | "installment";
   /** 新しい支出にするときに使う、統合済みのカテゴリ */
   category_id: number | null;
 }
@@ -236,6 +264,11 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
       continue;
     }
     const choice = choices[row.index] ?? {};
+    if (row.installment_id && choice.link !== "skip") {
+      await getInstallment(db, row.installment_id);
+      plans.push({ row, choice, link: "installment", category_id: null });
+      continue;
+    }
     const link = choice.link ?? (row.status === "matched" ? row.match_entry_id : "new");
     if (link === "skip") {
       plans.push({ row, choice, link, category_id: null });
@@ -244,17 +277,18 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
     if (typeof link === "number") {
       if (used.has(link)) throw new LedgerError("同じ仮の取引を2つの行に結びつけています");
       used.add(link);
-      const old = await db.prepare("SELECT id, kind, statement_key FROM entries WHERE id = ?").bind(link)
-        .first<{ id: number; kind: string; statement_key: string | null }>();
+      const old = await db.prepare("SELECT id, kind, statement_key, auto_key FROM entries WHERE id = ?").bind(link)
+        .first<{ id: number; kind: string; statement_key: string | null; auto_key: string | null }>();
       if (!old) throw new LedgerError(`取引 ${link} が見つかりません`);
       if (old.statement_key) throw new LedgerError(`取引 ${link} はもう明細の行と結びついています`);
       const { results: oldLines } = await db
         .prepare("SELECT account_id, amount FROM lines WHERE entry_id = ?").bind(link).all<Line>();
+      if (parseInstallmentKey(old.auto_key)) throw new LedgerError(`取引 ${link} は分割払いの回なので、ほかの行と結びつけられません`);
       if (oldLines.some((l) => l.account_id === cardId)) {
-        // カテゴリが複数に分かれていて金額が違う取引は、自動では合わせられない
+        // カテゴリが複数に分かれていて金額が違う取引は、自動では合わせられない。分割の行はカテゴリが1つの取引だけ
         const others = oldLines.filter((l) => l.account_id !== cardId);
         const cardAmount = -oldLines.filter((l) => l.account_id === cardId).reduce((s, l) => s + l.amount, 0);
-        if (others.length !== 1 && cardAmount !== row.paymentAmount) {
+        if (others.length !== 1 && (cardAmount !== row.paymentAmount || isInstallment(row))) {
           throw new LedgerError(`取引 ${link} はカテゴリが複数に分かれていて、金額が明細と違うため自動で合わせられません`);
         }
       } else {
@@ -263,7 +297,7 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
         if (row.paymentAmount <= 0) throw new LedgerError(`${row.merchant} は返品の行なので、このカードの取引にだけ結びつけられます`);
         const debit = oldLines.filter((l) => l.amount > 0);
         const debitTotal = debit.reduce((s, l) => s + l.amount, 0);
-        if (debit.length !== 1 && debitTotal !== row.paymentAmount) {
+        if (debit.length !== 1 && (debitTotal !== row.paymentAmount || isInstallment(row))) {
           throw new LedgerError(`取引 ${link} はカテゴリが複数に分かれていて、金額が明細と違うため自動で合わせられません`);
         }
       }
@@ -271,7 +305,7 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
       continue;
     }
     // 新しい取引。カテゴリか、チャージ先の口座を先に確かめる
-    if (row.charge_account_id && !choice.category_id) {
+    if (row.charge_account_id && !choice.category_id && !isInstallment(row)) {
       const target = await getAccount(db, row.charge_account_id);
       if (target.type !== "asset") throw new LedgerError(`${target.name} にはチャージできません`);
       plans.push({ row, choice, link: "new", category_id: null });
@@ -286,9 +320,9 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
   return plans;
 }
 
-/** 取り込みの途中で失敗したときに、作った仕訳と明細の記録を戻す */
+/** 取り込みの途中で失敗したときに、作った仕訳と分割払い、明細の記録を戻す */
 async function rollbackStatement(db: D1Database, importId: number, created: number[],
-  snapshots: Map<number, { entry: Entry; lines: Line[] }>, changeMark: number) {
+  snapshots: Map<number, { entry: Entry; lines: Line[] }>, changeMark: number, plans: Map<number, Installment | null>) {
   const stmts: D1PreparedStatement[] = [];
   for (const id of created) {
     stmts.push(db.prepare("DELETE FROM lines WHERE entry_id = ?").bind(id));
@@ -296,11 +330,17 @@ async function rollbackStatement(db: D1Database, importId: number, created: numb
   }
   for (const [id, { entry, lines }] of snapshots) {
     stmts.push(db.prepare(`UPDATE entries SET date = ?, report_date = ?, payee = ?, memo = ?, source = ?, provisional = ?,
-      billing_month = ?, statement_import_id = ?, statement_key = ?, category_source = ?, updated_at = datetime('now') WHERE id = ?`)
+      billing_month = ?, statement_import_id = ?, statement_key = ?, category_source = ?, auto_key = ?, updated_at = datetime('now') WHERE id = ?`)
       .bind(entry.date, entry.report_date, entry.payee, entry.memo, entry.source, entry.provisional,
-        entry.billing_month, entry.statement_import_id, entry.statement_key, entry.category_source, id));
+        entry.billing_month, entry.statement_import_id, entry.statement_key, entry.category_source, entry.auto_key, id));
     stmts.push(db.prepare("DELETE FROM lines WHERE entry_id = ?").bind(id));
     for (const l of lines) stmts.push(db.prepare("INSERT INTO lines (entry_id, account_id, amount) VALUES (?, ?, ?)").bind(id, l.account_id, l.amount));
+  }
+  for (const [id, p] of plans) {
+    stmts.push(p
+      ? db.prepare(`UPDATE installments SET first_month = ?, first_payment = ?, payment = ?, start_number = ? WHERE id = ?`)
+        .bind(p.first_month, p.first_payment, p.payment, p.start_number, id)
+      : db.prepare("DELETE FROM installments WHERE id = ?").bind(id));
   }
   // この取り込みで足した変更の記録も消す
   const touched = [...created, ...snapshots.keys()];
@@ -310,6 +350,17 @@ async function rollbackStatement(db: D1Database, importId: number, created: numb
   }
   stmts.push(db.prepare("DELETE FROM statement_imports WHERE id = ?").bind(importId));
   await db.batch(stmts);
+}
+
+/** 明細の分割の行から見積もる利用額。利用額の列が支払額と同じ形式では、支払額に回数を掛ける */
+function estimatePrincipal(r: StatementRow): number {
+  return r.usageAmount > r.paymentAmount ? r.usageAmount : r.paymentAmount * (r.installmentCount ?? 1);
+}
+
+/** 分割の行の鍵から、利用日、利用先、利用額までの部分。前に取り込んだ同じ分割の行を探すのに使う */
+function installmentKeyPrefix(key: string): string | null {
+  const m = /^(.*\|)\d{4}-\d{2}#\d+\|\d+$/.exec(key);
+  return m ? m[1] : null;
 }
 
 export async function commitStatement(env: Env, cardId: number, billingMonth: string, text: string,
@@ -330,6 +381,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
   }
   // 先に全部確かめてから書き込む
   const plans = await planCommit(db, preview, cardId, choices);
+  const card = await getAccount(db, cardId);
   const result = { linked: 0, created: 0, skipped: 0, duplicate: 0 };
 
   const imp = await db
@@ -342,6 +394,48 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
   const changeMark = (await db.prepare("SELECT COALESCE(MAX(id), 0) AS id FROM entry_changes").first<{ id: number }>())!.id;
   const created: number[] = [];
   const snapshots = new Map<number, { entry: Entry; lines: Line[] }>();
+  const planSnapshots = new Map<number, Installment | null>();
+  /** 書き換える前の取引を控える。失敗したら控えに戻す */
+  const snap = async (id: number) => {
+    if (!snapshots.has(id) && !created.includes(id)) snapshots.set(id, await getEntry(db, id));
+  };
+
+  /** 分割払いの回を明細の行に合わせる。記録済みならその取引を書き換え、まだなら新しく作る */
+  const applyPayment = async (p: Installment, row: PreviewRow, entryId: number | null) => {
+    const n = row.installmentNumber!;
+    const pay = schedule(p, card).find((x) => x.number === n)!;
+    const fields = {
+      date: pay.date, report_date: pay.date, kind: "expense", payee: p.payee,
+      memo: [paymentMemo(p, n), row.subCardName, row.note].filter(Boolean).join(" "),
+      source: "statement", provisional: 0, billing_month: billingMonth, statement_import_id: importId,
+      statement_key: row.key, auto_key: pay.key,
+    };
+    const lines = await paymentLines(db, p, pay, row.paymentAmount);
+    if (entryId) {
+      await snap(entryId);
+      await updateEntry(db, entryId, fields, lines, "明細と照合");
+    } else {
+      created.push(await createEntry(db, { ...fields, category_source: "user", user_id: meta.user_id ?? null }, lines));
+    }
+  };
+
+  /** 登録済みの分割払いの回と結びつける。請求月や支払額が見込みと違えば、分割払いのほうを明細に合わせる */
+  const linkPlan = async (id: number, row: PreviewRow) => {
+    const p = await getInstallment(db, id);
+    const n = row.installmentNumber!;
+    const next = { ...p, first_month: addMonths(billingMonth, -(n - 1)), start_number: Math.min(p.start_number, n) };
+    // 実際の支払額を、それより後の回の見込みにする。最終回は端数で違うことがあるので見込みには使わない
+    if (n === 1) next.first_payment = row.paymentAmount;
+    else if (n < p.count) next.payment = row.paymentAmount;
+    const recorded = await recordedPayments(db, p.id);
+    if (next.first_month !== p.first_month || next.start_number !== p.start_number
+      || next.first_payment !== p.first_payment || next.payment !== p.payment) {
+      if (!planSnapshots.has(p.id)) planSnapshots.set(p.id, p);
+      await saveInstallment(db, next);
+      await resyncPlan(db, next, undefined, { before: snap, skip: n });
+    }
+    await applyPayment(next, row, recorded.find((r) => r.number === n)?.entry.id ?? null);
+  };
   const learn: [string, string][] = [];
 
   try {
@@ -353,6 +447,11 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
       }
       if (link === "skip") {
         result.skipped++;
+        continue;
+      }
+      if (link === "installment") {
+        await linkPlan(row.installment_id!, row);
+        result.linked++;
         continue;
       }
       const memo = [row.subCardName, row.installmentCount && row.installmentCount > 1
@@ -372,8 +471,8 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
         statement_key: row.key,
       };
       if (typeof link === "number") {
-        const snapshot = await getEntry(db, link);
-        snapshots.set(link, snapshot);
+        await snap(link);
+        const snapshot = snapshots.get(link)!;
         // カテゴリ、メモ、立て替えの印は手入力のものを引き継ぎ、日付と金額は明細に合わせる
         const old = snapshot.entry;
         const scale = row.paymentAmount;
@@ -394,6 +493,23 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
           const names = await Promise.all(credit.map(async (id) => (await getAccount(db, id)).name));
           paidWith = names.length ? `入力時の支払方法: ${names.join("、")}` : "";
         }
+        if (isInstallment(row)) {
+          // 1回払いで入れた取引が明細では分割になっていた。あとから分割にしたものとして分割払いを登録する
+          const used = snapshot.lines.filter((l) => l.amount > 0 && l.account_id !== cardId);
+          const usedAmount = used.reduce((s, l) => s + l.amount, 0);
+          const n = row.installmentNumber!;
+          const p = await insertInstallment(db, {
+            card_id: cardId, category_id: used[0].account_id, payee: edited ?? (old.payee || row.merchant),
+            memo: [old.memo, paidWith].filter(Boolean).join(" / "),
+            purchase_date: row.usageDate, principal: usedAmount > row.paymentAmount ? usedAmount : estimatePrincipal(row),
+            count: row.installmentCount!, first_month: addMonths(billingMonth, -(n - 1)),
+            first_payment: row.paymentAmount, payment: row.paymentAmount, start_number: n, origin: "later", user_id: old.user_id,
+          });
+          planSnapshots.set(p.id, null);
+          await applyPayment(p, row, link);
+          result.linked++;
+          continue;
+        }
         // 入力したときの店名を残し、明細の利用先はメモに回す
         const payee = edited ?? (old.payee || row.merchant);
         const statementName = old.memo.includes(`明細の利用先: ${row.merchant}`) ? "" : withStatementName(payee);
@@ -405,6 +521,38 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
         // 利用者が選んだ結びつきは、次の取り込みで候補に出すために覚えておく
         if (typeof choice.link === "number" && old.payee) learn.push([merchantKey(row.merchant), merchantKey(old.payee)]);
         result.linked++;
+        continue;
+      }
+      if (isInstallment(row)) {
+        // 登録していない分割。分割払いとして登録し、前に取り込んだ同じ分割の行もその回にまとめる
+        const n = row.installmentNumber!;
+        let p = await insertInstallment(db, {
+          card_id: cardId, category_id: plan.category_id!, payee: common.payee, memo: "",
+          purchase_date: row.usageDate, principal: estimatePrincipal(row), count: row.installmentCount!,
+          first_month: addMonths(billingMonth, -(n - 1)), first_payment: row.paymentAmount, payment: row.paymentAmount,
+          start_number: n, origin: "statement", user_id: meta.user_id ?? null,
+        });
+        planSnapshots.set(p.id, null);
+        const prefix = installmentKeyPrefix(row.key);
+        const { results: earlier } = prefix ? await db
+          .prepare(`SELECT id, statement_key FROM entries WHERE substr(statement_key, 1, ?) = ? AND auto_key IS NULL AND kind = 'expense'`)
+          .bind(prefix.length, prefix)
+          .all<{ id: number; statement_key: string }>() : { results: [] };
+        const adopt = earlier
+          .map((e) => ({ id: e.id, number: Number(/#(\d+)\|\d+$/.exec(e.statement_key)?.[1] ?? 0) }))
+          .filter((e) => e.number >= 1 && e.number < n);
+        if (adopt.length > 0) {
+          p = { ...p, start_number: Math.min(...adopt.map((e) => e.number)) };
+          await saveInstallment(db, p);
+          const sched = schedule(p, card);
+          for (const e of adopt) {
+            const pay = sched.find((x) => x.number === e.number)!;
+            await snap(e.id);
+            await updateEntry(db, e.id, { date: pay.date, report_date: pay.date, auto_key: pay.key }, undefined, "分割払いにまとめる");
+          }
+        }
+        await applyPayment(p, row, null);
+        result.created++;
         continue;
       }
       // 新しい取引
@@ -427,7 +575,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
       result.created++;
     }
   } catch (e) {
-    await rollbackStatement(db, importId, created, snapshots, changeMark);
+    await rollbackStatement(db, importId, created, snapshots, changeMark, planSnapshots);
     throw e;
   }
   if (learn.length > 0) {

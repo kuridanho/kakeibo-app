@@ -385,6 +385,9 @@ async function entryForm(existing, opts = {}) {
   const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown");
   const income = byType(list, "income");
   const isStatement = existing?.source === "statement";
+  // 分割払いの回。金額と日付、支払方法は分割払いのほうで決まる
+  const inst = existing?.installment ?? null;
+  const locked = isStatement || !!inst;
 
   let kind = existing?.kind ?? src?.kind ?? "expense";
   const lines = existing?.lines ?? [];
@@ -413,7 +416,7 @@ async function entryForm(existing, opts = {}) {
   const receiveTo = byType(list, "asset");
   const movable = byType(list, "asset", "liability");
   // カテゴリが複数に分かれた支出は、カテゴリごとの品目として開く。名前は覚えさせない
-  let items = kind === "expense" && expenseLines.length > 1
+  let items = kind === "expense" && expenseLines.length > 1 && !inst
     ? expenseLines.map((l) => ({ name: l.name, amount: l.amount, category_id: l.account_id, unclear: false, fromLines: true })) : [];
 
   const box = h("div", { class: "stack" });
@@ -423,21 +426,24 @@ async function entryForm(existing, opts = {}) {
         h("button", { type: "button", "aria-pressed": String(kind === k), onclick: () => { kind = k; items = []; render(); } }, label)));
     const camera = h("input", { type: "file", accept: "image/*", capture: "environment", hidden: true });
     const itemsBox = h("div", { class: "stack", hidden: true });
-    const amount = moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: init.amount, disabled: isStatement, "aria-label": "金額" });
+    const amount = moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: init.amount, disabled: locked, "aria-label": "金額" });
     const status = statusLine();
     let busy = false;
     let aiNote = false;
     // AIが出したカテゴリ。保存の前に変えたら、店とカテゴリの組を覚えさせる
     let aiGuess = null;
     // カードで払う、またはカードからチャージするときは、銀行から落ちる日を添える
-    const dueRow = h("div", { class: "cell", hidden: true }, h("span", { class: "grow" }, "引き落とし"), h("span", { class: "value" }));
+    const dueRow = h("div", { class: "cell", hidden: true }, h("span", { class: "grow", style: "white-space:nowrap;flex-shrink:0" }, "引き落とし"),
+      h("span", { class: "value", style: "white-space:normal;text-align:right;justify-content:flex-end;flex-wrap:wrap" }));
     const showDue = async () => {
       const card = list.find((a) => a.id === Number(form.elements.from_account_id?.value) && a.kind === "card");
       const date = form.elements.date.value;
       dueRow.hidden = true;
       if (!card || !date) return;
+      // 保存してある取引は請求月が決まっているので、利用日ではなく請求月から出す(分割払いの回など)
+      const saved = existing?.billing_month && card.id === init.from_account_id && date === init.date;
       try {
-        const d = await api("GET", `/api/accounts/${card.id}/due?date=${date}`);
+        const d = await api("GET", `/api/accounts/${card.id}/due?date=${date}${saved ? `&month=${existing.billing_month}` : ""}`);
         if (!d.date || form.elements.from_account_id.value !== String(card.id) || form.elements.date.value !== date) return;
         const bank = list.find((a) => a.id === d.payment_account_id);
         dueRow.lastChild.textContent = `${dayLabel(d.date)}${bank ? `　${bank.name}` : ""}`;
@@ -448,17 +454,35 @@ async function entryForm(existing, opts = {}) {
     const planToggle = !existing && !src
       ? toggle("予定にする（その日に確かめる）", h("input", { type: "checkbox", name: "as_plan", checked: true })) : null;
     const showPlan = () => {
-      if (planToggle) planToggle.hidden = !(form.elements.date.value > today());
+      if (planToggle) planToggle.hidden = !(form.elements.date.value > today()) || installmentCount() > 1;
     };
+    // カードで払う新しい支出は、支払回数を選んで分割払いにできる
+    const COUNTS = Array.from({ length: 35 }, (_, i) => i + 2);
+    const countRow = kind === "expense" && !existing && !src
+      ? field("支払回数", h("select", { name: "installment_count", onchange: () => { showCount(); showPlan(); } },
+        h("option", { value: "1" }, "1回払い"), COUNTS.map((n) => h("option", { value: n }, `${n}回`)))) : null;
+    const feeRow = countRow ? field("分割の手数料", moneyInput({ name: "installment_fee", "data-num": "", placeholder: "0" })) : null;
+    const installmentCount = () => (countRow && !countRow.hidden ? Number(form.elements.installment_count.value) : 1);
+    const showCount = () => {
+      if (!countRow) return;
+      const card = list.find((a) => a.id === Number(form.elements.from_account_id.value) && a.kind === "card");
+      countRow.hidden = !card;
+      feeRow.hidden = installmentCount() <= 1;
+    };
+    // 支払方法がカードで、カテゴリが1つの支出は、あとから分割にできる
+    const canSplit = existing && kind === "expense" && !inst && !existing.advance && expenseLines.length === 1
+      && list.find((a) => a.id === init.from_account_id)?.kind === "card";
     const form = h("form", { id: "entry-form" },
       amountField(amount, kind === "expense" && !existing
         ? h("button", { type: "button", class: "icon", "aria-label": "レシートを撮る", onclick: () => camera.click() }, icon(CAMERA)) : null),
       status.el,
       group(
-        field("日付", h("input", { name: "date", type: "date", value: init.date, required: true, disabled: isStatement })),
+        field("日付", h("input", { name: "date", type: "date", value: init.date, required: true, disabled: locked })),
         planToggle,
         kind !== "transfer" ? field(kind === "income" ? "どこから" : "店や内容", h("input", { name: "payee", value: init.payee, autocomplete: "off" })) : null,
-        kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true, disabled: isStatement }, sideOptions(payWith, init.from_account_id, "選んでください"))) : null,
+        kind === "expense" ? field("支払方法", h("select", { name: "from_account_id", "data-num": "", required: true, disabled: locked }, sideOptions(payWith, init.from_account_id, "選んでください"))) : null,
+        countRow,
+        feeRow,
         kind === "expense" ? field("カテゴリ", categorySelect({ name: "category_id" }, expense, "expense", init.category_id, existing ? null : "AIに任せる")) : null,
         kind === "income" ? field("受け取り先", h("select", { name: "to_account_id", "data-num": "", required: true }, options(receiveTo, init.to_account_id, "選んでください"))) : null,
         kind === "income" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, income, "income", init.category_id)) : null,
@@ -466,17 +490,19 @@ async function entryForm(existing, opts = {}) {
         kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true, onchange: () => showInterest() }, sideOptions(movable, init.to_account_id, "選んでください"))) : null,
         kind === "transfer" ? field("うち利息・手数料", moneyInput({ name: "interest", "data-num": "", value: init.interest })) : null,
         kind !== "income" ? dueRow : null,
+        inst ? cell({ href: `#/installment/${inst.id}` }, h("span", { class: "grow" }, "分割払い"), h("span", { class: "value" }, `${inst.number}/${inst.count}回`)) : null,
         field("メモ", h("input", { name: "memo", value: init.memo }))),
       kind === "expense" ? itemsBox : null,
       kind === "expense" ? h("details", { class: "more", open: init.advance || undefined },
         h("summary", {}, "その他"),
         group(
-          toggle("立て替えあり", h("input", { type: "checkbox", name: "advance", checked: init.advance })),
-          !existing && !src ? toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })) : null)) : null,
+          inst ? null : toggle("立て替えあり", h("input", { type: "checkbox", name: "advance", checked: init.advance })),
+          !existing && !src ? toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })) : null,
+          canSplit ? cell({ href: `#/entry/${existing.id}/split` }, h("span", { class: "grow" }, "あとから分割")) : null)) : null,
       kind !== "expense" && !existing && !src ? h("details", { class: "more" },
         h("summary", {}, "その他"),
         group(toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })))) : null,
-      existing ? group(h("button", { type: "button", class: "cell danger", onclick: remove }, "削除")) : null,
+      existing && !inst ? group(h("button", { type: "button", class: "cell danger", onclick: remove }, "削除")) : null,
       src ? group(h("button", { type: "button", class: "cell danger", onclick: dropPlan }, "予定をやめる")) : null);
 
     const setBusy = (value) => {
@@ -570,7 +596,15 @@ async function entryForm(existing, opts = {}) {
       if (data.category_id === NEW_CATEGORY) delete data.category_id;
       const repeat = data.repeat;
       delete data.repeat;
-      const asPlan = !!opts.plan || (!planToggle?.hidden && data.as_plan);
+      const count = installmentCount();
+      delete data.installment_count;
+      delete data.installment_fee;
+      if (count > 1) {
+        data.installment_count = count;
+        const fee = parseNum(form.elements.installment_fee.value || 0);
+        if (fee) data.installment_fee = fee;
+      }
+      const asPlan = !!opts.plan || (!planToggle?.hidden && data.as_plan && count <= 1);
       delete data.as_plan;
       if (items.length) {
         data.items = items.map(({ name, amount, category_id, fromLines }) => ({ name: fromLines ? undefined : name, amount, category_id }));
@@ -634,7 +668,7 @@ async function entryForm(existing, opts = {}) {
           }
           if (data.from_account_id) store.set("lastPay", data.from_account_id);
           const cat = list.find((a) => a.id === r.category_id);
-          toast(cat && !data.category_id && !data.items ? `${cat.name}として記録しました` : "記録しました");
+          toast(r.installment_id ? `${count}回の分割払いにしました` : cat && !data.category_id && !data.items ? `${cat.name}として記録しました` : "記録しました");
           goBack("#/");
         }
       } catch (e) {
@@ -648,10 +682,12 @@ async function entryForm(existing, opts = {}) {
       sheetBar(existing || src ? (src ? `${titles[kind]}の予定` : titles[kind]) : seg,
         { form: "entry-form", back: existing ? "#/list" : opts.plan ? "#/recurring" : "#/", save: opts.confirm ? "記録" : undefined }),
       camera,
-      isStatement ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "明細から取り込んだ取引なので、金額、日付、支払方法は明細のままです。") : null,
+      isStatement && !inst ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "明細から取り込んだ取引なので、金額、日付、支払方法は明細のままです。") : null,
       form);
     showInterest();
     form.elements.from_account_id?.addEventListener("change", showDue);
+    form.elements.from_account_id?.addEventListener("change", () => { showCount(); showPlan(); });
+    showCount();
     form.elements.date.addEventListener("change", showDue);
     form.elements.date.addEventListener("change", showPlan);
     showDue();
@@ -708,6 +744,76 @@ async function editEntry(id) {
   }
   if (e.advance) out.push(await recoveryCard(e));
   return out;
+}
+
+// ---- 分割払い ----
+
+const COUNT_OPTIONS = (selected) => Array.from({ length: 35 }, (_, i) => i + 2)
+  .map((n) => h("option", { value: n, selected: n === selected }, `${n}回`));
+
+/** あとから分割。カードで払った支出を分割払いにする */
+async function splitForm(id) {
+  const e = await api("GET", `/api/entries/${id}`);
+  const form = h("form", { id: "split-form" },
+    h("span", { class: "section-head" }, `${dayLabel(e.date)}　${e.payee}　${num(entryAmount(e))}円`),
+    group(
+      field("支払回数", h("select", { name: "count", required: true }, COUNT_OPTIONS(3))),
+      field("分割の手数料", moneyInput({ name: "fee", "data-num": "", placeholder: "0" })),
+      field("1回目の請求月", h("input", { name: "first_month", type: "month", value: e.billing_month ?? "", required: true }))));
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const d = formData(form);
+    try {
+      await api("POST", `/api/entries/${id}/installment`, { count: Number(d.count), fee: d.fee ?? 0, first_month: d.first_month });
+      toast(`${d.count}回の分割払いにしました`);
+      goBack(`#/entry/${id}`);
+    } catch (err) { toast(err.message); }
+  });
+  return [sheetBar("あとから分割", { form: "split-form", back: `#/entry/${id}` }), form];
+}
+
+async function installmentView(id) {
+  const [p, list] = await Promise.all([api("GET", `/api/installments/${id}`), accounts()]);
+  const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown" || a.id === p.category_id);
+  const fee = Math.max(0, p.first_payment + p.payment * (p.count - 1) - p.principal);
+  const form = h("form", { id: "installment-form" },
+    group(
+      field("店や内容", h("input", { name: "payee", value: p.payee, autocomplete: "off" })),
+      field("カテゴリ", categorySelect({ name: "category_id", required: true }, expense, "expense", p.category_id)),
+      field("支払回数", h("select", { name: "count", required: true }, COUNT_OPTIONS(p.count))),
+      field("分割の手数料", moneyInput({ name: "fee", "data-num": "", value: fee, placeholder: "0" })),
+      cell({}, h("span", { class: "grow" }, "利用額"), h("span", { class: "value" }, num(p.principal))),
+      cell({}, h("span", { class: "grow" }, "利用日"), h("span", { class: "value" }, dayLabel(p.purchase_date))),
+      cell({}, h("span", { class: "grow" }, "カード"), h("span", { class: "value" }, list.find((a) => a.id === p.card_id)?.name ?? ""))),
+    h("span", { class: "section-head" }, "支払い"),
+    group(p.payments.map((x) => cell({ href: x.entry_id ? `#/entry/${x.entry_id}` : undefined, class: "tall" },
+      h("div", { class: "grow" },
+        h("span", {}, `${monthTitle(x.month)}の請求　${x.number}/${p.count}回`),
+        h("span", { class: "detail" }, x.confirmed ? "明細で確認" : x.entry_id ? "記録済み" : "")),
+      h("span", { class: "amount" }, minus(x.amount))))),
+    group(h("button", { type: "button", class: "cell danger", onclick: async () => {
+      if (!confirm("分割をやめます。明細で確かめていない回の記録も消えます。")) return;
+      try {
+        await api("DELETE", `/api/installments/${p.id}`);
+        toast("分割をやめました");
+        goBack("#/recurring");
+      } catch (err) { toast(err.message); }
+    } }, "分割をやめる")));
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const d = formData(form);
+    if (d.category_id === NEW_CATEGORY) delete d.category_id;
+    const body = { payee: d.payee ?? "", category_id: d.category_id };
+    const newFee = d.fee ?? 0;
+    // 回数か手数料を変えたときだけ支払額を割り直す。明細に合わせた額はそのままにする
+    if (Number(d.count) !== p.count || newFee !== fee) Object.assign(body, { count: Number(d.count), fee: newFee });
+    try {
+      await api("PUT", `/api/installments/${p.id}`, body);
+      toast("保存しました");
+      goBack("#/recurring");
+    } catch (err) { toast(err.message); }
+  });
+  return [sheetBar("分割払い", { form: "installment-form", back: "#/recurring" }), form];
 }
 
 async function recoveryCard(e) {
@@ -1521,7 +1627,9 @@ async function advancesView() {
 const everyLabel = (r) => `${r.every === "year" ? `毎年${Number(r.first_date.slice(5, 7))}月` : "毎月"}${r.day >= 31 ? "末日" : `${r.day}日`}`;
 
 async function recurringView() {
-  const [rs, list, plans] = await Promise.all([api("GET", "/api/recurring"), accounts(), api("GET", "/api/planned")]);
+  const [rs, list, plans, installments] = await Promise.all([
+    api("GET", "/api/recurring"), accounts(), api("GET", "/api/planned"), api("GET", "/api/installments")]);
+  const paying = installments.filter((x) => !x.done);
   const name = (id) => list.find((a) => a.id === id)?.name ?? "";
   return [
     h("div", { class: "navrow" }, h("h1", {}, "繰り返し"),
@@ -1540,6 +1648,16 @@ async function recurringView() {
           h("span", {}, p.payee || name(p.category_id) || "振替"),
           h("span", { class: "detail" }, [dayLabel(p.date), name(p.kind === "income" ? p.to_account_id : p.from_account_id)].filter(Boolean).join("　"))),
         h("span", { class: `amount${p.kind === "income" ? " inc" : ""}` }, p.kind === "income" ? plus(p.amount) : p.kind === "expense" ? minus(p.amount) : num(p.amount))))),
+    ] : null,
+    // 分割払い。記録の画面で支払回数を選ぶか、取引からあとから分割にすると入る
+    paying.length ? [
+      h("span", { class: "section-head" }, "分割払い"),
+      h("div", { class: "group" }, paying.map((x) => cell({ href: `#/installment/${x.id}`, class: "tall" },
+        h("div", { class: "grow" },
+          h("span", {}, x.payee || name(x.category_id)),
+          h("span", { class: "detail" }, [name(x.card_id), `残り${x.count - x.start_number + 1 - x.recorded}回`,
+            x.next ? `次は${monthTitle(x.next.month)}の請求` : ""].filter(Boolean).join("　"))),
+        h("span", { class: "amount" }, minus(x.remaining))))),
     ] : null,
   ];
 }
@@ -1744,6 +1862,11 @@ async function importView() {
         }
         setLink(r, v === "new" || v === "skip" ? v : v === "" ? undefined : Number(v));
       } });
+      // 登録した分割払いの回にあたる行は、その回にするか取り込まないかだけを選ぶ
+      const planSelect = r.installment_id ? h("select", { "aria-label": "分割払いの回", onchange: (ev) => {
+        choice().link = ev.target.value === "skip" ? "skip" : undefined;
+      } }, h("option", { value: "" }, `分割払いの${r.installmentNumber}回目にする`), h("option", { value: "skip" }, "取り込まない")) : null;
+      const installmentNote = r.installmentCount > 1 ? h("span", { class: "footnote" }, `分割 ${r.installmentNumber}/${r.installmentCount}回`) : null;
       const buildSelect = () => {
         const used = new Set(open.filter((o) => o !== r).map(linkOf).filter((v) => typeof v === "number"));
         const others = p.provisional.filter((c) => !candidateIds.has(c.entry_id));
@@ -1790,7 +1913,7 @@ async function importView() {
           h("span", { class: "import-date" }, r.usageDate.slice(5)),
           payee,
           h("span", {}, num(r.paymentAmount))),
-        statementName, suggest, select, question, note, category, charge);
+        statementName, installmentNote, suggest, planSelect ?? select, question, note, category, charge);
     }
 
     function refresh() {
@@ -1803,7 +1926,7 @@ async function importView() {
           const select = h("select", { "aria-label": `${c.payee} を結びつける明細の行`, onchange: () => {
             const r = open.find((o) => o.index === Number(select.value));
             if (r) setLink(r, c.entry_id, c);
-          } }, h("option", { value: "" }, "明細の行を選ぶ"), open.map((r) => h("option", { value: r.index }, rowLabel(r))));
+          } }, h("option", { value: "" }, "明細の行を選ぶ"), open.filter((r) => !r.installment_id).map((r) => h("option", { value: r.index }, rowLabel(r))));
           return h("div", { class: "stack import-row" },
             h("div", { class: "row" }, h("span", {}, `${c.date.slice(5)} ${c.payee}`), h("span", {}, num(c.amount))), select);
         })) : null);
@@ -1858,6 +1981,8 @@ const routes = [
   [/^\/new$/, newEntry, null, true],
   [/^\/list$/, list, "list"],
   [/^\/entry\/(\d+)$/, editEntry, "list", true],
+  [/^\/entry\/(\d+)\/split$/, splitForm, "list", true],
+  [/^\/installment\/(\d+)$/, installmentView, "accounts", true],
   [/^\/summary$/, summary, "summary"],
   [/^\/accounts$/, accountsView, "accounts"],
   [/^\/accounts\/new$/, newAccountView, "accounts", true],
