@@ -359,3 +359,8 @@ details.fold > .cell.sub .amount { padding-right: 25px; }
 .card .budget > details.fold > summary.cell, .card .budget details.fold > .cell.sub { padding-right: 0; }
 .cell .minus { color: var(--secondary); }
 .cell.field input { color: var(--label); }
+
+/* 明細の行に結びつける取引を探す */
+.search-panel { padding: 8px 0; }
+button.pick { width: 100%; min-height: 44px; padding: 8px 0; border-radius: 0; background: transparent; color: var(--label);
+  font-weight: 400; justify-content: space-between; gap: 12px; text-align: left; border-bottom: 1px solid var(--line); }
