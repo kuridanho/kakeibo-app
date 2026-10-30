@@ -15,8 +15,8 @@ import { classifyMerchants, learnRule, merchantKey } from "./classify";
 import { addMonths, diffDays } from "./dates";
 import { looksLikeCharge } from "./keywords";
 import {
-  getInstallment, type Installment, insertInstallment, installmentKey, parseInstallmentKey, paymentLines, paymentMemo,
-  recordedPayments, resyncPlan, saveInstallment, schedule,
+  defaultPayments, getInstallment, type Installment, insertInstallment, installmentKey, parseInstallmentKey, paymentFields,
+  paymentLines, paymentMemo, recordedPayments, resyncPlan, saveInstallment, schedule,
 } from "./installments";
 import { createEntry, getAccount, getEntry, LedgerError, resolveAccount, updateEntry } from "./ledger";
 import { merchantMemos, rememberName, rememberNote, suggestName } from "./merchant-names";
@@ -175,8 +175,11 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
     const candidates = provisional
       // 前に出た行が結びつけた仮の取引は、もう候補にしない
       .filter((p) => !taken.has(p.entry_id))
-      // 分割払いは、手入力した利用額とも照合する。結びつけると、その月の支払額に置き換わる
-      .filter((p) => (p.amount === r.paymentAmount || ((r.installmentCount ?? 1) > 1 && p.amount === r.usageAmount) || knows(p))
+      // 分割払いは、手入力した利用額とも照合する。結びつけると、その月の支払額に置き換わる。
+      // あとから分割の行は利用金額の列にも支払額が入るので、支払額に回数を掛けた額とも比べる(端数は1回目に寄る)
+      .filter((p) => (p.amount === r.paymentAmount || knows(p)
+        || ((r.installmentCount ?? 1) > 1 && (p.amount === r.usageAmount
+          || Math.abs(p.amount - r.paymentAmount * r.installmentCount!) < r.installmentCount!)))
         && Math.abs(diffDays(p.date, r.usageDate)) <= WEAK_DAYS)
       .map((p) => ({ ...p, strong: Math.abs(diffDays(p.date, r.usageDate)) <= STRONG_DAYS
         && (similar(p.payee, r.merchant) || p.date === r.usageDate || knows(p)) }));
@@ -498,15 +501,33 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
           const used = snapshot.lines.filter((l) => l.amount > 0 && l.account_id !== cardId);
           const usedAmount = used.reduce((s, l) => s + l.amount, 0);
           const n = row.installmentNumber!;
+          const count = row.installmentCount!;
+          const principal = usedAmount > row.paymentAmount ? usedAmount : estimatePrincipal(row);
+          // 2回目以降の行なら、もとの取引を1回目にし、この回までの回も記録する。アプリであとから分割にしたときと同じ形にする
+          const rest = principal - row.paymentAmount * (count - 1);
+          const payments = n === 1 ? { first_payment: row.paymentAmount, payment: row.paymentAmount }
+            : n < count && rest > 0 ? { first_payment: rest, payment: row.paymentAmount } : defaultPayments(principal, count);
           const p = await insertInstallment(db, {
             card_id: cardId, category_id: used[0].account_id, payee: edited ?? (old.payee || row.merchant),
             memo: [old.memo, paidWith].filter(Boolean).join(" / "),
-            purchase_date: row.usageDate, principal: usedAmount > row.paymentAmount ? usedAmount : estimatePrincipal(row),
-            count: row.installmentCount!, first_month: addMonths(billingMonth, -(n - 1)),
-            first_payment: row.paymentAmount, payment: row.paymentAmount, start_number: n, origin: "later", user_id: old.user_id,
+            purchase_date: row.usageDate, principal, count, first_month: addMonths(billingMonth, -(n - 1)),
+            ...payments, start_number: 1, origin: "later", user_id: old.user_id,
           });
           planSnapshots.set(p.id, null);
-          await applyPayment(p, row, link);
+          if (n === 1) {
+            await applyPayment(p, row, link);
+          } else {
+            for (const pay of schedule(p, card).filter((x) => x.number < n)) {
+              const f = paymentFields(p, card, pay);
+              const lines = await paymentLines(db, p, pay, pay.amount);
+              if (pay.number === 1) {
+                await updateEntry(db, link, { ...f, category_source: old.category_source, user_id: old.user_id }, lines, "明細と照合");
+              } else {
+                created.push(await createEntry(db, f, lines));
+              }
+            }
+            await applyPayment(p, row, null);
+          }
           result.linked++;
           continue;
         }
