@@ -1,10 +1,11 @@
 // 残高、集計、月末のまとめ(緩い締め)。
 
 import type { Account, Env } from "../types";
-import { addDays, addMonths, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
+import { addDays, addMonths, billingMonth, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
 import { pendingPayments, recordInstallments } from "./installments";
 import { createEntry } from "./ledger";
-import { recordRecurring } from "./recurring";
+import type { Planned } from "./planned";
+import { occurrence, recordRecurring, type Recurring } from "./recurring";
 
 export async function getSetting(db: D1Database, key: string, fallback: string): Promise<string> {
   const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>();
@@ -212,6 +213,48 @@ export async function cardDue(db: D1Database, cardId: number, month: string): Pr
     .first<{ s: number }>();
   const pending = await pendingPayments(db, { cardId, month });
   return (row?.s ?? 0) + pending.reduce((s, p) => s + p.amount, 0);
+}
+
+/** カードの請求に載る、まだ記録していない利用。繰り返し、一度きりの予定、分割払いの回 */
+export interface CardUsage { date: string; label: string; amount: number; planned_id?: number }
+
+/**
+ * 請求月 month に引き落とされる額の見込みと、その中のまだ記録していない利用。
+ * 繰り返しや予定でカード払いにしたものは、締め日と引き落とし日から請求月を決め、その月の引き落としに足す。
+ * 明細を取り込んだ月は明細の額がそのまま落ちるので、何も足さない。
+ */
+export async function cardDueAhead(db: D1Database, card: Account, month: string): Promise<{ amount: number; usage: CardUsage[] }> {
+  const imported = await db
+    .prepare("SELECT 1 FROM statement_imports WHERE account_id = ? AND billing_month = ? LIMIT 1")
+    .bind(card.id, month).first();
+  const due = await cardDue(db, card.id, month);
+  if (imported || !card.closing_day || !card.payment_day) return { amount: due, usage: [] };
+  const billed = (date: string) => billingMonth(date, card.closing_day!, card.payment_day!) === month;
+
+  const [{ results: rs }, { results: ps }, installments] = await Promise.all([
+    db.prepare("SELECT * FROM recurring WHERE active = 1 AND kind = 'expense' AND from_account_id = ?").bind(card.id).all<Recurring>(),
+    db.prepare("SELECT * FROM planned WHERE entry_id IS NULL AND kind = 'expense' AND from_account_id = ?").bind(card.id).all<Planned>(),
+    pendingPayments(db, { cardId: card.id, month }),
+  ]);
+  // 利用から引き落としまでは長くて2か月ほどなので、その間の回を見る
+  const occurrences = rs.flatMap((r) => [-2, -1, 0].map((n) => addMonths(month, n)).flatMap((m) => {
+    const date = occurrence(r, m);
+    if (!date || date < r.first_date || (r.end_date && date > r.end_date) || !billed(date)) return [];
+    return [{ r, date, key: `recurring:${r.id}:${m}` }];
+  }));
+  const done = new Set<string>();
+  for (const { key } of occurrences) {
+    if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(key).first()) done.add(key);
+  }
+  const usage: CardUsage[] = [
+    ...occurrences.filter((x) => !done.has(x.key)).map(({ r, date }) => ({ date, label: r.payee || "繰り返し", amount: r.amount })),
+    ...ps.filter((p) => billed(p.date)).map((p) => ({ date: p.date, label: p.payee || "予定", amount: p.amount, planned_id: p.id })),
+  ];
+  const extra = usage.reduce((s, u) => s + u.amount, 0);
+  // 分割払いの回は cardDue がもう足しているので、内訳にだけ並べる
+  usage.push(...installments.map((p) => ({ date: p.date, label: `${p.plan.payee || "分割払い"} ${p.number}/${p.plan.count}回`, amount: p.amount })));
+  usage.sort((x, y) => x.date.localeCompare(y.date));
+  return { amount: due + extra, usage };
 }
 
 /**

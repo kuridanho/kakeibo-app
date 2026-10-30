@@ -82,8 +82,15 @@ describe("一度きりの予定", () => {
     const cal = await calendarMonth(db, "2031-02", "2031-01-15");
     expect(cal.planned).toEqual(expect.arrayContaining([
       expect.objectContaining({ date: "2031-02-14", label: "旅行", amount: 40000, planned_id: cash.id }),
-      expect.objectContaining({ date: "2031-02-20", label: "家電", planned_id: byCard.id }),
     ]));
+    // カードで払う予定は、使う日ではなく引き落としの内訳に並び、引き落とし額に入る
+    expect(cal.planned.find((x) => x.label === "家電")).toBeUndefined();
+    const march = await calendarMonth(db, "2031-03", "2031-01-15");
+    const debit = march.planned.find((x) => x.label === "予定カード 引き落とし")!;
+    expect(march.planned).toEqual(expect.arrayContaining([
+      expect.objectContaining({ date: debit.date, label: "家電", kind: "card", via: "予定カード", planned_id: byCard.id }),
+    ]));
+    expect(debit.amount).toBeGreaterThanOrEqual(12000);
 
     const b = await nextMonthBudget(db, "2031-01-15");
     expect(b.expenses).toEqual(expect.arrayContaining([expect.objectContaining({ label: "旅行", cash_delta: -40000 })]));

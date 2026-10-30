@@ -5,7 +5,7 @@ import type { Account, Env } from "../types";
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import { pendingPayments } from "./installments";
 import { balanceOf, buildSimple, resolveAccount } from "./ledger";
-import { cardDue, getSetting } from "./reports";
+import { cardDueAhead, getSetting } from "./reports";
 import { type Planned, plannedInput } from "./planned";
 import { occurrence, toInput, type Recurring } from "./recurring";
 
@@ -127,7 +127,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
 
   const fromPayments = Promise.all(paymentDue.filter((x) => !done.has(x.key)).map(async ({ a, billMonth, due }): Promise<BudgetItem | null> => {
     const amount = a.kind === "card"
-      ? await cardDue(db, a.id, billMonth)
+      ? (await cardDueAhead(db, a, billMonth)).amount
       : Math.min(a.payment_amount ?? 0, Math.max(await balanceOf(db, a, today), 0));
     if (amount <= 0) return null;
     owe(a.id, -amount);

@@ -75,8 +75,11 @@ describe("分割払い", () => {
 
     // まだ記録していない回も、その請求月の引き落とし額とカレンダーに入る
     expect(await cardDue(db, card, "2030-05")).toBe(33833);
-    const cal = await calendarMonth(db, "2030-04", "2030-03-10");
-    expect(cal.planned.find((x) => x.label === "家電店 2/3回")).toMatchObject({ date: "2030-04-30", amount: 33833 });
+    // カレンダーでは、請求に載る日ではなく引き落とし日に、引き落としの内訳として並ぶ
+    const cal = await calendarMonth(db, "2030-05", "2030-03-10");
+    const debit = cal.planned.find((x) => x.kind === "payment" && x.label.endsWith("引き落とし"))!;
+    expect(cal.planned.find((x) => x.label === "家電店 2/3回")).toMatchObject({ date: debit.date, amount: 33833, kind: "card" });
+    expect((await calendarMonth(db, "2030-04", "2030-03-10")).planned.find((x) => x.label === "家電店 2/3回")).toBeUndefined();
 
     // 来月使える額では、来月に請求に載る回をカードの未払いに入れる
     const budget = await nextMonthBudget(db, "2030-03-10");

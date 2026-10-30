@@ -1195,7 +1195,7 @@ async function calendarView(params) {
     h("div", { class: "group" },
       (byDay.get(d) ?? []).map(entryCell),
       (plannedBy.get(d) ?? []).map((p) => cell(p.planned_id ? { href: p.date <= today() ? `#/new?planned=${p.planned_id}` : `#/planned/${p.planned_id}` } : {},
-        h("div", { class: "grow" }, h("span", {}, p.label), h("span", { class: "detail" }, "予定")),
+        h("div", { class: "grow" }, h("span", {}, p.label), h("span", { class: "detail" }, p.kind === "card" ? `${p.via}の引き落とし分` : "予定")),
         h("span", { class: "amount muted" }, p.kind === "income" ? plus(p.amount) : minus(p.amount))))),
   ]);
 

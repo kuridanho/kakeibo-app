@@ -64,7 +64,7 @@ beforeAll(async () => {
     kind: "expense", amount: 80000, day: 1, first_date: "2026-11-01", from_account_id: bank,
     category_id: await category("その他"), payee: "家賃",
   });
-  // カードで払う固定費。手元からは12月に出るが、来月使える額からは引く
+  // カードで払う固定費。手元からは12月に出るので、来月使える額からは引かない
   await api("POST", "/api/recurring", {
     kind: "expense", amount: 8000, day: 10, first_date: "2026-11-10", from_account_id: card,
     category_id: await category("通信"), payee: "携帯",
@@ -114,5 +114,22 @@ describe("来月の予算", () => {
     expect(b.projected_liquid).toBe(before.projected_liquid);
     expect(b.card_unpaid).toBe(before.card_unpaid + 12000);
     expect(b.budget).toBe(before.budget);
+  });
+
+  it("カードで払う繰り返しは、来月に引き落とされるなら引き落とし額に入れて引く", async () => {
+    // 10日締め27日払いのカード。11/10 の家賃は 11/27 に落ちる
+    const rentCard = (await api("POST", "/api/accounts", {
+      name: "家賃カード", type: "liability", kind: "card", closing_day: 10, payment_day: 27, payment_account_id: bank,
+    })).id;
+    const before = await nextMonthBudget(db, today);
+    await api("POST", "/api/recurring", {
+      kind: "expense", amount: 70000, day: 10, first_date: "2026-11-10", from_account_id: rentCard,
+      category_id: await category("その他"), payee: "カードの家賃",
+    });
+    const b = await nextMonthBudget(db, today);
+    expect(b.expenses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ date: "2026-11-27", label: "家賃カード 引き落とし", amount: 70000, cash_delta: -70000 }),
+    ]));
+    expect(b.budget).toBe(before.budget - 70000);
   });
 });
