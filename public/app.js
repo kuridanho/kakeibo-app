@@ -648,9 +648,15 @@ async function list(params) {
   if (params.get("provisional")) qs.set("provisional", "1");
   else qs.set("month", month);
   if (params.get("q")) qs.set("q", params.get("q"));
+  qs.set("paged", "1");
+  qs.set("limit", "50");
+  const first = await api("GET", `/api/entries?${qs}`);
   // 開始残高は資産の開始残高の画面で扱い、一覧には出さない
-  let entries = (await api("GET", `/api/entries?${qs}`)).filter((e) => e.kind !== "opening");
-  if (params.get("unsure")) entries = entries.filter((e) => e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source));
+  const accept = (e) => e.kind !== "opening"
+    && (!params.get("unsure") || (e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source)));
+  let entries = first.entries.filter(accept);
+  let cursor = first.next_cursor;
+  let loading = false;
 
   const search = h("form", { role: "search" }, h("input", { name: "q", type: "search", placeholder: "店名やメモで探す", value: params.get("q") ?? "" }));
   search.addEventListener("submit", (ev) => {
@@ -659,17 +665,41 @@ async function list(params) {
     location.hash = `#/list?month=${month}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
   });
 
-  const groups = Map.groupBy(entries, (e) => e.date);
-  const body = entries.length === 0 ? [h("p", { class: "empty" }, "取引はありません")] : [...groups].map(([d, es]) => [
-    h("span", { class: "section-head" }, dayLabel(d)),
-    h("div", { class: "group" }, es.map(entryCell)),
-  ]);
+  const body = h("div", { class: "stack" });
+  const draw = () => {
+    const groups = Map.groupBy(entries, (e) => e.date);
+    const rows = entries.length === 0 ? [h("p", { class: "empty" }, "取引はありません")] : [...groups].map(([d, es]) => [
+      h("span", { class: "section-head" }, dayLabel(d)),
+      // 画面の外にある大きなグループは、ブラウザに描画を省かせる
+      h("div", { class: "group list-group" }, es.map(entryCell)),
+    ]);
+    fill(body, ...rows, cursor ? h("button", { type: "button", class: "plain wide", onclick: loadMore }, "もっと見る") : null);
+  };
+  async function loadMore(ev) {
+    if (!cursor || loading) return;
+    loading = true;
+    const button = ev?.currentTarget;
+    if (button) { button.disabled = true; button.textContent = "読み込み中…"; }
+    try {
+      const next = await api("GET", `/api/entries?${qs}&cursor=${encodeURIComponent(cursor)}`);
+      const seen = new Set(entries.map((e) => e.id));
+      for (const e of next.entries) if (accept(e) && !seen.has(e.id)) { seen.add(e.id); entries.push(e); }
+      cursor = next.next_cursor;
+      draw();
+    } catch (e) {
+      if (button) { button.disabled = false; button.textContent = "もっと見る"; }
+      toast(e.message);
+    } finally {
+      loading = false;
+    }
+  }
+  draw();
 
   const title = params.get("provisional") ? h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い")
     : params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
     : monthNav(month, (n) => { location.hash = `#/list?view=list&month=${addMonths(month, n)}`; });
   const plain = !params.get("provisional") && !params.get("unsure");
-  return [title, plain ? listTabs("list", month) : null, search, ...body];
+  return [title, plain ? listTabs("list", month) : null, search, body];
 }
 
 // ---- カレンダー ----

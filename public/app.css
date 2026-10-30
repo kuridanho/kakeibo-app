@@ -95,6 +95,10 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; }
 /* インセットのグループ */
 .card { background: var(--card); border-radius: 22px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .group { background: var(--card); border-radius: 22px; padding-left: 16px; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 一覧のページ。画面外の日付グループはブラウザに描画を省かせる。
+   高さは最初 160px と見積もり、一度描いたあとは実際の高さを覚える */
+.list-group { content-visibility: auto; contain-intrinsic-size: auto 160px; }
 .cell {
   display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 0;
   border-bottom: 0.5px solid var(--separator); color: var(--label); text-decoration: none;
