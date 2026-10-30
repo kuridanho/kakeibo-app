@@ -121,6 +121,26 @@ function amountField(input, extra) {
   return h("div", { class: "card amount-card" }, input, h("span", { class: "yen", "aria-hidden": "true" }, "円"), extra);
 }
 
+/** AIの読み取り・分類の進み具合。スピナーと文を出す */
+function statusLine() {
+  const text = h("span");
+  const spinner = h("span", { class: "ai-spinner", "aria-hidden": "true" });
+  const el = h("p", { class: "ai-status", role: "status", "aria-live": "polite", hidden: true }, spinner, text);
+  return {
+    el,
+    show(message, spinning = true) {
+      el.hidden = false;
+      el.classList.toggle("busy", spinning);
+      text.textContent = message;
+    },
+    clear() {
+      el.hidden = true;
+      el.classList.remove("busy");
+      text.textContent = "";
+    },
+  };
+}
+
 /** 記録や設定のシートの上の帯。左で取り消し、右で保存する。中央は題かセグメント */
 function sheetBar(center, { form, save = "保存", back }) {
   return h("div", { class: "sheetbar" },
@@ -186,16 +206,13 @@ function monthNav(month, go, label = monthTitle(month)) {
 let budgetCache = null;
 
 async function home() {
-  const [b, s, advances, provisional, budget, entries] = await Promise.all([
+  const [b, s, budget, counts] = await Promise.all([
     api("GET", "/api/balances"),
     api("GET", `/api/summary/month?month=${thisMonth()}`),
-    api("GET", "/api/advances"),
-    api("GET", "/api/entries?provisional=1&limit=200"),
     api("GET", "/api/budget"),
-    api("GET", `/api/entries?month=${thisMonth()}`),
+    api("GET", "/api/counts"),
   ]);
   budgetCache = budget;
-  const unsure = entries.filter((e) => e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source));
 
   if (b.accounts.length === 0) {
     return [
@@ -207,9 +224,9 @@ async function home() {
   }
 
   const todos = [
-    unsure.length && ["#/list?unsure=1", "AIが決めたカテゴリの確認", unsure.length],
-    provisional.length && ["#/list?provisional=1", "明細と照合していないカード払い", provisional.length],
-    advances.length && ["#/advances", "回収待ちの立て替え", advances.length],
+    counts.unsure && ["#/list?unsure=1", "AIが決めたカテゴリの確認", counts.unsure],
+    counts.provisional && ["#/list?provisional=1", "明細と照合していないカード払い", counts.provisional],
+    counts.advances && ["#/advances", "回収待ちの立て替え", counts.advances],
     ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の棚卸し`, 1]),
     ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りません`, 1]),
   ].filter(Boolean);
@@ -393,6 +410,9 @@ async function entryForm(existing) {
     const camera = h("input", { type: "file", accept: "image/*", capture: "environment", hidden: true });
     const itemsBox = h("div", { class: "stack", hidden: true });
     const amount = moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: init.amount, disabled: isStatement, "aria-label": "金額" });
+    const status = statusLine();
+    let busy = false;
+    let aiNote = false;
     // カードで払う、またはカードからチャージするときは、銀行から落ちる日を添える
     const dueRow = h("div", { class: "cell", hidden: true }, h("span", { class: "grow" }, "引き落とし"), h("span", { class: "value" }));
     const showDue = async () => {
@@ -411,6 +431,7 @@ async function entryForm(existing) {
     const form = h("form", { id: "entry-form" },
       amountField(amount, kind === "expense" && !existing
         ? h("button", { type: "button", class: "icon", "aria-label": "レシートを撮る", onclick: () => camera.click() }, icon(CAMERA)) : null),
+      status.el,
       group(
         field("日付", h("input", { name: "date", type: "date", value: init.date, required: true, disabled: isStatement })),
         kind !== "transfer" ? field(kind === "income" ? "どこから" : "店や内容", h("input", { name: "payee", value: init.payee, autocomplete: "off" })) : null,
@@ -433,6 +454,17 @@ async function entryForm(existing) {
         h("summary", {}, "その他"),
         group(toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })))) : null,
       existing ? group(h("button", { type: "button", class: "cell danger", onclick: remove }, "削除")) : null);
+
+    const setBusy = (value) => {
+      busy = value;
+      form.setAttribute("aria-busy", value ? "true" : "false");
+      const button = box.querySelector('button[form="entry-form"]');
+      if (button) button.disabled = value;
+    };
+    // AIの判断を変えたら、案内は消す
+    form.elements.category_id?.addEventListener("change", () => {
+      if (aiNote && !busy) { aiNote = false; status.clear(); }
+    });
 
     // 借入への返済のときだけ、利息を分けて入れられる
     const showInterest = () => {
@@ -473,7 +505,8 @@ async function entryForm(existing) {
     camera.addEventListener("change", async () => {
       const file = camera.files[0];
       if (!file) return;
-      toast("レシートを読んでいます");
+      setBusy(true);
+      status.show("レシートを読み取り、カテゴリを判定しています…");
       try {
         const body = new FormData();
         body.append("image", await shrinkImage(file), "receipt.jpg");
@@ -493,14 +526,22 @@ async function entryForm(existing) {
         if (r.store) form.elements.payee.value = r.store;
         showItems();
         const unclear = items.filter((i) => i.unclear).length;
-        toast(unclear ? `読みました。分からない品目が${unclear}件あります` : "読みました。内容を確かめてください");
-      } catch (e) { toast(e.message); }
+        setBusy(false);
+        status.show(unclear
+          ? `読み取りました。分からない品目が${unclear}件あります。カテゴリを確かめてください。`
+          : "読み取りました。品目のカテゴリを確かめてください。", false);
+      } catch (e) {
+        setBusy(false);
+        status.clear();
+        toast(e.message);
+      }
       camera.value = "";
     });
     form.elements.amount.addEventListener("input", () => { if (items.length) showItems(); });
 
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
+      if (busy) return;
       const data = { kind, ...formData(form) };
       if (data.category_id === NEW_CATEGORY) delete data.category_id;
       const repeat = data.repeat;
@@ -509,7 +550,36 @@ async function entryForm(existing) {
         data.items = items.map(({ name, amount, category_id, fromLines }) => ({ name: fromLines ? undefined : name, amount, category_id }));
         delete data.category_id;
       }
+      // カテゴリをAIに任せるなら、保存の前に判断を出して、その場で直せるようにする
+      if (!existing && kind === "expense" && !items.length && !data.category_id && data.payee) {
+        setBusy(true);
+        status.show("AIがカテゴリを判定しています…");
+        try {
+          const guess = await api("POST", "/api/classify/one", { payee: data.payee });
+          if (!guess.category_id) {
+            setBusy(false);
+            status.show("AIでは決められませんでした。カテゴリを選んでください。", false);
+            return;
+          }
+          const select = form.elements.category_id;
+          if (![...select.options].some((o) => o.value === String(guess.category_id))) {
+            select.append(h("option", { value: guess.category_id }, guess.category_name));
+          }
+          select.value = String(guess.category_id);
+          setBusy(false);
+          aiNote = true;
+          status.show(`AIの判断: ${guess.category_name}。違う場合はカテゴリを変えて、もう一度保存してください。`, false);
+          return;
+        } catch (e) {
+          setBusy(false);
+          status.show("AIの分類に失敗しました。カテゴリを選んで保存してください。", false);
+          toast(e.message);
+          return;
+        }
+      }
       try {
+        setBusy(true);
+        status.show("保存しています…");
         if (existing) {
           await api("PUT", `/api/entries/${existing.id}`, data);
           toast("保存しました");
@@ -532,7 +602,11 @@ async function entryForm(existing) {
           toast(cat && !data.category_id && !data.items ? `${cat.name}として記録しました` : "記録しました");
           goBack("#/");
         }
-      } catch (e) { toast(e.message); }
+      } catch (e) {
+        setBusy(false);
+        status.clear();
+        toast(e.message);
+      }
     });
     const titles = { expense: "支出", income: "収入", transfer: "振替" };
     fill(box,
@@ -712,17 +786,32 @@ function swipe(el, go) {
 
 // 前後の期間を先に読んでおき、スワイプで移ったときに待たせない。スワイプ以外で開いたときは読み直す
 const ahead = new Map();
+let aheadTimer = null;
+let aheadRun = 0;
+function cancelAhead() {
+  aheadRun++;
+  if (aheadTimer) { clearTimeout(aheadTimer); aheadTimer = null; }
+  ahead.clear();
+}
 function loadAhead(key, load, swiped) {
   const p = swiped && ahead.get(key);
-  ahead.clear();
+  if (swiped) cancelAhead();
+  else ahead.clear();
   return p ? p.catch(() => load()) : load();
 }
+// 最初の表示と競合しないよう、少し待ってから前後を読む。スワイプしたら待たずに読む
 function readAhead(keys, load) {
-  for (const k of keys) {
-    const p = load(k);
-    p.catch(() => {});
-    ahead.set(k, p);
-  }
+  cancelAhead();
+  const run = aheadRun;
+  aheadTimer = setTimeout(() => {
+    if (run !== aheadRun) return;
+    aheadTimer = null;
+    for (const k of keys) {
+      const p = load(k);
+      p.catch(() => {});
+      ahead.set(k, p);
+    }
+  }, 1200);
 }
 
 /** スワイプで動かす中身。スワイプで来たときは、払った向きの反対から滑り込ませる */
@@ -1381,12 +1470,14 @@ async function importView() {
   const cards = byType(list, "liability").filter((a) => a.kind === "card" && a.statement_import);
   const expense = byType(list, "expense");
   const out = h("div", { class: "stack" });
+  const status = statusLine();
   const form = h("form", {},
     group(
       field("カード", h("select", { name: "account_id", "data-num": "", required: true }, options(cards, cards[0]?.id))),
       field("明細CSV", h("input", { name: "file", type: "file", accept: ".csv,text/csv", required: true })),
       field("請求月", h("input", { name: "billing_month", type: "month", required: true }))),
-    h("button", { type: "submit" }, "照合する"));
+    h("button", { type: "submit" }, "照合する"),
+    status.el);
   form.elements.file.addEventListener("change", () => {
     const m = /(\d{4})(\d{2})\.csv$/i.exec(form.elements.file.files[0]?.name ?? "");
     if (m) form.elements.billing_month.value = `${m[1]}-${m[2]}`;
@@ -1401,12 +1492,21 @@ async function importView() {
     // Vpass のCSVはShift_JIS。UTF-8で保存し直したものも読めるようにする
     text = new TextDecoder("shift_jis").decode(buf);
     if (text.includes("�")) text = new TextDecoder("utf-8").decode(buf);
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    status.show("明細を読み取り、カテゴリを判定しています…");
     try {
       const p = await api("POST", "/api/statements/preview", {
         account_id: Number(form.elements.account_id.value), billing_month: form.elements.billing_month.value, text,
       });
       showPreview(p, Number(form.elements.account_id.value));
-    } catch (e) { toast(e.message); }
+      status.clear();
+    } catch (e) {
+      status.clear();
+      toast(e.message);
+    } finally {
+      submit.disabled = false;
+    }
   });
 
   function showPreview(p, accountId) {
@@ -1439,7 +1539,10 @@ async function importView() {
       p.leftovers.length ? h("div", { class: "card" }, h("h2", {}, `結びつかなかった仮の取引 ${p.leftovers.length}件`),
         h("p", { class: "sub", style: "margin:0" }, "次の請求月に回ったものか、支払方法の選び間違いかを確かめてください。"),
         p.leftovers.map((c) => h("a", { class: "row", href: `#/entry/${c.entry_id}` }, h("span", {}, `${c.date.slice(5)} ${c.payee}`), h("span", {}, num(c.amount))))) : null,
-      h("div", { class: "buttons" }, h("button", { onclick: async () => {
+      h("div", { class: "buttons" }, h("button", { onclick: async (ev) => {
+        const button = ev.currentTarget;
+        button.disabled = true;
+        status.show("取り込んでいます…");
         try {
           const r = await api("POST", "/api/statements/commit", {
             account_id: accountId, billing_month: p.billing_month, text, file_name: fileName, choices,
@@ -1447,6 +1550,10 @@ async function importView() {
           toast(`取り込みました。結びつけ ${r.linked}件、新規 ${r.created}件`);
           location.hash = `#/list?month=${p.billing_month}`;
         } catch (e) { toast(e.message); }
+        finally {
+          button.disabled = false;
+          status.clear();
+        }
       } }, "取り込む")));
   }
   return [h("h1", {}, "カード明細の取り込み"), cards.length ? form : h("p", { class: "sub" }, "明細を取り込むカードを資産の画面で登録してください。"), out];
@@ -1525,6 +1632,7 @@ function placeTabGlider(animate = true) {
 }
 
 async function route() {
+  cancelAhead();
   const [path, query] = (location.hash.slice(1) || "/").split("?");
   const params = new URLSearchParams(query ?? "");
   const found = routes.find(([re]) => re.test(path)) ?? routes[0];
