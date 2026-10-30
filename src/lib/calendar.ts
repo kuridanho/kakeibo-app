@@ -1,8 +1,9 @@
-// カレンダー用の月の一覧。日ごとの支出と収入の合計と、今日より後の予定(繰り返し、カードの引き落とし、返済)。
+// カレンダー用の月の一覧。日ごとの支出と収入の合計と、今日より後の予定(繰り返し、一度きりの予定、カードの引き落とし、返済)。
 // 日ごとの合計は集計と同じく report_date で数える。立て替えの回収は元の取引の日の支出を減らす。
 
 import type { Account } from "../types";
 import { dayInMonth, nextBankDay, todayJST } from "./dates";
+import type { Planned as PlannedRow } from "./planned";
 import { occurrence, type Recurring } from "./recurring";
 import { cardDue } from "./reports";
 
@@ -11,6 +12,8 @@ export interface Planned {
   label: string;
   amount: number;
   kind: "expense" | "income" | "transfer" | "payment";
+  /** 一度きりの予定のとき、その id */
+  planned_id?: number;
 }
 
 export async function calendarMonth(db: D1Database, month: string, today = todayJST()) {
@@ -34,6 +37,12 @@ export async function calendarMonth(db: D1Database, month: string, today = today
     if (!date || date <= today || date < r.first_date || (r.end_date && date > r.end_date)) continue;
     planned.push({ date, label: r.payee || "繰り返し", amount: r.amount, kind: r.kind });
   }
+
+  // 一度きりの予定は、日が過ぎてもまだ確かめていなければ出しておく
+  const { results: ps } = await db
+    .prepare("SELECT * FROM planned WHERE entry_id IS NULL AND date BETWEEN ? AND ?")
+    .bind(`${month}-01`, `${month}-31`).all<PlannedRow>();
+  for (const p of ps) planned.push({ date: p.date, label: p.payee || "予定", amount: p.amount, kind: p.kind, planned_id: p.id });
 
   const { results: payers } = await db
     .prepare(`SELECT * FROM accounts WHERE kind IN ('card', 'loan') AND archived = 0 AND payment_day IS NOT NULL`)

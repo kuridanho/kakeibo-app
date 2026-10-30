@@ -10,6 +10,7 @@ import { calendarMonth } from "./lib/calendar";
 import { nextMonthBudget } from "./lib/budget";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
+import { openPlanned, type Planned, validatePlanned } from "./lib/planned";
 import { type Recurring, recordRecurring, validate } from "./lib/recurring";
 import { StatementParseError } from "./lib/smbc";
 import { commitStatement, previewStatement } from "./lib/statement";
@@ -215,6 +216,17 @@ app.post("/api/classify", async (c) => {
   return c.json(Object.fromEntries(map));
 });
 
+/** 1件だけ先に分類して、保存前に画面で確かめられるようにする */
+app.post("/api/classify/one", async (c) => {
+  const { payee } = await c.req.json<{ payee?: string }>();
+  const text = String(payee ?? "").trim().slice(0, 200);
+  if (!text) return c.json({ category_id: null, category_name: null, category_source: null });
+  const guess = await classifyOne(c.env, text);
+  if (!guess) return c.json({ category_id: null, category_name: null, category_source: null });
+  const account = await getAccount(c.env.DB, guess.account_id);
+  return c.json({ category_id: account.id, category_name: account.name, category_source: guess.source });
+});
+
 // ---- 開始残高 ----
 
 /**
@@ -328,7 +340,12 @@ app.get("/api/entries/:id", async (c) => {
   return c.json({ ...full, recoveries: await withLines(c.env.DB, recoveries) });
 });
 
-type EntryInput = Omit<SimpleInput, "items"> & { learn?: boolean; items?: { name?: string; category_id: number; amount: number }[] };
+type EntryInput = Omit<SimpleInput, "items"> & {
+  learn?: boolean;
+  items?: { name?: string; category_id: number; amount: number }[];
+  /** 予定を確かめて記録するときの、その予定の id */
+  planned_id?: number;
+};
 
 app.post("/api/entries", async (c) => {
   const env = c.env;
@@ -344,8 +361,22 @@ app.post("/api/entries", async (c) => {
     input.category_id = guess?.account_id ?? (await resolveAccount(env.DB, fallback!.id)).id;
     categorySource = guess?.source ?? "none";
   }
+  if (input.kind === "expense" && input.learn === true && !input.items?.length && input.category_id && input.payee) {
+    // 保存の前に見せたAIの判断を直したときは、次から同じ店をそのカテゴリにする
+    await learnRule(env.DB, input.payee, input.category_id);
+  }
+  let planned: Planned | null = null;
+  if (input.planned_id !== undefined) {
+    planned = await env.DB.prepare("SELECT * FROM planned WHERE id = ?").bind(int(input.planned_id, "予定")).first<Planned>();
+    if (!planned) throw new LedgerError("予定が見つかりません", 404);
+    if (planned.entry_id) throw new LedgerError("この予定はもう記録してあります");
+  }
   const { fields, lines } = await buildSimple(env.DB, input);
-  const id = await createEntry(env.DB, { ...fields, source: "manual", category_source: categorySource, user_id: c.get("user") }, lines);
+  const id = await createEntry(env.DB, {
+    ...fields, source: planned ? "planned" : "manual", category_source: categorySource, user_id: c.get("user"),
+    auto_key: planned ? `planned:${planned.id}` : null,
+  }, lines);
+  if (planned) await env.DB.prepare("UPDATE planned SET entry_id = ? WHERE id = ?").bind(id, planned.id).run();
   return c.json({ id, category_id: input.category_id, category_source: categorySource }, 201);
 });
 
@@ -380,8 +411,53 @@ app.put("/api/entries/:id", async (c) => {
   return c.json({ id });
 });
 
+/**
+ * AIやキーワード表が決めたカテゴリを、まとめて確かめる。
+ * 各行の category_id がいまのカテゴリと違えば付け替え、同じならそのまま確定する。
+ * どちらも利用先とカテゴリの対応を覚えるので、次から同じ店は確かめる一覧に出ない。
+ */
+app.post("/api/entries/confirm-categories", async (c) => {
+  const db = c.env.DB;
+  const { items } = await c.req.json<{ items?: { id: number; category_id: number }[] }>();
+  if (!Array.isArray(items) || items.length === 0) throw new LedgerError("確かめる取引がありません");
+  if (items.length > 500) throw new LedgerError("一度に確かめられるのは500件までです");
+  const categories = new Map<number, Account>();
+  let changed = 0;
+  let confirmed = 0;
+  const learned = new Map<string, number>();
+  for (const item of items) {
+    const { entry, lines } = await getEntry(db, int(item.id, "id"));
+    if (entry.kind !== "expense" || !["ai", "keyword", "none"].includes(entry.category_source ?? "")) continue;
+    const cid = int(item.category_id, "カテゴリ");
+    if (!categories.has(cid)) {
+      const a = await resolveAccount(db, cid);
+      if (a.type !== "expense") throw new LedgerError("支出のカテゴリを選んでください");
+      categories.set(cid, a);
+    }
+    const category = categories.get(cid)!;
+    const { results: types } = await db
+      .prepare(`SELECT id FROM accounts WHERE type = 'expense' AND id IN (${lines.map(() => "?").join(",")})`)
+      .bind(...lines.map((l) => l.account_id))
+      .all<{ id: number }>();
+    const expenseIds = new Set(types.map((t) => t.id));
+    const expenseLines = lines.filter((l) => expenseIds.has(l.account_id));
+    // 品目ごとに分けた取引は、1つのカテゴリに付け替えると内訳が消えるので、カテゴリはそのままにする
+    const swap = expenseLines.length === 1 && expenseLines[0].account_id !== category.id;
+    const newLines = swap ? lines.map((l) => (l === expenseLines[0] ? { ...l, account_id: category.id } : l)) : undefined;
+    await updateEntry(db, entry.id, { category_source: "user" }, newLines, "カテゴリを確認");
+    if (swap) changed++;
+    confirmed++;
+    if (entry.payee && expenseLines.length === 1) learned.set(entry.payee, swap ? category.id : expenseLines[0].account_id);
+  }
+  for (const [payee, accountId] of learned) await learnRule(db, payee, accountId);
+  return c.json({ confirmed, changed });
+});
+
 app.delete("/api/entries/:id", async (c) => {
-  await deleteEntry(c.env.DB, int(c.req.param("id"), "id"));
+  const id = int(c.req.param("id"), "id");
+  // 予定から記録した取引を消したときは、予定もいっしょに消す
+  await c.env.DB.prepare("DELETE FROM planned WHERE entry_id = ?").bind(id).run();
+  await deleteEntry(c.env.DB, id);
   return c.json({ ok: true });
 });
 
@@ -436,6 +512,58 @@ app.put("/api/recurring/:id", async (c) => {
 /** 繰り返しを消す。これまでに記録した取引は残す */
 app.delete("/api/recurring/:id", async (c) => {
   await c.env.DB.prepare("DELETE FROM recurring WHERE id = ?").bind(int(c.req.param("id"), "id")).run();
+  return c.json({ ok: true });
+});
+
+// ---- 一度きりの予定 ----
+
+const PLANNED_COLS = ["kind", "amount", "date", "from_account_id", "to_account_id", "category_id", "payee", "memo"] as const;
+
+function plannedFrom(body: Partial<Planned>, base?: Planned): Planned {
+  const p = { ...(base ?? { payee: "", memo: "" }), ...body } as Planned;
+  p.amount = int(p.amount, "金額");
+  if (p.amount <= 0) throw new LedgerError("金額を入れてください");
+  return p;
+}
+
+/** まだ記録していない予定。due=1 なら今日までに来たものだけ */
+app.get("/api/planned", async (c) => c.json(await openPlanned(c.env.DB, c.req.query("due") ? todayJST() : undefined)));
+
+app.get("/api/planned/:id", async (c) => {
+  const p = await c.env.DB.prepare("SELECT * FROM planned WHERE id = ?").bind(int(c.req.param("id"), "id")).first<Planned>();
+  if (!p) throw new LedgerError("予定が見つかりません", 404);
+  return c.json(p);
+});
+
+app.post("/api/planned", async (c) => {
+  const db = c.env.DB;
+  const p = plannedFrom(await c.req.json<Partial<Planned>>());
+  await validatePlanned(db, p);
+  const row = await db
+    .prepare(`INSERT INTO planned (${PLANNED_COLS.join(", ")}, user_id) VALUES (${PLANNED_COLS.map(() => "?").join(", ")}, ?) RETURNING *`)
+    .bind(...PLANNED_COLS.map((k) => p[k] ?? null), c.get("user"))
+    .first<Planned>();
+  return c.json(row, 201);
+});
+
+app.put("/api/planned/:id", async (c) => {
+  const db = c.env.DB;
+  const id = int(c.req.param("id"), "id");
+  const old = await db.prepare("SELECT * FROM planned WHERE id = ?").bind(id).first<Planned>();
+  if (!old) throw new LedgerError("予定が見つかりません", 404);
+  if (old.entry_id) throw new LedgerError("記録した予定は、記録した取引のほうを直してください");
+  const p = plannedFrom(await c.req.json<Partial<Planned>>(), old);
+  await validatePlanned(db, p);
+  const row = await db
+    .prepare(`UPDATE planned SET ${PLANNED_COLS.map((k) => `${k} = ?`).join(", ")} WHERE id = ? RETURNING *`)
+    .bind(...PLANNED_COLS.map((k) => p[k] ?? null), id)
+    .first<Planned>();
+  return c.json(row);
+});
+
+/** 予定をやめる。記録した後の予定は、取引を消すといっしょに消える */
+app.delete("/api/planned/:id", async (c) => {
+  await c.env.DB.prepare("DELETE FROM planned WHERE id = ? AND entry_id IS NULL").bind(int(c.req.param("id"), "id")).run();
   return c.json({ ok: true });
 });
 
@@ -590,6 +718,19 @@ app.get("/api/calendar", async (c) => {
 });
 
 app.get("/api/balances", async (c) => c.json(await balances(c.env.DB)));
+
+/** ホームの「確かめること」の件数だけを返す。明細行や一覧は取らない */
+app.get("/api/counts", async (c) => {
+  const month = monthOf(todayJST());
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM entries WHERE provisional = 1"),
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM entries WHERE advance = 1 AND settled = 0"),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM entries WHERE kind = 'expense'
+      AND report_date BETWEEN ? AND ? AND category_source IN ('ai', 'keyword', 'none')`).bind(`${month}-01`, `${month}-31`),
+  ]);
+  const count = (r: D1Result) => Number((r.results?.[0] as { n?: number } | undefined)?.n ?? 0);
+  return c.json({ provisional: count(results[0]), advances: count(results[1]), unsure: count(results[2]) });
+});
 
 app.get("/api/budget", async (c) => c.json(await nextMonthBudget(c.env.DB)));
 
