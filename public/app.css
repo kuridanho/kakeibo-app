@@ -126,6 +126,9 @@ a.cell.plain::after { display: none; }
 .meter > div:nth-child(2) { background: var(--tint-2); }
 /* 3つ目は地の色と近いので、斜めの縞にして見分ける */
 .meter > div:nth-child(3), .swatch.stripe { background: repeating-linear-gradient(135deg, var(--tint-2) 0 2px, var(--tint-3) 2px 4px); }
+/* 足りない分。左との境目に地の色の隙間を作る */
+.meter { position: relative; }
+.meter > .short { position: absolute; inset: 0 0 0 auto; background: var(--red); border-left: 2px solid var(--card); }
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; display: inline-block; }
 .legend { display: flex; align-items: center; gap: 10px; }
 .cell .legend { flex-direction: row; flex-grow: 1; }
