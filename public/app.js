@@ -1440,7 +1440,10 @@ async function newAccountView() {
   let kind = "cash";
   const extra = h("div", { class: "group" });
   const kindSel = h("select", { name: "kind" }, Object.entries(KIND_LABEL).map(([k, v]) => h("option", { value: k }, v)));
-  const draw = () => fill(extra, ...[kindFields(kind, null, banks), toggles(kind, null)].flat().filter(Boolean));
+  // 今の残高は開始残高として今日の日付で入れる。借入なら借りている額
+  const balanceLabel = () => kind === "loan" ? "借りている額" : kind === "card" ? "今の未払い" : "今の残高";
+  const balance = moneyInput({ name: "opening", "data-num": "", placeholder: "0" });
+  const draw = () => fill(extra, field(balanceLabel(), balance), ...[kindFields(kind, null, banks), toggles(kind, null)].flat().filter(Boolean));
   kindSel.addEventListener("change", () => { kind = kindSel.value; draw(); });
   draw();
   const form = h("form", { id: "account-form" },
@@ -1448,10 +1451,11 @@ async function newAccountView() {
     extra);
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const d = normalize(formData(form), kind);
+    const { opening, ...d } = normalize(formData(form), kind);
     d.type = ["card", "loan"].includes(kind) ? "liability" : "asset";
     try {
       const a = await api("POST", "/api/accounts", d);
+      if (opening) await api("POST", "/api/opening", { date: today(), balances: [{ account_id: a.id, amount: opening }] });
       toast("追加しました");
       accountsCache = null;
       goBack("#/accounts");
@@ -1525,8 +1529,19 @@ function checkForm(a, bal, history) {
 
 function accountSettings(a, list) {
   const banks = byType(list, "asset").filter((x) => x.kind === "bank" || x.id === a.payment_account_id);
+  // 借入は借りた額をここで直せる。開始残高として入れ、日付は前に入れた日のまま
+  const loan = a.kind === "loan";
+  const borrowed = loan ? moneyInput({ name: "borrowed", "data-num": "", placeholder: "0" }) : null;
+  let openedOn = null;
+  if (loan) api("GET", `/api/entries?account_id=${a.id}&limit=1000`).then((es) => {
+    const o = es.find((e) => e.kind === "opening");
+    if (!o) return;
+    openedOn = o.date;
+    borrowed.value = num(Math.abs(o.lines.find((l) => l.account_id === a.id).amount));
+  }).catch(() => {});
   const form = h("form", { id: "account-form" },
-    group(field("名前", h("input", { name: "name", value: a.name })), kindFields(a.kind, a, banks), toggles(a.kind, a)),
+    group(field("名前", h("input", { name: "name", value: a.name })), loan ? field("借りた額", borrowed) : null,
+      kindFields(a.kind, a, banks), toggles(a.kind, a)),
     group(h("button", { type: "button", class: "cell danger", onclick: async () => {
       const hide = !a.archived;
       if (hide && !confirm(`${a.name}を非表示にします。記録は残り、あとで戻せます。`)) return;
@@ -1537,10 +1552,13 @@ function accountSettings(a, list) {
     } }, a.archived ? "表示に戻す" : "非表示にする")));
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const d = normalize(formData(form), a.kind);
+    const { borrowed: amount, ...d } = normalize(formData(form), a.kind);
     accountsCache = null;
     toast("保存しました");
-    saveAhead(() => api("PATCH", `/api/accounts/${a.id}`, d), () => goBack("#/accounts"));
+    saveAhead(async () => {
+      await api("PATCH", `/api/accounts/${a.id}`, d);
+      if (loan) await api("POST", "/api/opening", { date: openedOn ?? today(), balances: [{ account_id: a.id, amount: amount ?? 0 }] });
+    }, () => goBack("#/accounts"));
   });
   return form;
 }
