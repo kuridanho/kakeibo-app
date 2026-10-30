@@ -1108,7 +1108,14 @@ async function calendarView(params) {
     history.replaceState(null, "", `#/list?view=cal&month=${month}&day=${d}`);
     for (const el of document.querySelectorAll(".cal-d.on")) el.classList.remove("on");
     document.querySelector(`.cal-d[data-day="${d}"]`)?.classList.add("on");
-    document.getElementById(`day-${d}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    toDay(d, "smooth");
+  };
+  // カレンダーは上に固定してあるので、その下端に日の見出しが来るよう一覧だけを送る
+  const toDay = (d, behavior) => {
+    const el = document.getElementById(`day-${d}`);
+    const top = document.querySelector(".cal-top");
+    if (!el || !top) return;
+    el.closest("main")?.scrollBy({ top: el.getBoundingClientRect().top - top.getBoundingClientRect().bottom - 8, behavior });
   };
 
   const head = h("div", { class: "cal" },
@@ -1161,14 +1168,14 @@ async function calendarView(params) {
         h("span", { class: "amount muted" }, p.kind === "income" ? plus(p.amount) : minus(p.amount))))),
   ]);
 
-  if (selected) setTimeout(() => document.getElementById(`day-${selected}`)?.scrollIntoView({ block: "start" }), 0);
+  if (selected) setTimeout(() => toDay(selected, "instant"), 0);
   const go = (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; };
   const card = h("div", { class: "cal-card" }, head, grid, totals,
     comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
       h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${minus(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
   swipe(card, go);
   if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.classList.add(from > 0 ? "in-right" : "in-left");
-  return [monthNav(month, go), listTabs("cal", month), card, listBody];
+  return [h("div", { class: "cal-top" }, monthNav(month, go), listTabs("cal", month), card), listBody];
 }
 
 // ---- 集計 ----

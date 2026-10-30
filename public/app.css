@@ -76,6 +76,7 @@ main > * { flex-shrink: 0; }
 @media not all and (display-mode: standalone) {
   main { top: env(safe-area-inset-top); padding-top: 16px; }
   .sheetbar { margin-top: -16px; }
+  main > .cal-top { top: 16px; }
 }
 a { color: var(--tint); }
 
@@ -326,6 +327,9 @@ details.more > summary + * { margin-top: 4px; }
 /* カレンダー。iOS のカレンダーにならい、縦線と枠はなくして週の区切りの横線だけにする。
    マスは日付と金額2行が入る高さに固定し、どの週も同じ間隔にする */
 .cal-card { margin: 0 -4px; }
+/* 日を押しても月の表は動かさず、下の一覧だけをスクロールさせる。
+   止まる位置は main の上の余白と同じにし、余白の帯は影で地の色に塗って一覧を隠す */
+.cal-top { position: sticky; top: 4px; z-index: 4; padding-bottom: 4px; background: var(--bg); box-shadow: 0 -16px 0 var(--bg); display: flex; flex-direction: column; gap: 8px; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--label); padding: 0 0 6px; }
 .cal-d {
