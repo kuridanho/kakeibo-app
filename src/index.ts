@@ -297,18 +297,39 @@ app.get("/api/entries", async (c) => {
     args.push(Number(q.account_id));
   }
   if (q.provisional) where.push("e.provisional = 1");
-  let limit = 500;
+
+  // 一覧は cursor で続きを読む。cursor は最後に返した行の「日付|id」
+  const paged = q.paged === "1" || q.cursor !== undefined;
+  if (q.cursor) {
+    const [date, id] = String(q.cursor).split("|");
+    if (!date || !id || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isInteger(Number(id))) {
+      throw new LedgerError("cursor が正しくありません");
+    }
+    where.push("(e.date < ? OR (e.date = ? AND e.id < ?))");
+    args.push(date, date, Number(id));
+  }
+  let limit = paged ? 50 : 500;
   if (q.limit !== undefined) {
     const n = int(q.limit, "limit");
     if (n < 1) throw new LedgerError("limit は1以上で入れてください");
-    limit = Math.min(n, 1000);
+    limit = Math.min(n, paged ? 200 : 1000);
   }
+
+  // 次があるかを知るために、1件多く取る
+  const fetchLimit = paged ? limit + 1 : limit;
   const { results } = await c.env.DB
     .prepare(`SELECT e.* FROM entries e ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY e.date DESC, e.id DESC LIMIT ${limit}`)
+      ORDER BY e.date DESC, e.id DESC LIMIT ${fetchLimit}`)
     .bind(...args)
     .all<Entry>();
-  return c.json(await withLines(c.env.DB, results));
+  if (!paged) return c.json(await withLines(c.env.DB, results));
+
+  const page = results.slice(0, limit);
+  const last = page[page.length - 1];
+  return c.json({
+    entries: await withLines(c.env.DB, page),
+    next_cursor: results.length > limit && last ? `${last.date}|${last.id}` : null,
+  });
 });
 
 app.get("/api/entries/:id", async (c) => {
