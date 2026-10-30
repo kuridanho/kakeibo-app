@@ -860,7 +860,7 @@ async function calendarView(params) {
   const totals = h("div", { class: "cal-sum" },
     h("div", {}, h("span", {}, "収入"), h("b", { class: "inc" }, plus(income))),
     h("div", {}, h("span", {}, "支出"), h("b", {}, minus(spent))),
-    h("div", {}, h("span", {}, "差"), h("b", { class: income - spent < 0 ? "neg" : "" }, `${income - spent > 0 ? "+" : ""}${num(income - spent)}`)));
+    h("div", {}, h("span", {}, "収支"), h("b", { class: income - spent < 0 ? "neg" : "" }, `${income - spent > 0 ? "+" : ""}${num(income - spent)}`)));
 
   // 月の取引と予定を日ごとに、新しい日から並べる
   const days = [...new Set([...byDay.keys(), ...plannedBy.keys()])].sort().reverse();
@@ -925,7 +925,7 @@ async function summary(params) {
     h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(-s.expense))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(s.income))),
-      h("div", { class: "row sub" }, h("span", {}, "差"), h("span", {}, plus(s.income - s.expense)))),
+      h("div", { class: "row sub" }, h("span", {}, "収支"), h("span", {}, plus(s.income - s.expense)))),
     s.report && (s.changes.length || changedTotal) ? h("details", { class: "banner" },
       h("summary", {}, `まとめの後に支出が ${changedTotal >= 0 ? "+" : ""}${yen(changedTotal)} 変わりました`),
       h("table", { class: "table" }, s.changes.map((c) => h("tr", {}, h("td", {}, c.summary),
