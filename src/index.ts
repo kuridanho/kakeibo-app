@@ -216,6 +216,17 @@ app.post("/api/classify", async (c) => {
   return c.json(Object.fromEntries(map));
 });
 
+/** 1件だけ先に分類して、保存前に画面で確かめられるようにする */
+app.post("/api/classify/one", async (c) => {
+  const { payee } = await c.req.json<{ payee?: string }>();
+  const text = String(payee ?? "").trim().slice(0, 200);
+  if (!text) return c.json({ category_id: null, category_name: null, category_source: null });
+  const guess = await classifyOne(c.env, text);
+  if (!guess) return c.json({ category_id: null, category_name: null, category_source: null });
+  const account = await getAccount(c.env.DB, guess.account_id);
+  return c.json({ category_id: account.id, category_name: account.name, category_source: guess.source });
+});
+
 // ---- 開始残高 ----
 
 /**
@@ -328,6 +339,10 @@ app.post("/api/entries", async (c) => {
     const fallback = await env.DB.prepare("SELECT id FROM accounts WHERE seed_key = 'other'").first<{ id: number }>();
     input.category_id = guess?.account_id ?? (await resolveAccount(env.DB, fallback!.id)).id;
     categorySource = guess?.source ?? "none";
+  }
+  if (input.kind === "expense" && input.learn === true && !input.items?.length && input.category_id && input.payee) {
+    // 保存の前に見せたAIの判断を直したときは、次から同じ店をそのカテゴリにする
+    await learnRule(env.DB, input.payee, input.category_id);
   }
   let planned: Planned | null = null;
   if (input.planned_id !== undefined) {
@@ -682,6 +697,19 @@ app.get("/api/calendar", async (c) => {
 });
 
 app.get("/api/balances", async (c) => c.json(await balances(c.env.DB)));
+
+/** ホームの「確かめること」の件数だけを返す。明細行や一覧は取らない */
+app.get("/api/counts", async (c) => {
+  const month = monthOf(todayJST());
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM entries WHERE provisional = 1"),
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM entries WHERE advance = 1 AND settled = 0"),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM entries WHERE kind = 'expense'
+      AND report_date BETWEEN ? AND ? AND category_source IN ('ai', 'keyword', 'none')`).bind(`${month}-01`, `${month}-31`),
+  ]);
+  const count = (r: D1Result) => Number((r.results?.[0] as { n?: number } | undefined)?.n ?? 0);
+  return c.json({ provisional: count(results[0]), advances: count(results[1]), unsure: count(results[2]) });
+});
 
 app.get("/api/budget", async (c) => c.json(await nextMonthBudget(c.env.DB)));
 
