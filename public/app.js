@@ -390,7 +390,7 @@ async function entryForm(existing, opts = {}) {
   } : src ? {
     amount: src.amount, date: src.date, payee: src.payee, memo: src.memo,
     from_account_id: src.from_account_id ?? undefined, to_account_id: src.to_account_id ?? undefined, category_id: src.category_id ?? undefined,
-  } : { date: today(), from_account_id: store.get("lastPay", null) };
+  } : { date: opts.date ?? today(), from_account_id: store.get("lastPay", null) };
   // 支払方法は選べるようにしたものだけ。編集中の取引で使っているものは残す
   const payWith = live(list).filter((a) => (a.type === "asset" || a.type === "liability") && (a.pay_method || keep(a, init.from_account_id)));
   const receiveTo = byType(list, "asset");
@@ -605,7 +605,9 @@ async function newEntry(params) {
   // ホームの「確かめる」から来たときは、予定の中身を入れた状態で開く
   const id = params?.get("planned");
   if (id) return entryForm(null, { confirm: await api("GET", `/api/planned/${id}`) });
-  return entryForm(null);
+  // カレンダーで日をダブルタップしたときは、その日付で開く
+  const date = params?.get("date");
+  return entryForm(null, /^\d{4}-\d{2}-\d{2}$/.test(date ?? "") ? { date } : {});
 }
 
 async function editPlanned(id) {
@@ -823,7 +825,19 @@ async function calendarView(params) {
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const cells = Math.ceil((first + last) / 7) * 7;
 
-  // 日を押すと、下の一覧のその日へ移る
+  // 日を押すと、下の一覧のその日へ移る。同じ日を続けて押すと、その日付で記録を開く。
+  // iOS の Safari はボタンの dblclick を出さないので、2回の押下の間隔で見分ける
+  let lastTap = { d: "", t: 0 };
+  const tap = (d) => {
+    const now = Date.now();
+    if (lastTap.d === d && now - lastTap.t < 350) {
+      lastTap = { d: "", t: 0 };
+      location.hash = `#/new?date=${d}`;
+      return;
+    }
+    lastTap = { d, t: now };
+    jump(d);
+  };
   const jump = (d) => {
     history.replaceState(null, "", `#/list?view=cal&month=${month}&day=${d}`);
     for (const el of document.querySelectorAll(".cal-d.on")) el.classList.remove("on");
@@ -848,7 +862,7 @@ async function calendarView(params) {
         type: "button", "data-day": d,
         class: `cal-d${d === selected ? " on" : ""}${d === cal.today ? " today" : ""}${tone}`,
         "aria-label": `${dayLabel(d)}${t?.income ? ` 収入 ${t.income}円` : ""}${t?.expense ? ` 支出 ${t.expense}円` : ""}${pin ? ` 入る予定 ${pin}円` : ""}${pout ? ` 出る予定 ${pout}円` : ""}`,
-        onclick: () => jump(d),
+        onclick: () => tap(d),
       },
         h("span", { class: "n" }, i),
         // 入る額と出る額を差し引かずに1行ずつ出す。記録がなければ予定を点線で出す。入るほうは水色
