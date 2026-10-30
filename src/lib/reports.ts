@@ -1,7 +1,7 @@
 // 残高、集計、月末のまとめ(緩い締め)。
 
 import type { Account, Env } from "../types";
-import { addMonths, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
+import { addDays, addMonths, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
 import { createEntry } from "./ledger";
 import { recordRecurring } from "./recurring";
 
@@ -14,6 +14,9 @@ export async function yearStartMonth(db: D1Database): Promise<number> {
   const v = Number(await getSetting(db, "year_start_month", "1"));
   return v === 4 ? 4 : 1;
 }
+
+/** 引き落としの残高不足を知らせる、引き落とし日までの日数。銀行の振込が翌営業日になっても間に合うよう1週間前から出す */
+export const SHORTFALL_DAYS = 7;
 
 interface AccountBalance extends Account {
   balance: number;
@@ -51,16 +54,29 @@ export async function balances(db: D1Database, today = todayJST()) {
   const loanDue = loans.reduce((s, a) => s + Math.min(a.payment_amount ?? 0, Math.max(a.balance, 0)), 0);
   const nonLiquid = accounts.filter((a) => a.type === "asset" && !a.liquid);
 
-  // 引き落とし口座の残高が、その口座から落ちる予定の額に足りるか
+  // 引き落とし口座の残高が、近いうちに落ちる額に足りるか。先の請求まで含めると毎日警告が出るので、
+  // 引き落とし日が SHORTFALL_DAYS 日以内に来るもので、まだ記録されていないものだけを見る
+  const dueSoon: { bank: number; date: string; amount: number }[] = [];
+  const until = addDays(today, SHORTFALL_DAYS);
+  const month = monthOf(today);
+  for (const x of accounts) {
+    if ((x.kind !== "card" && x.kind !== "loan") || !x.payment_day || !x.payment_account_id) continue;
+    for (const m of [addMonths(month, -1), month, addMonths(month, 1)]) {
+      const date = nextBankDay(dayInMonth(m, x.payment_day));
+      if (date < today || date > until) continue;
+      if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(`payment:${x.id}:${m}`).first()) continue;
+      const amount = x.kind === "card" ? await cardDue(db, x.id, m) : Math.min(x.payment_amount ?? 0, Math.max(x.balance, 0));
+      if (amount > 0) dueSoon.push({ bank: x.payment_account_id, date, amount });
+    }
+  }
   const shortfalls = accounts
     .filter((a) => a.type === "asset")
     .map((bank) => {
-      const due = accounts
-        .filter((x) => (x.kind === "card" || x.kind === "loan") && x.payment_account_id === bank.id)
-        .reduce((s, x) => s + (x.kind === "card" ? x.balance : Math.min(x.payment_amount ?? 0, x.balance)), 0);
-      return { account_id: bank.id, name: bank.name, balance: bank.balance, due };
+      const mine = dueSoon.filter((d) => d.bank === bank.id);
+      const date = mine.map((d) => d.date).sort()[0] ?? null;
+      return { account_id: bank.id, name: bank.name, balance: bank.balance, due: mine.reduce((s, d) => s + d.amount, 0), date };
     })
-    .filter((x) => x.due > x.balance);
+    .filter((x) => x.due > 0 && x.due > x.balance);
 
   const assets = accounts.filter((a) => a.type === "asset").reduce((s, a) => s + a.balance, 0);
   const liabilities = accounts.filter((a) => a.type === "liability").reduce((s, a) => s + a.balance, 0);

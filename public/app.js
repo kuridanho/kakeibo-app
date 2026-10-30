@@ -211,7 +211,7 @@ async function home() {
     provisional.length && ["#/list?provisional=1", "明細と照合していないカード払い", provisional.length],
     advances.length && ["#/advances", "回収待ちの立て替え", advances.length],
     ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の棚卸し`, 1]),
-    ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が引き落としに足りません`, 1]),
+    ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りません`, 1]),
   ].filter(Boolean);
 
   const avail = Math.max(b.available_cash, 0);
