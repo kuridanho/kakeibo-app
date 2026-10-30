@@ -362,3 +362,14 @@ details.fold > .cell.sub .amount { padding-right: 25px; }
 .card .budget > details.fold > summary.cell, .card .budget details.fold > .cell.sub { padding-right: 0; }
 .cell .minus { color: var(--secondary); }
 .cell.field input { color: var(--label); }
+
+/* 明細の取り込みの行。店名はその場で直せる */
+.import-row { gap: 6px; padding: 8px 0; border-bottom: 0.5px solid var(--separator); }
+.import-row:last-child { border-bottom: none; }
+.import-row .import-date { flex: none; color: var(--secondary); font-variant-numeric: tabular-nums; }
+.import-row input.import-payee { flex: 1; min-width: 0; min-height: 36px; padding: 6px 10px; }
+.import-row > .row > :last-child { flex: none; font-variant-numeric: tabular-nums; }
+.import-row .question { font-size: 13px; font-weight: 600; color: var(--tint); }
+.import-row .footnote { margin: 0; padding: 0 2px; }
+.import-row button.small { min-height: 44px; padding: 4px 14px; font-size: 15px; flex: none; }
+.import-row [hidden] { display: none; }

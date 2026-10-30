@@ -7,10 +7,11 @@
 // どの行とも結びつかなかった仮の取引は leftovers として返す。
 
 import type { Account, Entry, Env, Line } from "../types";
-import { classifyMerchants, merchantKey } from "./classify";
+import { classifyMerchants, learnRule, merchantKey } from "./classify";
 import { diffDays } from "./dates";
 import { looksLikeCharge } from "./keywords";
 import { createEntry, getAccount, getEntry, LedgerError, resolveAccount, updateEntry } from "./ledger";
+import { merchantMemos, rememberName, rememberNote, suggestName } from "./merchant-names";
 import { parseSMBC, type StatementRow } from "./smbc";
 
 export interface Candidate {
@@ -33,6 +34,10 @@ export interface PreviewRow extends StatementRow {
   category_id: number | null;
   category_source: string | null;
   charge_account_id: number | null;
+  /** 前に直した店名。自動では当てず、画面で使うかどうかを尋ねる */
+  suggested_payee: string | null;
+  /** 何の店か分からない。画面で「これは何ですか？」と尋ねる */
+  unclear: boolean;
 }
 
 export interface Preview {
@@ -110,7 +115,7 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
     const key = keys[index];
     const base: PreviewRow = {
       ...r, index, key, status: "new", candidates: [], match_entry_id: null,
-      category_id: null, category_source: null, charge_account_id: null,
+      category_id: null, category_source: null, charge_account_id: null, suggested_payee: null, unclear: false,
     };
     if (existing.has(key)) return { ...base, status: "duplicate" };
     const candidates = provisional
@@ -151,6 +156,11 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
     const c = classified.get(merchantKey(row.merchant));
     row.category_id = c?.account_id ?? null;
     row.category_source = c?.source ?? null;
+    row.unclear = c?.unclear ?? false;
+  }
+  const memos = await merchantMemos(db);
+  for (const row of rows) {
+    if (row.status !== "duplicate") row.suggested_payee = suggestName(row.merchant, memos);
   }
 
   const leftovers = provisional.filter((p) => !taken.has(p.entry_id) &&
@@ -170,6 +180,10 @@ export interface CommitChoice {
   /** 結びつける仮の取引。"new" なら新しい取引、"skip" なら取り込まない */
   link?: number | "new" | "skip";
   category_id?: number;
+  /** 取り込む店名。直したときだけ送る。明細の利用先名からの置き換えとして覚える */
+  payee?: string;
+  /** 「これは何ですか？」への答え */
+  note?: string;
 }
 
 interface CommitPlan {
@@ -264,6 +278,14 @@ async function rollbackStatement(db: D1Database, importId: number, created: numb
 export async function commitStatement(env: Env, cardId: number, billingMonth: string, text: string,
   choices: Record<string, CommitChoice>, meta: { file_name?: string; r2_key?: string; user_id?: string | null }) {
   const db = env.DB;
+  const userId = meta.user_id ?? null;
+  // 何の店かの答えを先に覚え、答えた行のカテゴリを答えから決め直す
+  const parsedRows = parseSMBC(text).rows;
+  for (const [index, choice] of Object.entries(choices)) {
+    const merchant = parsedRows[Number(index)]?.merchant;
+    const note = choice.note?.trim();
+    if (merchant && note) await rememberNote(db, merchant, note.slice(0, 100), userId);
+  }
   const preview = await previewStatement(env, cardId, billingMonth, text);
   const unresolved = preview.rows.filter((r) => r.status === "choose" && !choices[r.index]?.link);
   if (unresolved.length > 0) {
@@ -298,9 +320,13 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
       const memo = [row.subCardName, row.installmentCount && row.installmentCount > 1
         ? `分割 ${row.installmentNumber}/${row.installmentCount}回 (利用額 ${row.usageAmount.toLocaleString("ja-JP")}円)` : "", row.note]
         .filter(Boolean).join(" ");
+      // 明細の利用先名で、入力した店名や直した店名を上書きしない
+      const edited = choice.payee?.trim().slice(0, 100) || null;
+      const withStatementName = (payee: string) =>
+        payee !== row.merchant ? `明細の利用先: ${row.merchant}` : "";
       const common = {
         date: row.usageDate,
-        payee: row.merchant,
+        payee: edited ?? row.merchant,
         source: "statement",
         provisional: 0,
         billing_month: billingMonth,
@@ -317,25 +343,27 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
         const lines = others.length === 1
           ? [{ account_id: others[0].account_id, amount: scale }, { account_id: cardId, amount: -scale }]
           : undefined;
-        // 手入力やレシートで日本語の店名が入っていればそちらを残し、明細の利用先はメモに回す
-        const keepPayee = !!old.payee && /[\u3040-\u30ff\u4e00-\u9fff]/.test(old.payee) && old.payee !== row.merchant;
+        // 入力したときの店名を残し、明細の利用先はメモに回す
+        const payee = edited ?? (old.payee || row.merchant);
+        const statementName = old.memo.includes(`明細の利用先: ${row.merchant}`) ? "" : withStatementName(payee);
         await updateEntry(db, link, {
           ...common,
-          payee: keepPayee ? old.payee : row.merchant,
-          memo: [old.memo, keepPayee ? `明細の利用先: ${row.merchant}` : old.payee && old.payee !== row.merchant ? `入力時の利用先: ${old.payee}` : "", memo].filter(Boolean).join(" / "),
+          payee,
+          memo: [old.memo, statementName, memo].filter(Boolean).join(" / "),
         }, lines, "明細と照合");
         result.linked++;
         continue;
       }
       // 新しい取引
+      const newMemo = [withStatementName(common.payee), memo].filter(Boolean).join(" ");
       if (row.charge_account_id && !choice.category_id) {
-        created.push(await createEntry(db, { ...common, kind: "transfer", memo, category_source: null, user_id: meta.user_id ?? null }, [
+        created.push(await createEntry(db, { ...common, kind: "transfer", memo: newMemo, category_source: null, user_id: meta.user_id ?? null }, [
           { account_id: row.charge_account_id, amount: row.paymentAmount },
           { account_id: cardId, amount: -row.paymentAmount },
         ]));
       } else {
         created.push(await createEntry(db, {
-          ...common, kind: "expense", memo,
+          ...common, kind: "expense", memo: newMemo,
           category_source: choice.category_id ? "user" : row.category_source,
           user_id: meta.user_id ?? null,
         }, [
@@ -348,6 +376,17 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
   } catch (e) {
     await rollbackStatement(db, importId, created, snapshots, changeMark);
     throw e;
+  }
+  // 取り込めたら、直した店名と、何の店か尋ねた行で選んだカテゴリを覚える
+  for (const plan of plans) {
+    if (plan.link === "skip") continue;
+    const edited = plan.choice.payee?.trim().slice(0, 100);
+    if (edited && merchantKey(edited) !== merchantKey(plan.row.merchant)) {
+      await rememberName(db, plan.row.merchant, edited, userId);
+    }
+    if (plan.link === "new" && (plan.row.unclear || plan.choice.note?.trim()) && plan.choice.category_id && plan.category_id) {
+      await learnRule(db, plan.row.merchant, plan.category_id);
+    }
   }
   return { import_id: importId, ...result, declared_total: preview.declared_total, payment_total: preview.payment_total };
 }
