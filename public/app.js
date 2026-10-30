@@ -1608,141 +1608,244 @@ async function recurringForm(id) {
 
 // ---- 明細の取り込み ----
 
+// 照合の途中で別の画面へ移っても選んだものを失わないよう、取り込みが終わるまで覚えておく
+let importState = null;
+
 async function importView() {
   const list = await accounts(true);
   const cards = byType(list, "liability").filter((a) => a.kind === "card" && a.statement_import);
   const expense = byType(list, "expense");
   const out = h("div", { class: "stack" });
   const status = statusLine();
+  const saved = importState;
   const form = h("form", {},
     group(
-      field("カード", h("select", { name: "account_id", "data-num": "", required: true }, options(cards, cards[0]?.id))),
-      field("明細CSV", h("input", { name: "file", type: "file", accept: ".csv,text/csv", required: true })),
-      field("請求月", h("input", { name: "billing_month", type: "month", required: true }))),
+      field("カード", h("select", { name: "account_id", "data-num": "", required: true }, options(cards, saved?.accountId ?? cards[0]?.id))),
+      field("明細CSV", h("input", { name: "file", type: "file", accept: ".csv,text/csv", required: !saved })),
+      field("請求月", h("input", { name: "billing_month", type: "month", required: true, value: saved?.billingMonth }))),
     h("button", { type: "submit" }, "照合する"),
     status.el);
   form.elements.file.addEventListener("change", () => {
     const m = /(\d{4})(\d{2})\.csv$/i.exec(form.elements.file.files[0]?.name ?? "");
     if (m) form.elements.billing_month.value = `${m[1]}-${m[2]}`;
   });
-  let text = "";
-  let fileName = "";
-  form.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const file = form.elements.file.files[0];
-    fileName = file.name;
-    const buf = await file.arrayBuffer();
-    // Vpass のCSVはShift_JIS。UTF-8で保存し直したものも読めるようにする
-    text = new TextDecoder("shift_jis").decode(buf);
-    if (text.includes("�")) text = new TextDecoder("utf-8").decode(buf);
-    const submit = form.querySelector('button[type="submit"]');
-    submit.disabled = true;
+
+  async function preview(state) {
     status.show("明細を読み取り、カテゴリを判定しています…");
     try {
       const p = await api("POST", "/api/statements/preview", {
-        account_id: Number(form.elements.account_id.value), billing_month: form.elements.billing_month.value, text,
+        account_id: state.accountId, billing_month: state.billingMonth, text: state.text,
       });
-      showPreview(p, Number(form.elements.account_id.value));
-      status.clear();
-    } catch (e) {
-      status.clear();
-      toast(e.message);
+      importState = state;
+      showPreview(p, state);
     } finally {
-      submit.disabled = false;
+      status.clear();
     }
+  }
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const file = form.elements.file.files[0];
+    const accountId = Number(form.elements.account_id.value);
+    const billingMonth = form.elements.billing_month.value;
+    let state;
+    if (file) {
+      const buf = await file.arrayBuffer();
+      // Vpass のCSVはShift_JIS。UTF-8で保存し直したものも読めるようにする
+      let text = new TextDecoder("shift_jis").decode(buf);
+      if (text.includes("�")) text = new TextDecoder("utf-8").decode(buf);
+      state = { accountId, billingMonth, text, fileName: file.name, choices: {}, picked: {} };
+    } else if (importState) {
+      const same = importState.accountId === accountId && importState.billingMonth === billingMonth;
+      state = { ...importState, accountId, billingMonth, choices: same ? importState.choices : {}, picked: same ? importState.picked : {} };
+    } else return;
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try { await preview(state); } catch (e) { toast(e.message); } finally { submit.disabled = false; }
   });
 
-  function showPreview(p, accountId) {
-    const choices = {};
+  function showPreview(p, state) {
+    const { choices, picked } = state;
     const label = { matched: "自動で結びつく行", choose: "選ぶ必要がある行", new: "新しい取引になる行", duplicate: "取り込み済みの行" };
+    const open = p.rows.filter((r) => r.status !== "duplicate");
+    const entryLabel = (c) => `${c.date.slice(5)} ${c.payee || "（内容なし）"} ${num(c.amount)}${c.paid_with ? `（${c.paid_with}）` : ""}`;
+    const rowLabel = (r) => `${r.usageDate.slice(5)} ${r.merchant} ${num(r.paymentAmount)}`;
+    const defaultLink = (r) => (r.status === "matched" ? r.match_entry_id : r.status === "new" ? "new" : "");
+    const linkOf = (r) => choices[r.index]?.link ?? defaultLink(r);
+    const findEntry = (id) => [...p.provisional, ...Object.values(picked)].find((c) => c.entry_id === id);
+    const rows = new Map();
+    const leftoverBox = h("div");
+
+    function setLink(r, link, entry) {
+      if (typeof link === "number" && entry) picked[link] = entry;
+      // 同じ取引をほかの行に選んでいたら、その行は元に戻す
+      if (typeof link === "number") {
+        for (const other of open) {
+          if (other !== r && linkOf(other) === link) choices[other.index] = { ...choices[other.index], link: other.status === "choose" ? undefined : "new" };
+        }
+      }
+      choices[r.index] = { ...choices[r.index], link };
+      refresh();
+    }
+
+    // すべての取引から、利用日に近い順に探す。支払方法の違う取引も選べる
+    function openSearch(r, select) {
+      const holder = select.parentElement.querySelector(".search-panel");
+      if (holder) { holder.remove(); return; }
+      const results = h("div");
+      const input = h("input", { type: "search", placeholder: "内容で絞り込む", "aria-label": "取引を探す" });
+      const panel = h("div", { class: "search-panel stack" }, input, results,
+        h("button", { type: "button", class: "plain", onclick: () => panel.remove() }, "閉じる"));
+      let timer;
+      const load = async () => {
+        try {
+          const found = await api("GET", `/api/statements/linkable?date=${r.usageDate}&q=${encodeURIComponent(input.value)}`);
+          fill(results, found.length === 0 ? h("p", { class: "sub" }, "見つかりません") : found.map((c) => h("button", {
+            type: "button", class: "pick", onclick: () => { panel.remove(); setLink(r, c.entry_id, c); },
+          }, h("span", {}, `${c.date.slice(5)} ${c.payee || "（内容なし）"}${c.paid_with ? `（${c.paid_with}）` : ""}`), h("span", {}, num(c.amount)))));
+        } catch (e) { toast(e.message); }
+      };
+      input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(load, 250); });
+      select.after(panel);
+      load();
+    }
+
+    // 店名はその場で直せる。直した店名だけを送り、明細の利用先名からの置き換えとして覚える
+    function importRow(r) {
+      const choice = () => (choices[r.index] ??= {});
+      const candidateIds = new Set(r.candidates.map((c) => c.entry_id));
+      // 直していなければ、結びつけた取引の店名を出す
+      const shown = () => {
+        const link = linkOf(r);
+        return choice().payee ?? (typeof link === "number" ? findEntry(link)?.payee || r.merchant : r.merchant);
+      };
+      const payee = h("input", { class: "import-payee", value: shown(), "aria-label": `${r.merchant}の店名`, onchange: () => {
+        const v = payee.value.trim();
+        delete choice().payee;
+        if (v && v !== shown()) choice().payee = v;
+        payee.value = shown();
+        update();
+      } });
+      const statementName = h("span", { class: "footnote" }, `明細 ${r.merchant}`);
+      // 前に直した店名は勝手に当てず、行ごとに尋ねる
+      const suggest = r.suggested_payee ? h("div", { class: "row import-ask" },
+        h("span", { class: "question" }, `${r.suggested_payee} にしますか？`),
+        h("button", { type: "button", class: "plain small", onclick: () => {
+          payee.value = r.suggested_payee;
+          payee.dispatchEvent(new Event("change"));
+        } }, "する")) : null;
+
+      const select = h("select", { "aria-label": "結びつける取引", onchange: () => {
+        const v = select.value;
+        if (v === "search") {
+          select.value = String(linkOf(r));
+          openSearch(r, select);
+          return;
+        }
+        setLink(r, v === "new" || v === "skip" ? v : v === "" ? undefined : Number(v));
+      } });
+      const buildSelect = () => {
+        const used = new Set(open.filter((o) => o !== r).map(linkOf).filter((v) => typeof v === "number"));
+        const others = p.provisional.filter((c) => !candidateIds.has(c.entry_id));
+        const extra = Object.values(picked).filter((c) => !candidateIds.has(c.entry_id) && !others.some((o) => o.entry_id === c.entry_id));
+        const opt = (c) => h("option", { value: c.entry_id }, `${used.has(c.entry_id) ? "（ほかの行に選択中）" : ""}${entryLabel(c)}`);
+        fill(select,
+          r.status === "choose" ? h("option", { value: "" }, "どれか選んでください") : null,
+          r.candidates.map(opt),
+          h("option", { value: "new" }, "新しい取引にする"),
+          h("option", { value: "skip" }, "取り込まない"),
+          others.length ? h("optgroup", { label: "このカードの仮の取引" }, others.map(opt)) : null,
+          extra.length ? h("optgroup", { label: "選んだ取引" }, extra.map(opt)) : null,
+          h("option", { value: "search" }, "ほかの取引から探す…"));
+        select.value = String(linkOf(r) ?? "");
+      };
+
+      const ask = r.unclear && !r.charge_account_id;
+      const question = ask ? h("span", { class: "question" }, `${r.merchant} これは何ですか？`) : null;
+      const note = ask ? h("input", { placeholder: "何の店か", "aria-label": `${r.merchant}は何の店か`, value: choices[r.index]?.note, onchange: (ev) => {
+        const v = ev.target.value.trim();
+        if (v) choice().note = v;
+        else delete choice().note;
+      } }) : null;
+      const category = r.charge_account_id ? null : h("select", { "aria-label": "カテゴリ", onchange: (ev) => {
+        if (ev.target.value) choice().category_id = Number(ev.target.value);
+        else delete choice().category_id;
+      } }, options(expense, choices[r.index]?.category_id ?? (ask ? null : r.category_id), ask ? "答えから決める" : null));
+      const charge = r.charge_account_id ? h("span", { class: "sub" }, `${list.find((a) => a.id === r.charge_account_id)?.name}へのチャージ(振替)`) : null;
+
+      function update() {
+        buildSelect();
+        if (choice().payee === undefined) payee.value = shown();
+        statementName.hidden = payee.value === r.merchant;
+        if (suggest) suggest.hidden = payee.value === r.suggested_payee;
+        // カテゴリと、何の店かの問いは、新しい取引にするときだけ出す
+        const isNew = linkOf(r) === "new";
+        for (const el of [question, note, category, charge]) if (el) el.hidden = !isNew;
+        // カテゴリの決まっていない行で新しい取引を選んだら、見えている選択肢をそのまま使う
+        if (isNew && category && !ask && !r.category_id && !choice().category_id) choice().category_id = Number(category.value);
+      }
+      rows.set(r.index, update);
+      return h("div", { class: "stack import-row" },
+        h("div", { class: "row" },
+          h("span", { class: "import-date" }, r.usageDate.slice(5)),
+          payee,
+          h("span", {}, num(r.paymentAmount))),
+        statementName, suggest, select, question, note, category, charge);
+    }
+
+    function refresh() {
+      for (const update of rows.values()) update();
+      const chosen = new Set(open.map(linkOf).filter((v) => typeof v === "number"));
+      const left = p.provisional.filter((c) => !chosen.has(c.entry_id));
+      fill(leftoverBox, left.length ? h("div", { class: "card" }, h("h2", {}, `結びつかなかった仮の取引 ${left.length}件`),
+        h("p", { class: "sub", style: "margin:0" }, "明細の行を選ぶと結びつきます。次の請求月に回ったものは、そのままにしてください。"),
+        left.map((c) => {
+          const select = h("select", { "aria-label": `${c.payee} を結びつける明細の行`, onchange: () => {
+            const r = open.find((o) => o.index === Number(select.value));
+            if (r) setLink(r, c.entry_id, c);
+          } }, h("option", { value: "" }, "明細の行を選ぶ"), open.map((r) => h("option", { value: r.index }, rowLabel(r))));
+          return h("div", { class: "stack import-row" },
+            h("div", { class: "row" }, h("span", {}, `${c.date.slice(5)} ${c.payee}`), h("span", {}, num(c.amount))), select);
+        })) : null);
+    }
+
     const rowsBy = Map.groupBy(p.rows, (r) => r.status);
     const diff = p.declared_total === null ? null : p.declared_total - p.payment_total;
     const sections = ["choose", "new", "matched", "duplicate"].filter((s) => rowsBy.has(s)).map((status) => h("div", { class: "card" },
       h("h2", {}, `${label[status]} ${rowsBy.get(status).length}件`),
       rowsBy.get(status).map((r) => status === "duplicate"
         ? h("div", { class: "row import-row" }, h("span", {}, `${r.usageDate.slice(5)} ${r.merchant}`), h("span", {}, num(r.paymentAmount)))
-        : importRow(r, status))));
-
-    // 店名はその場で直せる。直した店名だけを送り、明細の利用先名からの置き換えとして覚える
-    function importRow(r, status) {
-      const choice = () => (choices[r.index] ??= {});
-      let initial = status === "matched" ? (r.candidates[0]?.payee || r.merchant) : r.merchant;
-      const payee = h("input", { class: "import-payee", value: initial, "aria-label": `${r.merchant}の店名`, onchange: () => {
-        const v = payee.value.trim();
-        if (v && v !== initial) choice().payee = v;
-        else { delete choice().payee; payee.value = initial; }
-        if (suggest) suggest.hidden = payee.value === r.suggested_payee;
-        statementName.hidden = payee.value === r.merchant;
-      } });
-      const statementName = h("span", { class: "footnote", hidden: initial === r.merchant }, `明細 ${r.merchant}`);
-      // 前に直した店名は勝手に当てず、行ごとに尋ねる
-      const suggest = r.suggested_payee ? h("div", { class: "row import-ask", hidden: initial === r.suggested_payee },
-        h("span", { class: "question" }, `${r.suggested_payee} にしますか？`),
-        h("button", { type: "button", class: "plain small", onclick: () => {
-          payee.value = r.suggested_payee;
-          payee.dispatchEvent(new Event("change"));
-        } }, "する")) : null;
-      const ask = status !== "matched" && r.unclear && !r.charge_account_id;
-      return h("div", { class: "stack import-row" },
-        h("div", { class: "row" },
-          h("span", { class: "import-date" }, r.usageDate.slice(5)),
-          payee,
-          h("span", {}, num(r.paymentAmount))),
-        statementName,
-        suggest,
-        status === "choose" ? h("select", { "aria-label": "結びつける取引", onchange: (ev) => {
-          const v = ev.target.value;
-          choice().link = v === "new" || v === "skip" ? v : Number(v);
-          // 直していなければ、結びつけた取引の店名を出す
-          if (choice().payee === undefined) {
-            initial = r.candidates.find((c) => c.entry_id === choice().link)?.payee || r.merchant;
-            payee.value = initial;
-            statementName.hidden = initial === r.merchant;
-            if (suggest) suggest.hidden = initial === r.suggested_payee;
-          }
-        } },
-          h("option", { value: "" }, "どれか選んでください"),
-          r.candidates.map((c) => h("option", { value: c.entry_id }, `${c.date.slice(5)} ${c.payee || "（内容なし）"} ${num(c.amount)}`)),
-          h("option", { value: "new" }, "新しい取引にする"),
-          h("option", { value: "skip" }, "取り込まない")) : null,
-        ask ? h("span", { class: "question" }, `${r.merchant} これは何ですか？`) : null,
-        ask ? h("input", { placeholder: "何の店か", "aria-label": `${r.merchant}は何の店か`, onchange: (ev) => {
-          const v = ev.target.value.trim();
-          if (v) choice().note = v;
-          else delete choice().note;
-        } }) : null,
-        status !== "matched" && !r.charge_account_id ? h("select", { "aria-label": "カテゴリ", onchange: (ev) => {
-          if (ev.target.value) choice().category_id = Number(ev.target.value);
-          else delete choice().category_id;
-        } }, options(expense, ask ? null : r.category_id, ask ? "答えから決める" : null)) : null,
-        r.charge_account_id ? h("span", { class: "sub" }, `${list.find((a) => a.id === r.charge_account_id)?.name}へのチャージ(振替)`) : null);
-    }
+        : importRow(r))));
     fill(out,
       h("div", { class: "card" },
         h("div", { class: "row" }, h("span", {}, "明細の合計"), h("span", {}, p.declared_total === null ? "なし" : num(p.declared_total))),
         h("div", { class: "row" }, h("span", {}, "読み取った行の合計"), h("span", {}, num(p.payment_total))),
         diff ? h("b", { class: "neg" }, `合計が ${yen(diff)} 合いません`) : null),
       ...sections,
-      p.leftovers.length ? h("div", { class: "card" }, h("h2", {}, `結びつかなかった仮の取引 ${p.leftovers.length}件`),
-        h("p", { class: "sub", style: "margin:0" }, "次の請求月に回ったものか、支払方法の選び間違いかを確かめてください。"),
-        p.leftovers.map((c) => h("a", { class: "row", href: `#/entry/${c.entry_id}` }, h("span", {}, `${c.date.slice(5)} ${c.payee}`), h("span", {}, num(c.amount))))) : null,
-      h("div", { class: "buttons" }, h("button", { onclick: async (ev) => {
-        const button = ev.currentTarget;
-        button.disabled = true;
-        status.show("取り込んでいます…");
-        try {
-          const r = await api("POST", "/api/statements/commit", {
-            account_id: accountId, billing_month: p.billing_month, text, file_name: fileName, choices,
-          });
-          toast(`取り込みました。結びつけ ${r.linked}件、新規 ${r.created}件`);
-          location.hash = `#/list?month=${p.billing_month}`;
-        } catch (e) { toast(e.message); }
-        finally {
-          button.disabled = false;
-          status.clear();
-        }
-      } }, "取り込む")));
+      leftoverBox,
+      h("div", { class: "buttons" },
+        h("button", { type: "button", class: "plain", onclick: () => { importState = null; route(); } }, "やめる"),
+        h("button", { type: "button", onclick: async (ev) => {
+          const button = ev.currentTarget;
+          button.disabled = true;
+          status.show("取り込んでいます…");
+          try {
+            const r = await api("POST", "/api/statements/commit", {
+              account_id: state.accountId, billing_month: p.billing_month, text: state.text, file_name: state.fileName, choices,
+            });
+            importState = null;
+            toast(`取り込みました。結びつけ ${r.linked}件、新規 ${r.created}件`);
+            location.hash = `#/list?month=${p.billing_month}`;
+          } catch (e) { toast(e.message); }
+          finally {
+            button.disabled = false;
+            status.clear();
+          }
+        } }, "取り込む")));
+    refresh();
   }
+
+  if (saved) preview(saved).catch((e) => toast(e.message));
   return [h("h1", {}, "カード明細の取り込み"), cards.length ? form : h("p", { class: "sub" }, "明細を取り込むカードを資産の画面で登録してください。"), out];
 }
 

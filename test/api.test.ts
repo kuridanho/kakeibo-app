@@ -348,8 +348,8 @@ describe("入力の検証", () => {
 });
 
 describe("明細の取り込みに失敗したとき", () => {
-  it("結びつけ先が仮の取引でなければ、明細も仕訳も残さない", async () => {
-    const confirmed = (await api<any[]>("GET", `/api/entries?account_id=${card}`)).find((e) => !e.provisional);
+  it("結びつけ先がもう明細と結びついていれば、明細も仕訳も残さない", async () => {
+    const confirmed = (await api<any[]>("GET", `/api/entries?account_id=${card}`)).find((e) => e.statement_key);
     expect(confirmed).toBeTruthy();
     const text = "様,1,三井住友カード\n2027/04/01,テスト商店,500,１,１,500,\n";
     const importsBefore = await api<any[]>("GET", "/api/statements");
@@ -357,7 +357,7 @@ describe("明細の取り込みに失敗したとき", () => {
 
     await expect(api("POST", "/api/statements/commit", {
       account_id: card, billing_month: "2027-06", text, choices: { 0: { link: confirmed.id } },
-    })).rejects.toThrow("仮の取引");
+    })).rejects.toThrow("もう明細の行と結びついています");
 
     // 失敗した取り込みは、明細の記録も仕訳も残さない
     expect(await api<any[]>("GET", "/api/statements")).toHaveLength(importsBefore.length);
@@ -397,5 +397,54 @@ describe("品目ごとに分けた立て替え", () => {
     expect(jul.categories.find((c: any) => c.id === dining).amount).toBe(500);
     expect((await api<any[]>("GET", "/api/advances?all=1")).find((a) => a.id === id).remaining).toBe(1500);
     await expect(api("POST", `/api/entries/${id}/recoveries`, { amount: 2000, account_id: bank })).rejects.toThrow("超えています");
+  });
+});
+
+describe("明細の行を既存の取引から選ぶ", () => {
+  it("ほかの支払方法で入れた支出にも結びつけられ、支払方法をカードに替える", async () => {
+    const dining = await category("外食");
+    const cash = await api("POST", "/api/entries", {
+      kind: "expense", date: "2029-03-05", amount: 1500, from_account_id: wallet, category_id: dining, payee: "定食屋",
+    });
+    const text = "様,1,三井住友カード\n2029/03/05,ＴＥＩＳＨＯＫＵ,1500,１,１,1500,\n";
+    const p = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2029-05", text });
+    // 現金の取引は自動では候補にしない。利用者が選ぶまで新しい取引のまま
+    expect(p.rows[0].status).toBe("new");
+
+    const linkable = await api<any[]>("GET", "/api/statements/linkable?date=2029-03-05");
+    expect(linkable[0]).toMatchObject({ entry_id: cash.id, amount: 1500, paid_with: "財布" });
+
+    const r = await api("POST", "/api/statements/commit", {
+      account_id: card, billing_month: "2029-05", text, choices: { 0: { link: cash.id } },
+    });
+    expect(r).toMatchObject({ linked: 1, created: 0 });
+    const e = await api("GET", `/api/entries/${cash.id}`);
+    expect(e.lines.map((l: any) => [l.account_id, l.amount]).sort()).toEqual([[card, -1500], [dining, 1500]].sort());
+    expect(e.memo).toContain("入力時の支払方法: 財布");
+    // 結びつけた取引はもう選べない
+    expect((await api<any[]>("GET", "/api/statements/linkable?date=2029-03-05")).some((x) => x.entry_id === cash.id)).toBe(false);
+  });
+
+  it("選んだ結びつきを覚え、次の明細では金額が違っても結びつける", async () => {
+    const subs = await category("サブスク");
+    const first = await api("POST", "/api/entries", {
+      kind: "expense", date: "2029-04-19", amount: 3773, from_account_id: card, category_id: subs, payee: "Claude Pro",
+    });
+    const text1 = "様,1,三井住友カード\n2029/04/19,ANTHROPIC* CLAUDE SU,3612,１,１,3612,\n";
+    const p1 = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2029-06", text: text1 });
+    expect(p1.rows[0].status).toBe("new");
+    expect(p1.leftovers.map((c: any) => c.entry_id)).toContain(first.id);
+    expect(p1.provisional.map((c: any) => c.entry_id)).toContain(first.id);
+    await api("POST", "/api/statements/commit", {
+      account_id: card, billing_month: "2029-06", text: text1, choices: { 0: { link: first.id } },
+    });
+    expect((await api("GET", `/api/entries/${first.id}`)).lines.find((l: any) => l.account_id === subs).amount).toBe(3612);
+
+    const second = await api("POST", "/api/entries", {
+      kind: "expense", date: "2029-05-19", amount: 3773, from_account_id: card, category_id: subs, payee: "Claude Pro",
+    });
+    const text2 = "様,1,三井住友カード\n2029/05/19,ANTHROPIC* CLAUDE SU,3650,１,１,3650,\n";
+    const p2 = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2029-07", text: text2 });
+    expect(p2.rows[0]).toMatchObject({ status: "matched", match_entry_id: second.id });
   });
 });
