@@ -85,13 +85,13 @@ describe("来月の予算", () => {
     expect(b.income[0]).toMatchObject({ date: "2026-11-25", label: "給与", amount: 250000 });
     expect(b.expenses.reduce((s, x) => s + x.amount, 0)).toBe(145000);
     expect(b.expenses.map((x) => x.label)).toEqual(expect.arrayContaining(["家賃", "予算カード 引き落とし", "予算奨学金 返済", "病院"]));
-    // カードで払う携帯は、来月の手元からは出ないが、来月末の未払いとして使える額から引く
+    // カードで払う携帯は、来月の手元からは出ないので使える額から引かない
     expect(b.card_fixed).toHaveLength(1);
     expect(b.card_fixed[0]).toMatchObject({ label: "携帯", amount: 8000, cash_delta: 0 });
     expect(b.projected_liquid).toBe(390000);
     expect(b.card_unpaid).toBe(8000);
     expect(b.buffer).toBe(30000);
-    expect(b.budget).toBe(352000);
+    expect(b.budget).toBe(360000);
   });
 
   it("すでに記録した回は、繰り返しから二重に足さない", async () => {
@@ -100,10 +100,10 @@ describe("来月の予算", () => {
 
     expect(b.income.filter((x) => x.label === "給与")).toHaveLength(1);
     expect(b.expenses.filter((x) => x.label === "家賃")).toHaveLength(1);
-    expect(b.budget).toBe(352000);
+    expect(b.budget).toBe(360000);
   });
 
-  it("来月にカードで使った分は、引き落としが再来月でも使える額から引く", async () => {
+  it("来月にカードで使った分は、引き落としが再来月なら使える額から引かない", async () => {
     const before = await nextMonthBudget(db, today);
     await api("POST", "/api/entries", {
       kind: "expense", date: "2026-11-20", amount: 12000, from_account_id: card,
@@ -113,6 +113,6 @@ describe("来月の予算", () => {
     // 11/20 の利用は1月に落ちるので、来月末の手元は変わらない
     expect(b.projected_liquid).toBe(before.projected_liquid);
     expect(b.card_unpaid).toBe(before.card_unpaid + 12000);
-    expect(b.budget).toBe(before.budget - 12000);
+    expect(b.budget).toBe(before.budget);
   });
 });

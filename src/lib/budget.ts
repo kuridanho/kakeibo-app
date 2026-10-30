@@ -1,5 +1,5 @@
-// 来月の予算。来月末の手元資金の見込みから、そのときまだ払っていないカードの利用と、残しておく額を引いて出す。
-// 来月にカードで使う分(カードで払う固定費など)は手元からは再来月に出るが、使える額からは来月のうちに引く。
+// 来月の予算。来月末の手元資金の見込みから、貯金に回す額を引いて出す。
+// 引くのは来月のうちに手元から出る分だけで、再来月以降に引き落とされるカードの利用は引かない。
 
 import type { Account, Env } from "../types";
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
@@ -212,6 +212,6 @@ export async function nextMonthBudget(db: D1Database, today = todayJST()): Promi
     projected_liquid: projected,
     card_unpaid: cardUnpaid,
     buffer,
-    budget: projected - cardUnpaid - buffer,
+    budget: projected - buffer,
   };
 }

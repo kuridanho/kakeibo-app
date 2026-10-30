@@ -345,13 +345,6 @@ async function budgetView() {
     ? h("div", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total))
     : h("details", { class: "fold" }, h("summary", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total)), rows);
 
-  // カードの未払いのうち、来月の固定費だけ名前で出し、残りはまとめる
-  const fixed = sum(b.card_fixed);
-  const cardRows = b.card_fixed.length === 0 ? [] : [
-    ...b.card_fixed.map((x) => item(x.label, x.date, minus(x.amount))),
-    b.card_unpaid > fixed ? item("そのほかのカード利用", null, minus(b.card_unpaid - fixed)) : null,
-  ].filter(Boolean);
-
   // 貯金に回す額は、その場で書き換えると保存して使える額を出し直す
   const buffer = moneyInput({ "aria-label": "貯金に回す額", value: b.buffer, placeholder: "0" });
   // 幅を数字の長さに合わせ、− の符号のすぐ右に数字が来るようにする
@@ -365,7 +358,7 @@ async function budgetView() {
     const v = Math.max(0, parseNum(buffer.value) || 0);
     try {
       await api("PUT", "/api/settings", { budget_buffer: String(v) });
-      const budget = b.projected_liquid - b.card_unpaid - v;
+      const budget = b.projected_liquid - v;
       hero.textContent = yen(budget);
       hero.classList.toggle("neg", budget < 0);
     } catch (e) { toast(e.message); }
@@ -378,7 +371,6 @@ async function budgetView() {
       h("div", { class: "cell" }, h("span", { class: "grow" }, "月初めの残高"), h("span", { class: "amount" }, num(b.opening_liquid))),
       part("収入予定", plus(sum(b.income)), b.income.map((x) => item(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
       part("支払予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount)))),
-      part("翌月以降のカード払い", minus(b.card_unpaid), cardRows),
       h("label", { class: "cell field" }, h("span", { class: "grow" }, "貯金に回す額"), h("span", { class: "minus" }, "−"), buffer))),
   ];
 }
