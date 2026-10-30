@@ -100,7 +100,7 @@ export function paymentMemo(p: Installment, n: number) {
   return [p.memo, `分割 ${n}/${p.count}回`].filter(Boolean).join(" ");
 }
 
-function paymentFields(p: Installment, card: Card, pay: Payment): EntryFields {
+export function paymentFields(p: Installment, card: Card, pay: Payment): EntryFields {
   return {
     date: pay.date, report_date: pay.date, kind: "expense", payee: p.payee, memo: paymentMemo(p, pay.number),
     source: "installment", provisional: card.statement_import ? 1 : 0, billing_month: pay.month,

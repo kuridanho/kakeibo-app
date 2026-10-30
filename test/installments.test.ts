@@ -171,6 +171,28 @@ describe("分割払い", () => {
     expect(await cardDue(db, card, "2030-07")).toBe(10000);
   });
 
+  it("手入力した全額の取引が、あとから分割の2回目の行と結びつき、もとの取引が1回目になる", async () => {
+    const card = await newCard("分割カードH");
+    const { id } = await api("POST", "/api/entries", {
+      kind: "expense", amount: 4383, date: "2030-08-06", from_account_id: card, category_id: shopping, payee: "スーパー",
+    });
+    // あとから分割の行は、利用金額の列にもその回の支払額が入る
+    const text = wideRow("2030/8/6", "ヨークベニマル 食品", "2/3", "30/10", 1461, 1461);
+    const pre = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2030-10", text });
+    expect(pre.rows[0]).toMatchObject({ status: "matched", match_entry_id: id });
+    await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2030-10", text });
+    const [plan] = (await api<any[]>("GET", "/api/installments")).filter((x) => x.card_id === card);
+    expect(plan).toMatchObject({ count: 3, principal: 4383, start_number: 1, first_month: "2030-09", origin: "later", recorded: 2 });
+    const e = await api("GET", `/api/entries/${id}`);
+    expect(e).toMatchObject({ billing_month: "2030-09", installment: { number: 1 } });
+    expect(await cardDue(db, card, "2030-09")).toBe(1461);
+    expect(await cardDue(db, card, "2030-10")).toBe(1461);
+    expect(await cardDue(db, card, "2030-11")).toBe(1461);
+    // 同じ明細を取り込み直しても二重にしない
+    const again = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2030-10", text });
+    expect(again.rows[0].status).toBe("duplicate");
+  });
+
   it("登録していない分割の行は分割払いとして登録し、前に取り込んだ同じ分割の回もまとめる", async () => {
     const card = await newCard("分割カードF");
     const oct = wideRow("2030/3/10", "アップルジャパン", "7/24", "30/10", 7241, 7241);
