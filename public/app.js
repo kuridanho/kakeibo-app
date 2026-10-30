@@ -349,11 +349,11 @@ async function budgetView() {
   const fixed = sum(b.card_fixed);
   const cardRows = b.card_fixed.length === 0 ? [] : [
     ...b.card_fixed.map((x) => item(x.label, x.date, minus(x.amount))),
-    b.card_unpaid > fixed ? item("そのほかの利用", null, minus(b.card_unpaid - fixed)) : null,
+    b.card_unpaid > fixed ? item("そのほかのカード利用", null, minus(b.card_unpaid - fixed)) : null,
   ].filter(Boolean);
 
-  // 残しておく額は、その場で書き換えると保存して使える額を出し直す
-  const buffer = moneyInput({ "aria-label": "残しておく額", value: b.buffer, placeholder: "0" });
+  // 貯金に回す額は、その場で書き換えると保存して使える額を出し直す
+  const buffer = moneyInput({ "aria-label": "貯金に回す額", value: b.buffer, placeholder: "0" });
   // 幅を数字の長さに合わせ、− の符号のすぐ右に数字が来るようにする
   const fit = () => {
     const digits = Math.max(1, buffer.value.replace(/[^0-9]/g, "").length);
@@ -375,11 +375,11 @@ async function budgetView() {
     h("h1", {}, `${Number(b.month.slice(5))}月に使える額`),
     h("div", { class: "card" }, hero,
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
-      h("div", { class: "cell" }, h("span", { class: "grow" }, "月初めの手元"), h("span", { class: "amount" }, num(b.opening_liquid))),
-      part("入る予定", plus(sum(b.income)), b.income.map((x) => item(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
-      part("出る予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount)))),
-      part("月末に残るカードの未払い", minus(b.card_unpaid), cardRows),
-      h("label", { class: "cell field" }, h("span", { class: "grow" }, "残しておく額"), h("span", { class: "minus" }, "−"), buffer))),
+      h("div", { class: "cell" }, h("span", { class: "grow" }, "月初めの残高"), h("span", { class: "amount" }, num(b.opening_liquid))),
+      part("収入予定", plus(sum(b.income)), b.income.map((x) => item(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
+      part("支払予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount)))),
+      part("翌月以降のカード払い", minus(b.card_unpaid), cardRows),
+      h("label", { class: "cell field" }, h("span", { class: "grow" }, "貯金に回す額"), h("span", { class: "minus" }, "−"), buffer))),
   ];
 }
 
