@@ -55,15 +55,62 @@ function toast(msg) {
   toast.timer = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
+// 読んだ値の控え。画面を開くときは控えで先に描き、後ろで読み直して違えば描き直す。アプリを開き直しても使えるよう端末にも残す
+const READS_KEY = "reads";
+const reads = new Map(Object.entries((() => { try { return JSON.parse(localStorage.getItem(READS_KEY)) ?? {}; } catch { return {}; } })()));
+let readsTimer = null;
+function keepReads() {
+  clearTimeout(readsTimer);
+  readsTimer = setTimeout(() => {
+    // 新しく読んだものから60件まで残す
+    const keep = Object.fromEntries([...reads].slice(-60));
+    try { localStorage.setItem(READS_KEY, JSON.stringify(keep)); } catch { /* 残せなくても動く */ }
+  }, 500);
+}
+// 描いている途中の画面が控えから読んだ道。null のときは控えを使わない
+let fromReads = null;
+// 後ろで送っている保存。読み直しは保存が終わってから行い、古い値で描き直さない
+const writes = new Set();
+
 async function api(method, path, body) {
+  if (method === "GET") {
+    if (fromReads && reads.has(path)) {
+      fromReads.add(path);
+      return JSON.parse(reads.get(path));
+    }
+    if (writes.size) await Promise.allSettled([...writes]);
+  }
   const res = await fetch(path, {
     method,
     headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
+  const text = await res.text();
+  let data = {};
+  try { data = JSON.parse(text); } catch { /* 空の返事 */ }
   if (!res.ok) throw new Error(data.error ?? `エラー ${res.status}`);
+  if (method === "GET") {
+    reads.delete(path);
+    reads.set(path, text);
+    keepReads();
+  }
   return data;
+}
+
+// 保存は返事を待たずに前の画面へ戻し、通信は後ろで続ける。失敗したら入力したままのシートを出し直す
+let restore = null;
+function saveAhead(send, go, done) {
+  const hash = location.hash || "#/";
+  const nodes = [...view.childNodes];
+  const p = send().then((r) => done?.(r), (e) => {
+    restore = { hash, nodes };
+    if ((location.hash || "#/") === hash) route();
+    else location.hash = hash;
+    toast(e.message);
+  });
+  writes.add(p);
+  p.finally(() => writes.delete(p));
+  go();
 }
 
 const store = {
@@ -73,7 +120,7 @@ const store = {
 
 let accountsCache = null;
 async function accounts(refresh = false) {
-  if (!accountsCache || refresh) accountsCache = await api("GET", "/api/accounts");
+  if (!accountsCache || refresh || writes.size) accountsCache = await api("GET", "/api/accounts");
   return accountsCache;
 }
 const live = (list) => list.filter((a) => !a.archived);
@@ -639,23 +686,29 @@ async function entryForm(existing, opts = {}) {
         }
       }
       try {
-        setBusy(true);
-        status.show("保存しています…");
         if (asPlan) {
           // 予定は品目に分けず、カテゴリ1つで持つ
           if (data.items) { data.category_id = data.items[0]?.category_id; delete data.items; }
-          await api(opts.plan ? "PUT" : "POST", opts.plan ? `/api/planned/${opts.plan.id}` : "/api/planned", data);
           toast(opts.plan ? "保存しました" : "予定に入れました");
-          goBack(opts.plan ? "#/recurring" : "#/");
+          saveAhead(() => api(opts.plan ? "PUT" : "POST", opts.plan ? `/api/planned/${opts.plan.id}` : "/api/planned", data),
+            () => goBack(opts.plan ? "#/recurring" : "#/"));
         } else if (existing) {
-          await api("PUT", `/api/entries/${existing.id}`, data);
           toast("保存しました");
-          goBack("#/list");
+          saveAhead(() => api("PUT", `/api/entries/${existing.id}`, data), () => goBack("#/list"));
         } else {
           if (opts.confirm) data.planned_id = opts.confirm.id;
           if (aiGuess && data.category_id && data.category_id !== aiGuess) data.learn = true;
+          if (data.from_account_id) store.set("lastPay", data.from_account_id);
+          const told = (r) => {
+            const cat = list.find((a) => a.id === r.category_id);
+            toast(r.installment_id ? `${count}回の分割払いにしました` : cat && !data.category_id && !data.items ? `${cat.name}として記録しました` : "記録しました");
+          };
+          // 繰り返しも作るときは2つ目の送信で失敗すると記録が重なるので、待ってから戻る
+          if (!repeat) { saveAhead(() => api("POST", "/api/entries", data), () => goBack("#/"), told); return; }
+          setBusy(true);
+          status.show("保存しています…");
           const r = await api("POST", "/api/entries", data);
-          if (repeat) {
+          {
             // 今回の分は記録したので、繰り返しは翌月の同じ日から始める
             const day = Number(data.date.slice(8, 10));
             const next = addMonths(data.date.slice(0, 7), 1);
@@ -666,9 +719,7 @@ async function entryForm(existing, opts = {}) {
               category_id: data.category_id ?? r.category_id, payee: data.payee ?? "", memo: data.memo ?? "",
             });
           }
-          if (data.from_account_id) store.set("lastPay", data.from_account_id);
-          const cat = list.find((a) => a.id === r.category_id);
-          toast(r.installment_id ? `${count}回の分割払いにしました` : cat && !data.category_id && !data.items ? `${cat.name}として記録しました` : "記録しました");
+          told(r);
           goBack("#/");
         }
       } catch (e) {
@@ -697,19 +748,13 @@ async function entryForm(existing, opts = {}) {
   };
   async function remove() {
     if (!confirm("この取引を削除しますか？")) return;
-    try {
-      await api("DELETE", `/api/entries/${existing.id}`);
-      toast("削除しました");
-      location.hash = "#/list";
-    } catch (e) { toast(e.message); }
+    toast("削除しました");
+    saveAhead(() => api("DELETE", `/api/entries/${existing.id}`), () => { location.hash = "#/list"; });
   }
   async function dropPlan() {
     if (!confirm("この予定をやめますか？")) return;
-    try {
-      await api("DELETE", `/api/planned/${src.id}`);
-      toast("予定をやめました");
-      goBack(opts.plan ? "#/recurring" : "#/");
-    } catch (e) { toast(e.message); }
+    toast("予定をやめました");
+    saveAhead(() => api("DELETE", `/api/planned/${src.id}`), () => goBack(opts.plan ? "#/recurring" : "#/"));
   }
   render();
   return box;
@@ -807,11 +852,8 @@ async function installmentView(id) {
     const newFee = d.fee ?? 0;
     // 回数か手数料を変えたときだけ支払額を割り直す。明細に合わせた額はそのままにする
     if (Number(d.count) !== p.count || newFee !== fee) Object.assign(body, { count: Number(d.count), fee: newFee });
-    try {
-      await api("PUT", `/api/installments/${p.id}`, body);
-      toast("保存しました");
-      goBack("#/recurring");
-    } catch (err) { toast(err.message); }
+    toast("保存しました");
+    saveAhead(() => api("PUT", `/api/installments/${p.id}`, body), () => goBack("#/recurring"));
   });
   return [sheetBar("分割払い", { form: "installment-form", back: "#/recurring" }), form];
 }
@@ -836,12 +878,9 @@ async function recoveryCard(e) {
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const data = formData(form);
-    try {
-      await api("POST", `/api/entries/${e.id}/recoveries`, data);
-      store.set("lastRecv", data.account_id);
-      toast("回収を記録しました");
-      goBack("#/list");
-    } catch (err) { toast(err.message); }
+    store.set("lastRecv", data.account_id);
+    toast("回収を記録しました");
+    saveAhead(() => api("POST", `/api/entries/${e.id}/recoveries`, data), () => goBack("#/list"));
   });
   return [
     h("span", { class: "section-head" }, "立て替え"),
@@ -1500,12 +1539,9 @@ function accountSettings(a, list) {
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const d = normalize(formData(form), a.kind);
-    try {
-      await api("PATCH", `/api/accounts/${a.id}`, d);
-      accountsCache = null;
-      toast("保存しました");
-      goBack("#/accounts");
-    } catch (e) { toast(e.message); }
+    accountsCache = null;
+    toast("保存しました");
+    saveAhead(() => api("PATCH", `/api/accounts/${a.id}`, d), () => goBack("#/accounts"));
   });
   return form;
 }
@@ -1708,12 +1744,8 @@ async function recurringForm(id) {
       const body = { kind, every, ...d, day: Number(d.first_date.slice(8, 10)), shift_holiday: d.shift_holiday ? 1 : 0,
         end_date: d.end_date ?? null, active: d.paused ? 0 : 1 };
       delete body.paused;
-      try {
-        if (r) await api("PUT", `/api/recurring/${r.id}`, body);
-        else await api("POST", "/api/recurring", body);
-        toast(r ? "保存しました" : "追加しました");
-        goBack("#/recurring");
-      } catch (e) { toast(e.message); }
+      toast(r ? "保存しました" : "追加しました");
+      saveAhead(() => (r ? api("PUT", `/api/recurring/${r.id}`, body) : api("POST", "/api/recurring", body)), () => goBack("#/recurring"));
     });
     fill(box,
       sheetBar(seg([["expense", "支出"], ["income", "収入"], ["transfer", "振替"]], kind, (v) => { kind = v; }, "種類"),
@@ -2047,8 +2079,14 @@ function placeTabGlider(animate = true) {
   gliderX = x;
 }
 
-async function route() {
-  cancelAhead();
+// 入力中なら描き直さない
+const typing = () => view.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+
+let routeRun = 0;
+async function route(opts) {
+  const { quiet = false, fresh = false } = opts instanceof Event ? {} : opts ?? {};
+  const run = ++routeRun;
+  if (!quiet) cancelAhead();
   const [path, query] = (location.hash.slice(1) || "/").split("?");
   const params = new URLSearchParams(query ?? "");
   const found = routes.find(([re]) => re.test(path)) ?? routes[0];
@@ -2058,15 +2096,36 @@ async function route() {
     if (a.dataset.tab === found[2]) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
-  placeTabGlider();
-  try {
-    const content = await (match[1] ? found[1](match[1], params) : found[1](params));
-    view.replaceChildren(...[content].flat(Infinity).filter(Boolean));
-  } catch (e) {
-    view.replaceChildren(h("h1", {}, "読み込めませんでした"), h("p", { class: "sub" }, e.message),
-      h("button", { onclick: route }, "もう一度"));
+  if (!quiet) placeTabGlider();
+  // 保存に失敗したシートは、入力したままの中身で出し直す
+  if (restore && restore.hash === (location.hash || "#/")) {
+    view.replaceChildren(...restore.nodes);
+    restore = null;
+    return;
   }
-  view.scrollTo(0, 0);
+  // シートは入力を消さないよう描き直さないので、控えを使わず最新を読む
+  const served = new Set();
+  fromReads = found[3] || (fresh && !quiet) ? null : served;
+  const top = view.scrollTop;
+  let content;
+  try {
+    content = await (match[1] ? found[1](match[1], params) : found[1](params));
+  } catch (e) {
+    content = [h("h1", {}, "読み込めませんでした"), h("p", { class: "sub" }, e.message),
+      h("button", { onclick: () => route({ fresh: true }) }, "もう一度")];
+  } finally {
+    if (run === routeRun) fromReads = null;
+  }
+  if (run !== routeRun) return;
+  view.replaceChildren(...[content].flat(Infinity).filter(Boolean));
+  view.scrollTo(0, quiet ? top : 0);
+  if (quiet || !served.size) return;
+  // 控えで描いた画面は後ろで読み直し、変わっていれば同じ位置のまま描き直す
+  const before = [...served].map((p) => reads.get(p));
+  await Promise.allSettled([...served].map((p) => api("GET", p)));
+  if (run !== routeRun || [...served].every((p, i) => reads.get(p) === before[i])) return;
+  if (typing()) return;
+  route({ quiet: true });
 }
 
 window.addEventListener("resize", () => placeTabGlider(false));
@@ -2082,7 +2141,7 @@ function goBack(fallback) {
 window.addEventListener("hashchange", () => { navigated = true; route(); });
 // 今いるタブをもう一度押したときも、中身をサーバーから取り直す。ホーム画面のアプリには再読み込みがないため
 for (const a of document.querySelectorAll(".tabbar a")) {
-  a.addEventListener("click", () => { if (a.getAttribute("href") === (location.hash || "#/")) route(); });
+  a.addEventListener("click", () => { if (a.getAttribute("href") === (location.hash || "#/")) route({ fresh: true }); });
 }
 route();
 
