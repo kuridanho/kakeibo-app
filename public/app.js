@@ -218,6 +218,7 @@ async function home() {
   ].filter(Boolean);
 
   const avail = Math.max(b.available_cash, 0);
+  const short = Math.max(-b.available_cash, 0);
   const weekday = "日月火水木金土"[new Date(`${today()}T00:00:00Z`).getUTCDay()];
   const expenses = s.categories.filter((c) => c.type === "expense" && c.amount > 0).sort((x, y) => y.amount - x.amount);
   const top = expenses.slice(0, 4);
@@ -230,10 +231,12 @@ async function home() {
     h("span", { class: "overline" }, `${Number(today().slice(5, 7))}月${Number(today().slice(8))}日 ${weekday}曜日`),
     h("div", { class: "card", style: "padding-bottom:4px" },
       h("div", { class: "stack", style: "gap:2px" },
-        h("span", { class: "footnote legend", style: "gap:8px" }, h("span", { class: "swatch", style: "background:var(--meter)" }), "使えるお金"),
+        h("span", { class: "footnote legend", style: "gap:8px" }, h("span", { class: "swatch", style: `background:var(${short ? "--red" : "--meter"})` }), "使えるお金"),
         h("span", { class: `hero${b.available_cash < 0 ? " neg" : ""}` }, yen(b.available_cash))),
+      // 足りないときは、未払いと返済の帯のうち手元のお金で払えない右側を赤で覆う
       h("div", { class: "meter", "aria-hidden": "true" },
-        h("div", { style: `flex:${avail}` }), h("div", { style: `flex:${b.card_unpaid}` }), h("div", { style: `flex:${b.loan_due}` })),
+        h("div", { style: `flex:${avail}` }), h("div", { style: `flex:${b.card_unpaid}` }), h("div", { style: `flex:${b.loan_due}` }),
+        short ? h("div", { class: "short", style: `width:${Math.min(100, (short / (b.card_unpaid + b.loan_due)) * 100)}%` }) : null),
       // 未払いと返済は、口座と財布の合計から引く額なのでマイナスで出す
       h("div", { class: "group", style: "padding-left:0;border-radius:0" },
         h("div", { class: "cell" }, h("span", { class: "grow" }, "手元のお金"), h("span", { class: "amount" }, num(b.liquid_total))),
