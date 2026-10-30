@@ -15,6 +15,8 @@ export type CategorySource = "rule" | "ai" | "keyword" | "none";
 export interface Classification {
   account_id: number;
   source: CategorySource;
+  /** 何の店か分からず、利用者の答えもない。画面で「これは何ですか？」と尋ねる */
+  unclear: boolean;
 }
 
 export function merchantKey(merchant: string): string {
@@ -49,6 +51,8 @@ interface AIAnswer {
   category: string;
 }
 
+const UNCLEAR = "不明";
+
 async function askAI(env: Env, merchants: string[], categories: Account[]): Promise<AIAnswer[] | null> {
   if (!env.AI || merchants.length === 0) return null;
   const system = [
@@ -56,7 +60,8 @@ async function askAI(env: Env, merchants: string[], categories: Account[]): Prom
     "利用先名は省略や英字、全角半角の混在があり、末尾に「/NFC」「/ID」や決済代行の名前が付くことがある。",
     `今あるカテゴリ: ${categories.map((c) => c.name).join("、")}`,
     "できるだけ今あるカテゴリから選ぶ。どれにも当てはまらず、今後も同じ種類の支出が続きそうなときだけ、短い日本語の新しいカテゴリ名を答える。",
-    "店がわからないときは「その他」にする。",
+    "利用者の答えが括弧で付いていれば、それを手がかりにする。",
+    "名前から何の店か判断できないときは、推測せずに「不明」と答える。",
     '答えは {"results":[{"i":番号,"category":"カテゴリ名"}]} のJSONだけにする。',
   ].join("\n");
   const user = merchants.map((m, i) => `${i}: ${m}`).join("\n");
@@ -123,12 +128,20 @@ export async function classifyMerchants(env: Env, merchants: string[]): Promise<
     .all<{ pattern: string; match: string; account_id: number; origin: string }>();
   const exact = new Map(rules.filter((r) => r.match === "exact").map((r) => [r.pattern, r]));
   const contains = rules.filter((r) => r.match === "contains").sort((a, b) => b.pattern.length - a.pattern.length);
+  // 「これは何ですか？」への利用者の答え
+  const { results: noted } = await db
+    .prepare("SELECT pattern, note FROM merchant_names WHERE note IS NOT NULL AND note != ''")
+    .all<{ pattern: string; note: string }>();
+  const notes = new Map(noted.map((n) => [n.pattern, n.note]));
+  const other = await bySeedKey(db, "other");
 
   for (const key of keys) {
     const rule = exact.get(key) ?? contains.find((r) => key.includes(r.pattern));
     if (rule) {
       const a = await resolveAccount(db, rule.account_id);
-      result.set(key, { account_id: a.id, source: rule.origin === "ai" ? "ai" : "rule" });
+      // AIが前に「その他」としか決められなかった店は、答えがなければ尋ねる
+      const unclear = rule.origin === "ai" && a.id === other?.id && !notes.has(key);
+      result.set(key, { account_id: a.id, source: rule.origin === "ai" ? "ai" : "rule", unclear });
     } else {
       unknown.push(key);
     }
@@ -139,13 +152,15 @@ export async function classifyMerchants(env: Env, merchants: string[]): Promise<
     // 1回の問い合わせが長くなりすぎないよう、40件ずつに分ける
     for (let start = 0; start < unknown.length; start += 40) {
       const chunk = unknown.slice(start, start + 40);
-      const answers = await askAI(env, chunk, categories);
+      const answers = await askAI(env, chunk.map((k) => notes.has(k) ? `${k}（利用者の答え: ${notes.get(k)}）` : k), categories);
       for (const ans of answers ?? []) {
         const key = chunk[ans.i];
         if (key === undefined || result.has(key)) continue;
+        // 分からないものは覚えず、利用者に尋ねる
+        if (String(ans.category ?? "").trim() === UNCLEAR) continue;
         const a = await categoryForName(db, String(ans.category ?? ""), categories);
         if (!a) continue;
-        result.set(key, { account_id: a.id, source: "ai" });
+        result.set(key, { account_id: a.id, source: "ai", unclear: false });
         await db
           .prepare("INSERT OR IGNORE INTO category_rules (pattern, match, account_id, origin) VALUES (?, 'exact', ?, 'ai')")
           .bind(key, a.id)
@@ -154,13 +169,12 @@ export async function classifyMerchants(env: Env, merchants: string[]): Promise<
     }
   }
 
-  const other = await bySeedKey(db, "other");
   for (const key of unknown) {
     if (result.has(key)) continue;
-    const seed = guessKeyword(key);
+    const seed = guessKeyword(key) ?? (notes.has(key) ? guessKeyword(notes.get(key)!) : null);
     const a = seed ? await bySeedKey(db, seed) : null;
-    if (a) result.set(key, { account_id: a.id, source: "keyword" });
-    else if (other) result.set(key, { account_id: other.id, source: "none" });
+    if (a) result.set(key, { account_id: a.id, source: "keyword", unclear: false });
+    else if (other) result.set(key, { account_id: other.id, source: "none", unclear: !notes.has(key) });
   }
   return result;
 }

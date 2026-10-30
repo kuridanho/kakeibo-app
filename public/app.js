@@ -1471,20 +1471,64 @@ async function importView() {
     const diff = p.declared_total === null ? null : p.declared_total - p.payment_total;
     const sections = ["choose", "new", "matched", "duplicate"].filter((s) => rowsBy.has(s)).map((status) => h("div", { class: "card" },
       h("h2", {}, `${label[status]} ${rowsBy.get(status).length}件`),
-      rowsBy.get(status).map((r) => h("div", { class: "stack", style: "gap:4px;padding:6px 0;border-bottom:1px solid var(--line)" },
-        h("div", { class: "row" }, h("span", {}, `${r.usageDate.slice(5)} ${r.merchant}`), h("span", {}, num(r.paymentAmount))),
+      rowsBy.get(status).map((r) => status === "duplicate"
+        ? h("div", { class: "row import-row" }, h("span", {}, `${r.usageDate.slice(5)} ${r.merchant}`), h("span", {}, num(r.paymentAmount)))
+        : importRow(r, status))));
+
+    // 店名はその場で直せる。直した店名だけを送り、明細の利用先名からの置き換えとして覚える
+    function importRow(r, status) {
+      const choice = () => (choices[r.index] ??= {});
+      let initial = status === "matched" ? (r.candidates[0]?.payee || r.merchant) : r.merchant;
+      const payee = h("input", { class: "import-payee", value: initial, "aria-label": `${r.merchant}の店名`, onchange: () => {
+        const v = payee.value.trim();
+        if (v && v !== initial) choice().payee = v;
+        else { delete choice().payee; payee.value = initial; }
+        if (suggest) suggest.hidden = payee.value === r.suggested_payee;
+        statementName.hidden = payee.value === r.merchant;
+      } });
+      const statementName = h("span", { class: "footnote", hidden: initial === r.merchant }, `明細 ${r.merchant}`);
+      // 前に直した店名は勝手に当てず、行ごとに尋ねる
+      const suggest = r.suggested_payee ? h("div", { class: "row import-ask", hidden: initial === r.suggested_payee },
+        h("span", { class: "question" }, `${r.suggested_payee} にしますか？`),
+        h("button", { type: "button", class: "plain small", onclick: () => {
+          payee.value = r.suggested_payee;
+          payee.dispatchEvent(new Event("change"));
+        } }, "する")) : null;
+      const ask = status !== "matched" && r.unclear && !r.charge_account_id;
+      return h("div", { class: "stack import-row" },
+        h("div", { class: "row" },
+          h("span", { class: "import-date" }, r.usageDate.slice(5)),
+          payee,
+          h("span", {}, num(r.paymentAmount))),
+        statementName,
+        suggest,
         status === "choose" ? h("select", { "aria-label": "結びつける取引", onchange: (ev) => {
           const v = ev.target.value;
-          choices[r.index] = { ...choices[r.index], link: v === "new" || v === "skip" ? v : Number(v) };
+          choice().link = v === "new" || v === "skip" ? v : Number(v);
+          // 直していなければ、結びつけた取引の店名を出す
+          if (choice().payee === undefined) {
+            initial = r.candidates.find((c) => c.entry_id === choice().link)?.payee || r.merchant;
+            payee.value = initial;
+            statementName.hidden = initial === r.merchant;
+            if (suggest) suggest.hidden = initial === r.suggested_payee;
+          }
         } },
           h("option", { value: "" }, "どれか選んでください"),
           r.candidates.map((c) => h("option", { value: c.entry_id }, `${c.date.slice(5)} ${c.payee || "（内容なし）"} ${num(c.amount)}`)),
           h("option", { value: "new" }, "新しい取引にする"),
           h("option", { value: "skip" }, "取り込まない")) : null,
-        status === "new" && !r.charge_account_id ? h("select", { "aria-label": "カテゴリ", onchange: (ev) => {
-          choices[r.index] = { ...choices[r.index], category_id: Number(ev.target.value) };
-        } }, options(expense, r.category_id)) : null,
-        status === "new" && r.charge_account_id ? h("span", { class: "sub" }, `${list.find((a) => a.id === r.charge_account_id)?.name}へのチャージ(振替)`) : null))));
+        ask ? h("span", { class: "question" }, `${r.merchant} これは何ですか？`) : null,
+        ask ? h("input", { placeholder: "何の店か", "aria-label": `${r.merchant}は何の店か`, onchange: (ev) => {
+          const v = ev.target.value.trim();
+          if (v) choice().note = v;
+          else delete choice().note;
+        } }) : null,
+        status !== "matched" && !r.charge_account_id ? h("select", { "aria-label": "カテゴリ", onchange: (ev) => {
+          if (ev.target.value) choice().category_id = Number(ev.target.value);
+          else delete choice().category_id;
+        } }, options(expense, ask ? null : r.category_id, ask ? "答えから決める" : null)) : null,
+        r.charge_account_id ? h("span", { class: "sub" }, `${list.find((a) => a.id === r.charge_account_id)?.name}へのチャージ(振替)`) : null);
+    }
     fill(out,
       h("div", { class: "card" },
         h("div", { class: "row" }, h("span", {}, "明細の合計"), h("span", {}, p.declared_total === null ? "なし" : num(p.declared_total))),
