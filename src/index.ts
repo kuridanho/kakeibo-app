@@ -10,6 +10,7 @@ import { calendarMonth } from "./lib/calendar";
 import { nextMonthBudget } from "./lib/budget";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
+import { openPlanned, type Planned, validatePlanned } from "./lib/planned";
 import { type Recurring, recordRecurring, validate } from "./lib/recurring";
 import { StatementParseError } from "./lib/smbc";
 import { commitStatement, previewStatement } from "./lib/statement";
@@ -307,7 +308,12 @@ app.get("/api/entries/:id", async (c) => {
   return c.json({ ...full, recoveries: await withLines(c.env.DB, recoveries) });
 });
 
-type EntryInput = Omit<SimpleInput, "items"> & { learn?: boolean; items?: { name?: string; category_id: number; amount: number }[] };
+type EntryInput = Omit<SimpleInput, "items"> & {
+  learn?: boolean;
+  items?: { name?: string; category_id: number; amount: number }[];
+  /** 予定を確かめて記録するときの、その予定の id */
+  planned_id?: number;
+};
 
 app.post("/api/entries", async (c) => {
   const env = c.env;
@@ -323,8 +329,18 @@ app.post("/api/entries", async (c) => {
     input.category_id = guess?.account_id ?? (await resolveAccount(env.DB, fallback!.id)).id;
     categorySource = guess?.source ?? "none";
   }
+  let planned: Planned | null = null;
+  if (input.planned_id !== undefined) {
+    planned = await env.DB.prepare("SELECT * FROM planned WHERE id = ?").bind(int(input.planned_id, "予定")).first<Planned>();
+    if (!planned) throw new LedgerError("予定が見つかりません", 404);
+    if (planned.entry_id) throw new LedgerError("この予定はもう記録してあります");
+  }
   const { fields, lines } = await buildSimple(env.DB, input);
-  const id = await createEntry(env.DB, { ...fields, source: "manual", category_source: categorySource, user_id: c.get("user") }, lines);
+  const id = await createEntry(env.DB, {
+    ...fields, source: planned ? "planned" : "manual", category_source: categorySource, user_id: c.get("user"),
+    auto_key: planned ? `planned:${planned.id}` : null,
+  }, lines);
+  if (planned) await env.DB.prepare("UPDATE planned SET entry_id = ? WHERE id = ?").bind(id, planned.id).run();
   return c.json({ id, category_id: input.category_id, category_source: categorySource }, 201);
 });
 
@@ -360,7 +376,10 @@ app.put("/api/entries/:id", async (c) => {
 });
 
 app.delete("/api/entries/:id", async (c) => {
-  await deleteEntry(c.env.DB, int(c.req.param("id"), "id"));
+  const id = int(c.req.param("id"), "id");
+  // 予定から記録した取引を消したときは、予定もいっしょに消す
+  await c.env.DB.prepare("DELETE FROM planned WHERE entry_id = ?").bind(id).run();
+  await deleteEntry(c.env.DB, id);
   return c.json({ ok: true });
 });
 
@@ -415,6 +434,58 @@ app.put("/api/recurring/:id", async (c) => {
 /** 繰り返しを消す。これまでに記録した取引は残す */
 app.delete("/api/recurring/:id", async (c) => {
   await c.env.DB.prepare("DELETE FROM recurring WHERE id = ?").bind(int(c.req.param("id"), "id")).run();
+  return c.json({ ok: true });
+});
+
+// ---- 一度きりの予定 ----
+
+const PLANNED_COLS = ["kind", "amount", "date", "from_account_id", "to_account_id", "category_id", "payee", "memo"] as const;
+
+function plannedFrom(body: Partial<Planned>, base?: Planned): Planned {
+  const p = { ...(base ?? { payee: "", memo: "" }), ...body } as Planned;
+  p.amount = int(p.amount, "金額");
+  if (p.amount <= 0) throw new LedgerError("金額を入れてください");
+  return p;
+}
+
+/** まだ記録していない予定。due=1 なら今日までに来たものだけ */
+app.get("/api/planned", async (c) => c.json(await openPlanned(c.env.DB, c.req.query("due") ? todayJST() : undefined)));
+
+app.get("/api/planned/:id", async (c) => {
+  const p = await c.env.DB.prepare("SELECT * FROM planned WHERE id = ?").bind(int(c.req.param("id"), "id")).first<Planned>();
+  if (!p) throw new LedgerError("予定が見つかりません", 404);
+  return c.json(p);
+});
+
+app.post("/api/planned", async (c) => {
+  const db = c.env.DB;
+  const p = plannedFrom(await c.req.json<Partial<Planned>>());
+  await validatePlanned(db, p);
+  const row = await db
+    .prepare(`INSERT INTO planned (${PLANNED_COLS.join(", ")}, user_id) VALUES (${PLANNED_COLS.map(() => "?").join(", ")}, ?) RETURNING *`)
+    .bind(...PLANNED_COLS.map((k) => p[k] ?? null), c.get("user"))
+    .first<Planned>();
+  return c.json(row, 201);
+});
+
+app.put("/api/planned/:id", async (c) => {
+  const db = c.env.DB;
+  const id = int(c.req.param("id"), "id");
+  const old = await db.prepare("SELECT * FROM planned WHERE id = ?").bind(id).first<Planned>();
+  if (!old) throw new LedgerError("予定が見つかりません", 404);
+  if (old.entry_id) throw new LedgerError("記録した予定は、記録した取引のほうを直してください");
+  const p = plannedFrom(await c.req.json<Partial<Planned>>(), old);
+  await validatePlanned(db, p);
+  const row = await db
+    .prepare(`UPDATE planned SET ${PLANNED_COLS.map((k) => `${k} = ?`).join(", ")} WHERE id = ? RETURNING *`)
+    .bind(...PLANNED_COLS.map((k) => p[k] ?? null), id)
+    .first<Planned>();
+  return c.json(row);
+});
+
+/** 予定をやめる。記録した後の予定は、取引を消すといっしょに消える */
+app.delete("/api/planned/:id", async (c) => {
+  await c.env.DB.prepare("DELETE FROM planned WHERE id = ? AND entry_id IS NULL").bind(int(c.req.param("id"), "id")).run();
   return c.json({ ok: true });
 });
 

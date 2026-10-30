@@ -175,7 +175,7 @@ a.cell.plain::after { display: none; }
 form { display: flex; flex-direction: column; gap: 8px; }
 /* 入力はインセットのグループの行にする。左に項目名、右に値 */
 label.field { font-size: 17px; }
-label.field[hidden] { display: none; }
+.cell[hidden] { display: none; }
 label.field .caption { flex-shrink: 0; color: var(--label); }
 .cell input, .cell select { min-width: 0; }
 .cell input[type="checkbox"] { flex: none; width: 51px; background: var(--fill); }
