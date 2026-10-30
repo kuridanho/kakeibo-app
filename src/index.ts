@@ -149,6 +149,15 @@ app.patch("/api/accounts/:id", async (c) => {
     .prepare(`UPDATE accounts SET ${cols.map((k) => `${k} = ?`).join(", ")} WHERE id = ? RETURNING *`)
     .bind(...cols.map((k) => body[k] ?? null), id)
     .first<Account>();
+  // 締め日と引き落とし日をあとから入れたカードは、請求月のないまま残った利用に請求月を付ける
+  if (row?.kind === "card" && row.closing_day && row.payment_day) {
+    const { results } = await c.env.DB
+      .prepare(`SELECT DISTINCT e.id, e.date FROM entries e JOIN lines l ON l.entry_id = e.id
+        WHERE l.account_id = ? AND l.amount < 0 AND e.billing_month IS NULL AND e.kind NOT IN ('card_payment', 'opening', 'income')`)
+      .bind(id).all<{ id: number; date: string }>();
+    if (results.length) await c.env.DB.batch(results.map((e) => c.env.DB.prepare("UPDATE entries SET billing_month = ? WHERE id = ?")
+      .bind(billingMonth(e.date, row.closing_day!, row.payment_day!), e.id)));
+  }
   return c.json(row);
 });
 
