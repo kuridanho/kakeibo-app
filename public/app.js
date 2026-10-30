@@ -1405,7 +1405,8 @@ async function accountsView(params) {
 
 /** 種類ごとに要る入力欄。追加と設定の両方で使う */
 function kindFields(kind, a, banks) {
-  const n = (name, label, value, placeholder) => field(label, h("input", { name, inputmode: "numeric", "data-num": "", value, placeholder }));
+  // カードは締め日と引き落とし日がないと、どの月に落ちるか決まらない
+  const n = (name, label, value, placeholder) => field(label, h("input", { name, inputmode: "numeric", "data-num": "", value, placeholder, required: kind === "card" }));
   const payFrom = field("引き落とし口座", h("select", { name: "payment_account_id", "data-num": "" }, options(banks, a?.payment_account_id, "選んでください")));
   if (kind === "card") return [
     n("closing_day", "締め日", a?.closing_day, "月末は31"),

@@ -133,3 +133,17 @@ describe("来月の予算", () => {
     expect(b.budget).toBe(before.budget - 70000);
   });
 });
+
+describe("締め日をあとから入れたカード", () => {
+  it("請求月のない利用に請求月を付け、その月の引き落としに入れる", async () => {
+    const late = (await api("POST", "/api/accounts", { name: "締め日なしカード", type: "liability", kind: "card", payment_day: 27, payment_account_id: bank })).id;
+    const e = await api("POST", "/api/entries", {
+      kind: "expense", date: "2026-10-13", amount: 51100, from_account_id: late, category_id: await category("その他"), payee: "家賃",
+    });
+    expect((await api("GET", `/api/entries/${e.id}`)).billing_month).toBeNull();
+    await api("PATCH", `/api/accounts/${late}`, { closing_day: 31 });
+    expect((await api("GET", `/api/entries/${e.id}`)).billing_month).toBe("2026-11");
+    const b = await nextMonthBudget(db, today);
+    expect(b.expenses).toEqual(expect.arrayContaining([expect.objectContaining({ label: "締め日なしカード 引き落とし", amount: 51100 })]));
+  });
+});
