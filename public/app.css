@@ -126,6 +126,9 @@ a.cell.plain::after { display: none; }
 .meter > div:nth-child(2) { background: var(--tint-2); }
 /* 3つ目は地の色と近いので、斜めの縞にして見分ける */
 .meter > div:nth-child(3), .swatch.stripe { background: repeating-linear-gradient(135deg, var(--tint-2) 0 2px, var(--tint-3) 2px 4px); }
+/* 足りない分。左との境目に地の色の隙間を作る */
+.meter { position: relative; }
+.meter > .short { position: absolute; inset: 0 0 0 auto; background: var(--red); border-left: 2px solid var(--card); }
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; display: inline-block; }
 .legend { display: flex; align-items: center; gap: 10px; }
 .cell .legend { flex-direction: row; flex-grow: 1; }
@@ -194,6 +197,24 @@ label.field .caption { flex-shrink: 0; color: var(--label); }
 .amount-card .yen { font-size: 26px; font-weight: 700; color: var(--secondary); padding-right: 2px; }
 .amount-card.card input.amount { background-color: transparent; padding: 0; flex: 1; min-width: 0; outline: none; text-align: right; }
 .amount-card input.amount::placeholder { color: var(--chevron); }
+
+/* AIの読み取り・分類の進み具合。終わったあとは、その場で確かめる案内にも使う */
+.ai-status {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0; padding: 0 4px; min-width: 0;
+  color: var(--secondary); font-size: 13px; line-height: 1.4;
+}
+.ai-status[hidden] { display: none; }
+.ai-status .ai-spinner {
+  display: none; flex: none; width: 14px; height: 14px;
+  border: 2px solid var(--tint-soft); border-top-color: var(--tint); border-radius: 50%;
+  animation: ai-spin 0.8s linear infinite;
+}
+.ai-status.busy .ai-spinner { display: block; }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ai-status .ai-spinner { animation-duration: 2s; }
+}
 .card input:not([type="checkbox"]), .card select { background-color: var(--field); }
 input, select, textarea {
   font: inherit; font-size: 17px; color: var(--label); background: var(--card);
@@ -360,7 +381,18 @@ details.fold > .cell.sub .amount { padding-right: 25px; }
 .cell .minus { color: var(--secondary); }
 .cell.field input { color: var(--label); }
 
+/* 明細の取り込みの行。店名はその場で直せる */
+.import-row { gap: 6px; padding: 8px 0; border-bottom: 0.5px solid var(--separator); }
+.import-row:last-child { border-bottom: none; }
+.import-row .import-date { flex: none; color: var(--secondary); font-variant-numeric: tabular-nums; }
+.import-row input.import-payee { flex: 1; min-width: 0; min-height: 36px; padding: 6px 10px; }
+.import-row > .row > :last-child { flex: none; font-variant-numeric: tabular-nums; }
+.import-row .question { font-size: 13px; font-weight: 600; color: var(--tint); }
+.import-row .footnote { margin: 0; padding: 0 2px; }
+.import-row button.small { min-height: 44px; padding: 4px 14px; font-size: 15px; flex: none; }
+.import-row [hidden] { display: none; }
+
 /* 明細の行に結びつける取引を探す */
 .search-panel { padding: 8px 0; }
 button.pick { width: 100%; min-height: 44px; padding: 8px 0; border-radius: 0; background: transparent; color: var(--label);
-  font-weight: 400; justify-content: space-between; gap: 12px; text-align: left; border-bottom: 1px solid var(--line); }
+  font-weight: 400; justify-content: space-between; gap: 12px; text-align: left; border-bottom: 0.5px solid var(--separator); }
