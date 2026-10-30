@@ -2,6 +2,7 @@
 
 import type { Account, Env } from "../types";
 import { addDays, addMonths, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
+import { pendingPayments, recordInstallments } from "./installments";
 import { createEntry } from "./ledger";
 import { recordRecurring } from "./recurring";
 
@@ -195,7 +196,8 @@ export async function closeMonth(db: D1Database, month: string) {
 /**
  * カードの請求月に引き落とされる額。
  * 明細を取り込んだ月は明細の支払額の合計が実際に落ちる額なので、それを使う。照合できずに残った仮の取引は
- * カードの未払いに残り、照合し直すまで目に見えるようにする。明細がまだない月は、その請求月の利用の合計にする。
+ * カードの未払いに残り、照合し直すまで目に見えるようにする。明細がまだない月は、その請求月の利用の合計に、
+ * まだ記録していない分割払いの回を足す。
  */
 export async function cardDue(db: D1Database, cardId: number, month: string): Promise<number> {
   const imported = await db
@@ -208,7 +210,8 @@ export async function cardDue(db: D1Database, cardId: number, month: string): Pr
       WHERE l.account_id = ? AND e.billing_month = ? AND e.kind != 'card_payment'`)
     .bind(cardId, month)
     .first<{ s: number }>();
-  return row?.s ?? 0;
+  const pending = await pendingPayments(db, { cardId, month });
+  return (row?.s ?? 0) + pending.reduce((s, p) => s + p.amount, 0);
 }
 
 /**
@@ -257,7 +260,7 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
 export async function backupToR2(env: Env, today = todayJST()) {
   if (!env.BUCKET) return null;
   const tables = ["accounts", "entries", "lines", "category_rules", "statement_imports", "balance_checks",
-    "month_reports", "entry_changes", "settings"];
+    "month_reports", "entry_changes", "settings", "recurring", "planned", "installments"];
   const dump: Record<string, unknown[]> = {};
   for (const t of tables) dump[t] = (await env.DB.prepare(`SELECT * FROM ${t}`).all()).results;
   const key = `backups/${today}.json`;
@@ -271,6 +274,7 @@ export async function backupToR2(env: Env, today = todayJST()) {
 export async function daily(env: Env, now = new Date()) {
   const today = todayJST(now);
   await recordRecurring(env.DB, today);
+  await recordInstallments(env.DB, today);
   await recordDuePayments(env.DB, today);
   if (today.endsWith("-01")) {
     const prev = addMonths(monthOf(today), -1);

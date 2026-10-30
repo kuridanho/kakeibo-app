@@ -10,6 +10,10 @@ import { calendarMonth } from "./lib/calendar";
 import { nextMonthBudget } from "./lib/budget";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
+import {
+  convertToInstallment, createInstallment, defaultPayments, deleteInstallment, getInstallment, type Installment,
+  parseInstallmentKey, recordedPayments, resyncPlan, saveInstallment, schedule,
+} from "./lib/installments";
 import { openPlanned, type Planned, validatePlanned } from "./lib/planned";
 import { type Recurring, recordRecurring, validate } from "./lib/recurring";
 import { StatementParseError } from "./lib/smbc";
@@ -95,9 +99,12 @@ const EDITABLE = ["name", "liquid", "pay_method", "closing_day", "payment_day", 
 app.get("/api/accounts/:id/due", async (c) => {
   const a = await getAccount(c.env.DB, int(c.req.param("id"), "id"));
   const date = c.req.query("date") ?? todayJST();
+  // 請求月が決まっている取引(分割払いの回など)は、利用日ではなく請求月から引き落とし日を出す
+  const given = c.req.query("month");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new LedgerError("日付が正しくありません");
+  if (given && !/^\d{4}-\d{2}$/.test(given)) throw new LedgerError("請求月が正しくありません");
   if (a.kind !== "card" || !a.closing_day || !a.payment_day) return c.json({ billing_month: null, date: null, payment_account_id: null });
-  const month = billingMonth(date, a.closing_day, a.payment_day);
+  const month = given ?? billingMonth(date, a.closing_day, a.payment_day);
   return c.json({ billing_month: month, date: nextBankDay(dayInMonth(month, a.payment_day)), payment_account_id: a.payment_account_id });
 });
 
@@ -337,7 +344,12 @@ app.get("/api/entries/:id", async (c) => {
   const [full] = await withLines(c.env.DB, [entry]);
   const { results: recoveries } = await c.env.DB
     .prepare("SELECT * FROM entries WHERE related_entry_id = ? ORDER BY date").bind(entry.id).all<Entry>();
-  return c.json({ ...full, recoveries: await withLines(c.env.DB, recoveries) });
+  const key = parseInstallmentKey(entry.auto_key);
+  const plan = key ? await c.env.DB.prepare("SELECT * FROM installments WHERE id = ?").bind(key.id).first<Installment>() : null;
+  return c.json({
+    ...full, recoveries: await withLines(c.env.DB, recoveries),
+    installment: plan ? { id: plan.id, number: key!.number, count: plan.count } : null,
+  });
 });
 
 type EntryInput = Omit<SimpleInput, "items"> & {
@@ -345,6 +357,9 @@ type EntryInput = Omit<SimpleInput, "items"> & {
   items?: { name?: string; category_id: number; amount: number }[];
   /** 予定を確かめて記録するときの、その予定の id */
   planned_id?: number;
+  /** カードの分割払いにするときの支払回数と、手数料の合計 */
+  installment_count?: number;
+  installment_fee?: number;
 };
 
 app.post("/api/entries", async (c) => {
@@ -371,6 +386,18 @@ app.post("/api/entries", async (c) => {
     if (!planned) throw new LedgerError("予定が見つかりません", 404);
     if (planned.entry_id) throw new LedgerError("この予定はもう記録してあります");
   }
+  if (input.installment_count !== undefined && Number(input.installment_count) > 1) {
+    if (input.kind !== "expense" || input.items?.length || input.advance || planned) {
+      throw new LedgerError("分割払いにできるのは、カテゴリが1つで立て替えのない支出だけです");
+    }
+    const p = await createInstallment(env.DB, {
+      card_id: int(input.from_account_id, "支払方法"), category_id: input.category_id!, payee: input.payee, memo: input.memo,
+      date: input.date, amount: int(input.amount, "金額"), count: int(input.installment_count, "支払回数"),
+      fee: input.installment_fee === undefined ? 0 : int(input.installment_fee, "手数料"), user_id: c.get("user"),
+    });
+    const [first] = await recordedPayments(env.DB, p.id);
+    return c.json({ id: first?.entry.id ?? null, installment_id: p.id, category_id: input.category_id, category_source: categorySource }, 201);
+  }
   const { fields, lines } = await buildSimple(env.DB, input);
   const id = await createEntry(env.DB, {
     ...fields, source: planned ? "planned" : "manual", category_source: categorySource, user_id: c.get("user"),
@@ -385,6 +412,18 @@ app.put("/api/entries/:id", async (c) => {
   const id = int(c.req.param("id"), "id");
   const { entry, lines: oldLines } = await getEntry(db, id);
   const input = await c.req.json<EntryInput>();
+  const key = parseInstallmentKey(entry.auto_key);
+  const plan = key ? await db.prepare("SELECT * FROM installments WHERE id = ?").bind(key.id).first<Installment>() : null;
+  if (plan) {
+    // 分割払いの回は、店とカテゴリを分割払い全体で直す。メモだけはその回のもの
+    const category = input.category_id ?? plan.category_id;
+    const next = { ...plan, payee: input.payee ?? plan.payee, category_id: (await resolveAccount(db, category)).id };
+    await saveInstallment(db, next);
+    await resyncPlan(db, next);
+    if (input.memo !== undefined) await updateEntry(db, id, { memo: input.memo });
+    if (category !== plan.category_id && input.learn !== false && next.payee) await learnRule(db, next.payee, next.category_id);
+    return c.json({ id });
+  }
   if (!["expense", "income", "transfer"].includes(entry.kind)) {
     // 開始残高、引き落とし、回収、調整は、メモだけ直せる
     await updateEntry(db, id, { memo: input.memo ?? entry.memo });
@@ -455,10 +494,84 @@ app.post("/api/entries/confirm-categories", async (c) => {
 
 app.delete("/api/entries/:id", async (c) => {
   const id = int(c.req.param("id"), "id");
+  // 分割払いの回だけを消すと、毎日の記録で作り直してしまう。分割払いの画面でやめてもらう
+  const { entry } = await getEntry(c.env.DB, id);
+  if (parseInstallmentKey(entry.auto_key)) throw new LedgerError("分割払いの回は消せません。分割払いの画面から分割をやめてください");
   // 予定から記録した取引を消したときは、予定もいっしょに消す
   await c.env.DB.prepare("DELETE FROM planned WHERE entry_id = ?").bind(id).run();
   await deleteEntry(c.env.DB, id);
   return c.json({ ok: true });
+});
+
+// ---- 分割払い ----
+
+/** 分割払いの一覧。記録した回数と、まだ払っていない額 */
+app.get("/api/installments", async (c) => {
+  const db = c.env.DB;
+  const { results } = await db.prepare("SELECT * FROM installments ORDER BY purchase_date DESC, id DESC").all<Installment>();
+  const { results: cards } = await db.prepare("SELECT * FROM accounts WHERE kind = 'card'").all<Account>();
+  const today = todayJST();
+  return c.json(await Promise.all(results.map(async (p) => {
+    const card = cards.find((a) => a.id === p.card_id)!;
+    const recorded = new Set((await recordedPayments(db, p.id)).map((r) => r.number));
+    const rest = schedule(p, card).filter((x) => x.number >= p.start_number && !recorded.has(x.number));
+    return { ...p, recorded: recorded.size, remaining: rest.reduce((s, x) => s + x.amount, 0), next: rest[0] ?? null, done: rest.length === 0, today };
+  })));
+});
+
+/** 分割払いと、回ごとの請求月、支払額、記録した取引 */
+app.get("/api/installments/:id", async (c) => {
+  const db = c.env.DB;
+  const p = await getInstallment(db, int(c.req.param("id"), "id"));
+  const card = await getAccount(db, p.card_id);
+  const recorded = await recordedPayments(db, p.id);
+  const payments = schedule(p, card).filter((x) => x.number >= p.start_number).map((x) => {
+    const r = recorded.find((e) => e.number === x.number);
+    return { ...x, entry_id: r?.entry.id ?? null, confirmed: !!r && r.entry.statement_import_id !== null && r.entry.provisional === 0 };
+  });
+  return c.json({ ...p, payments });
+});
+
+/**
+ * 分割の中身を直す。回数か手数料を変えると支払額を割り直す。
+ * 支払額を直接渡したときはそれを使う(明細や利用明細の通知に載った額に合わせるとき)。
+ */
+app.put("/api/installments/:id", async (c) => {
+  const db = c.env.DB;
+  const p = await getInstallment(db, int(c.req.param("id"), "id"));
+  const body = await c.req.json<Partial<Installment> & { fee?: number }>();
+  const next: Installment = { ...p };
+  for (const k of ["category_id", "count", "principal", "first_payment", "payment"] as const) {
+    if (body[k] !== undefined) next[k] = int(body[k], k);
+  }
+  if (body.payee !== undefined) next.payee = String(body.payee);
+  if (body.memo !== undefined) next.memo = String(body.memo);
+  if (body.first_month !== undefined) next.first_month = String(body.first_month);
+  if (body.fee !== undefined || ((body.count !== undefined || body.principal !== undefined) && body.payment === undefined)) {
+    const fee = body.fee !== undefined ? int(body.fee, "手数料") : p.first_payment + p.payment * (p.count - 1) - p.principal;
+    if (fee < 0) throw new LedgerError("手数料は円単位で入れてください");
+    Object.assign(next, defaultPayments(next.principal, next.count, fee));
+  }
+  next.category_id = (await resolveAccount(db, next.category_id)).id;
+  await saveInstallment(db, next);
+  await resyncPlan(db, next);
+  return c.json(next);
+});
+
+/** 分割をやめる。明細で確かめた回の記録は残す */
+app.delete("/api/installments/:id", async (c) => {
+  await deleteInstallment(c.env.DB, int(c.req.param("id"), "id"));
+  return c.json({ ok: true });
+});
+
+/** あとから分割。カードで払った支出を分割払いにする */
+app.post("/api/entries/:id/installment", async (c) => {
+  const body = await c.req.json<{ count: number; fee?: number; first_month?: string }>();
+  const p = await convertToInstallment(c.env.DB, int(c.req.param("id"), "id"), {
+    count: int(body.count, "支払回数"), fee: body.fee === undefined ? 0 : int(body.fee, "手数料"),
+    first_month: body.first_month || undefined,
+  });
+  return c.json(p, 201);
 });
 
 // ---- 繰り返し ----
