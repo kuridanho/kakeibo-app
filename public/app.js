@@ -218,6 +218,7 @@ async function home() {
   ].filter(Boolean);
 
   const avail = Math.max(b.available_cash, 0);
+  const short = Math.max(-b.available_cash, 0);
   const weekday = "日月火水木金土"[new Date(`${today()}T00:00:00Z`).getUTCDay()];
   const expenses = s.categories.filter((c) => c.type === "expense" && c.amount > 0).sort((x, y) => y.amount - x.amount);
   const top = expenses.slice(0, 4);
@@ -230,10 +231,12 @@ async function home() {
     h("span", { class: "overline" }, `${Number(today().slice(5, 7))}月${Number(today().slice(8))}日 ${weekday}曜日`),
     h("div", { class: "card", style: "padding-bottom:4px" },
       h("div", { class: "stack", style: "gap:2px" },
-        h("span", { class: "footnote legend", style: "gap:8px" }, h("span", { class: "swatch", style: "background:var(--meter)" }), "使えるお金"),
+        h("span", { class: "footnote legend", style: "gap:8px" }, h("span", { class: "swatch", style: `background:var(${short ? "--red" : "--meter"})` }), "使えるお金"),
         h("span", { class: `hero${b.available_cash < 0 ? " neg" : ""}` }, yen(b.available_cash))),
+      // 足りないときは、未払いと返済の帯のうち手元のお金で払えない右側を赤で覆う
       h("div", { class: "meter", "aria-hidden": "true" },
-        h("div", { style: `flex:${avail}` }), h("div", { style: `flex:${b.card_unpaid}` }), h("div", { style: `flex:${b.loan_due}` })),
+        h("div", { style: `flex:${avail}` }), h("div", { style: `flex:${b.card_unpaid}` }), h("div", { style: `flex:${b.loan_due}` }),
+        short ? h("div", { class: "short", style: `width:${Math.min(100, (short / (b.card_unpaid + b.loan_due)) * 100)}%` }) : null),
       // 未払いと返済は、口座と財布の合計から引く額なのでマイナスで出す
       h("div", { class: "group", style: "padding-left:0;border-radius:0" },
         h("div", { class: "cell" }, h("span", { class: "grow" }, "手元のお金"), h("span", { class: "amount" }, num(b.liquid_total))),
@@ -387,7 +390,7 @@ async function entryForm(existing, opts = {}) {
   } : src ? {
     amount: src.amount, date: src.date, payee: src.payee, memo: src.memo,
     from_account_id: src.from_account_id ?? undefined, to_account_id: src.to_account_id ?? undefined, category_id: src.category_id ?? undefined,
-  } : { date: today(), from_account_id: store.get("lastPay", null) };
+  } : { date: opts.date ?? today(), from_account_id: store.get("lastPay", null) };
   // 支払方法は選べるようにしたものだけ。編集中の取引で使っているものは残す
   const payWith = live(list).filter((a) => (a.type === "asset" || a.type === "liability") && (a.pay_method || keep(a, init.from_account_id)));
   const receiveTo = byType(list, "asset");
@@ -602,7 +605,9 @@ async function newEntry(params) {
   // ホームの「確かめる」から来たときは、予定の中身を入れた状態で開く
   const id = params?.get("planned");
   if (id) return entryForm(null, { confirm: await api("GET", `/api/planned/${id}`) });
-  return entryForm(null);
+  // カレンダーで日をダブルタップしたときは、その日付で開く
+  const date = params?.get("date");
+  return entryForm(null, /^\d{4}-\d{2}-\d{2}$/.test(date ?? "") ? { date } : {});
 }
 
 async function editPlanned(id) {
@@ -686,6 +691,7 @@ function entryAmount(e) {
 }
 
 async function list(params) {
+  if (params.get("unsure")) return reviewCategories();
   // 一覧のタブはカレンダーで開く。検索や確かめる項目から来たときはリストにする
   const asList = params.get("view") === "list" || params.get("q") || params.get("provisional") || params.get("unsure");
   if (!asList) return calendarView(params);
@@ -716,6 +722,42 @@ async function list(params) {
     : monthNav(month, (n) => { location.hash = `#/list?view=list&month=${addMonths(month, n)}`; });
   const plain = !params.get("provisional") && !params.get("unsure");
   return [title, plain ? listTabs("list", month) : null, search, ...body];
+}
+
+/** AIやキーワード表が決めたカテゴリを、店ごとにまとめて確かめる。直したい店だけカテゴリを変え、残りはそのまま確定する */
+async function reviewCategories() {
+  const [entries, list] = await Promise.all([api("GET", `/api/entries?month=${thisMonth()}`), accounts()]);
+  const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown");
+  const unsure = entries.filter((e) => e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source));
+  const title = h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ");
+  if (unsure.length === 0) return [title, h("p", { class: "empty" }, "確かめる取引はありません")];
+
+  const categoryOf = (e) => e.lines.find((l) => l.type === "expense")?.account_id;
+  const stores = [...Map.groupBy(unsure, (e) => e.payee || "（内容なし）")].map(([payee, es]) => {
+    const counts = Map.groupBy(es, categoryOf);
+    const main = [...counts].sort((a, b) => b[1].length - a[1].length)[0][0];
+    return { payee, es, category: main, total: es.reduce((s, e) => s + entryAmount(e), 0) };
+  }).sort((a, b) => b.es.length - a.es.length || b.total - a.total);
+
+  const button = h("button", { type: "button", class: "wide", onclick: async () => {
+    button.disabled = true;
+    try {
+      const items = stores.flatMap((s) => s.es.map((e) => ({ id: e.id, category_id: s.category })));
+      const r = await api("POST", "/api/entries/confirm-categories", { items });
+      toast(r.changed ? `${r.confirmed}件を確定し、${r.changed}件のカテゴリを変えました` : `${r.confirmed}件を確定しました`);
+      location.hash = "#/";
+    } catch (e) { toast(e.message); button.disabled = false; }
+  } }, `${unsure.length}件をこの内容で確定`);
+
+  return [
+    title,
+    h("div", { class: "group" }, stores.map((s) => cell({ class: "tall" },
+      h("div", { class: "grow" }, h("span", {}, s.payee),
+        h("span", { class: "detail" }, `${s.es.length}件　${num(s.total)}円　${s.es.map((e) => e.date.slice(5).replace("-", "/")).join("・")}`)),
+      categorySelect({ "aria-label": `${s.payee}のカテゴリ`, style: "flex:none;max-width:45%", onchange: (ev) => { const v = Number(ev.target.value); if (Number.isInteger(v) && v > 0) s.category = v; } },
+        expense, "expense", s.category)))),
+    button,
+  ];
 }
 
 // ---- カレンダー ----
@@ -820,7 +862,19 @@ async function calendarView(params) {
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const cells = Math.ceil((first + last) / 7) * 7;
 
-  // 日を押すと、下の一覧のその日へ移る
+  // 日を押すと、下の一覧のその日へ移る。同じ日を続けて押すと、その日付で記録を開く。
+  // iOS の Safari はボタンの dblclick を出さないので、2回の押下の間隔で見分ける
+  let lastTap = { d: "", t: 0 };
+  const tap = (d) => {
+    const now = Date.now();
+    if (lastTap.d === d && now - lastTap.t < 350) {
+      lastTap = { d: "", t: 0 };
+      location.hash = `#/new?date=${d}`;
+      return;
+    }
+    lastTap = { d, t: now };
+    jump(d);
+  };
   const jump = (d) => {
     history.replaceState(null, "", `#/list?view=cal&month=${month}&day=${d}`);
     for (const el of document.querySelectorAll(".cal-d.on")) el.classList.remove("on");
@@ -845,7 +899,7 @@ async function calendarView(params) {
         type: "button", "data-day": d,
         class: `cal-d${d === selected ? " on" : ""}${d === cal.today ? " today" : ""}${tone}`,
         "aria-label": `${dayLabel(d)}${t?.income ? ` 収入 ${t.income}円` : ""}${t?.expense ? ` 支出 ${t.expense}円` : ""}${pin ? ` 入る予定 ${pin}円` : ""}${pout ? ` 出る予定 ${pout}円` : ""}`,
-        onclick: () => jump(d),
+        onclick: () => tap(d),
       },
         h("span", { class: "n" }, i),
         // 入る額と出る額を差し引かずに1行ずつ出す。記録がなければ予定を点線で出す。入るほうは水色
@@ -860,7 +914,7 @@ async function calendarView(params) {
   const totals = h("div", { class: "cal-sum" },
     h("div", {}, h("span", {}, "収入"), h("b", { class: "inc" }, plus(income))),
     h("div", {}, h("span", {}, "支出"), h("b", {}, minus(spent))),
-    h("div", {}, h("span", {}, "差"), h("b", { class: income - spent < 0 ? "neg" : "" }, `${income - spent > 0 ? "+" : ""}${num(income - spent)}`)));
+    h("div", {}, h("span", {}, "収支"), h("b", { class: income - spent < 0 ? "neg" : "" }, `${income - spent > 0 ? "+" : ""}${num(income - spent)}`)));
 
   // 月の取引と予定を日ごとに、新しい日から並べる
   const days = [...new Set([...byDay.keys(), ...plannedBy.keys()])].sort().reverse();
@@ -925,7 +979,7 @@ async function summary(params) {
     h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(-s.expense))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(s.income))),
-      h("div", { class: "row sub" }, h("span", {}, "差"), h("span", {}, plus(s.income - s.expense)))),
+      h("div", { class: "row sub" }, h("span", {}, "収支"), h("span", {}, plus(s.income - s.expense)))),
     s.report && (s.changes.length || changedTotal) ? h("details", { class: "banner" },
       h("summary", {}, `まとめの後に支出が ${changedTotal >= 0 ? "+" : ""}${yen(changedTotal)} 変わりました`),
       h("table", { class: "table" }, s.changes.map((c) => h("tr", {}, h("td", {}, c.summary),
