@@ -395,3 +395,8 @@ details.fold > .cell.sub .amount { padding-right: 25px; }
 .import-row .footnote { margin: 0; padding: 0 2px; }
 .import-row button.small { min-height: 44px; padding: 4px 14px; font-size: 15px; flex: none; }
 .import-row [hidden] { display: none; }
+
+/* 明細の行に結びつける取引を探す */
+.search-panel { padding: 8px 0; }
+button.pick { width: 100%; min-height: 44px; padding: 8px 0; border-radius: 0; background: transparent; color: var(--label);
+  font-weight: 400; justify-content: space-between; gap: 12px; text-align: left; border-bottom: 0.5px solid var(--separator); }

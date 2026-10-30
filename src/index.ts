@@ -770,6 +770,26 @@ app.post("/api/statements/commit", async (c) => {
     body.choices ?? {}, { file_name: body.file_name, r2_key: r2Key, user_id: c.get("user") }));
 });
 
+// 明細の行に結びつけられる取引。明細とまだ結びついていない支出を、利用日に近い順に返す。支払方法は問わない
+app.get("/api/statements/linkable", async (c) => {
+  const date = c.req.query("date");
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "日付を YYYY-MM-DD で入れてください" }, 400);
+  const q = (c.req.query("q") ?? "").trim();
+  const like = `%${q}%`;
+  const { results } = await c.env.DB
+    .prepare(`SELECT e.id AS entry_id, e.date, e.payee, e.provisional,
+        (SELECT SUM(l.amount) FROM lines l WHERE l.entry_id = e.id AND l.amount > 0) AS amount,
+        (SELECT GROUP_CONCAT(a.name, '、') FROM lines l JOIN accounts a ON a.id = l.account_id
+          WHERE l.entry_id = e.id AND l.amount < 0) AS paid_with
+      FROM entries e
+      WHERE e.kind = 'expense' AND e.statement_key IS NULL
+        AND (e.auto_key IS NULL OR e.auto_key NOT LIKE 'installment:%') AND (? = '' OR e.payee LIKE ? OR e.memo LIKE ?)
+      ORDER BY ABS(julianday(e.date) - julianday(?)), e.id DESC LIMIT 50`)
+    .bind(q, like, like, date)
+    .all();
+  return c.json(results);
+});
+
 app.get("/api/statements", async (c) => {
   const { results } = await c.env.DB
     .prepare(`SELECT s.*, a.name AS account_name FROM statement_imports s JOIN accounts a ON a.id = s.account_id
