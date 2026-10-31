@@ -7,6 +7,7 @@ import { app } from "../src/index";
 import { calendarMonth } from "../src/lib/calendar";
 import { dayInMonth, nextBankDay } from "../src/lib/dates";
 import { recordRecurring } from "../src/lib/recurring";
+import { loanOverview } from "../src/lib/interest";
 import { recordDuePayments } from "../src/lib/reports";
 import type { Env } from "../src/types";
 
@@ -410,6 +411,26 @@ describe("年率のある借入(定額払い)", () => {
     await recordDuePayments(db, nextBankDay(dayInMonth("2028-01", 27)));
     expect(await lines("2028-01")).toHaveLength(2);
     expect((await snapshot()).bal(merpay)).toBe(2000);
+    await balanced();
+  });
+
+  it("借りた月は返さず、翌月の返済に前月の利息を含める(スマートマネー)", async () => {
+    const smart = await api("POST", "/api/accounts", {
+      name: "流れスマートマネー", type: "liability", kind: "loan", payment_day: 26, payment_account_id: bank,
+      payment_amount: 10000, annual_rate: 12.1,
+    });
+    await api("POST", "/api/entries", { date: "2027-12-05", kind: "transfer", amount: 100000, from_account_id: smart.id, to_account_id: bank });
+    const key = (m: string) => db.prepare("SELECT id FROM entries WHERE auto_key = ?").bind(`payment:${smart.id}:${m}`).first();
+    await recordDuePayments(db, "2027-12-27");
+    expect(await key("2027-12")).toBeNull();
+    // 12/6〜12/31 の26日。100000 × 12.1% × 26 / 365 = 861.9
+    const before = await loanOverview(db, smart, "2028-01-10");
+    expect(before.next).toMatchObject({ date: "2028-01-26", amount: 10000, interest: 861 });
+    expect(before.accrued.from).toBe("2028-01-01");
+    expect(before.accrued.amount).toBe(Math.floor((100000 * 0.121 * 10) / 366));
+    await recordDuePayments(db, "2028-01-26");
+    expect(await key("2028-01")).not.toBeNull();
+    expect((await loanOverview(db, smart, "2028-01-27")).paid_total).toBe(861);
     await balanced();
   });
 

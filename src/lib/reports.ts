@@ -3,7 +3,7 @@
 import type { Account, Env } from "../types";
 import { addDays, addMonths, billingMonth, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
 import { pendingPayments, recordInstallments } from "./installments";
-import { accruedInterest, interestPeriod } from "./interest";
+import { loanPayment } from "./interest";
 import { balanceOf, createEntry } from "./ledger";
 import type { Planned } from "./planned";
 import { occurrence, recordRecurring, type Recurring } from "./recurring";
@@ -273,7 +273,7 @@ export async function splitPayment(db: D1Database, a: Pick<Account, "payment_acc
 /**
  * 引き落とし日が来たカードと借入の引き落としを記録する。
  * カードは請求月の利用の合計を、引き落とし口座からカードへの振替にする。
- * 借入は返済額を元金として扱う。年率があれば日割りの利息を返済額に含め、利息・手数料に分ける。
+ * 借入は返済額を元金として扱う。年率があれば前の締めまでの日割りの利息を返済額に含め、利息・手数料に分ける。
  * 先に引く口座があれば、その残高から引き、足りない分を引き落とし口座から引く。
  */
 export async function recordDuePayments(db: D1Database, today = todayJST()) {
@@ -295,12 +295,7 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
     if (a.kind === "card") {
       amount = await cardDue(db, a.id, month);
     } else {
-      const bal = await db.prepare("SELECT -COALESCE(SUM(amount), 0) AS s FROM lines WHERE account_id = ?").bind(a.id).first<{ s: number }>();
-      const { from, to } = interestPeriod(a, month);
-      interest = await accruedInterest(db, a, from, to);
-      amount = Math.min(a.payment_amount ?? 0, (bal?.s ?? 0) + interest);
-      // 返済額が利息に届かないときは、全額を利息にする
-      interest = Math.min(interest, amount);
+      ({ amount, interest } = await loanPayment(db, a, month));
     }
     if (amount <= 0) continue;
     const { prepay, rest } = await splitPayment(db, a, amount, due);
