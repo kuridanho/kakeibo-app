@@ -1093,13 +1093,16 @@ function swipePane(from, go, ...children) {
 
 const loadCalendar = (month) => Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
 
-// 一覧の上端。月の題と月送り、表示の切り替えを1行にまとめ、表を上に詰める
+// 一覧と集計の上端。題と月送り、表示の切り替えを1行にまとめ、中身を上に詰める
+function compactHead(nav, seg) {
+  nav.classList.add("compact");
+  nav.append(seg);
+  return nav;
+}
+
 function listHead(current, month) {
   const go = (n) => { location.hash = `#/list?view=${current}&month=${addMonths(month, n)}`; };
-  const nav = monthNav(month, go);
-  nav.classList.add("compact");
-  nav.append(listTabs(current, month));
-  return nav;
+  return compactHead(monthNav(month, go), listTabs(current, month));
 }
 
 function listTabs(current, month) {
@@ -1250,7 +1253,7 @@ async function summary(params) {
   swipe.from = 0;
   if (mode === "year") {
     const [nav, go, ...rest] = await yearView(params, from);
-    return [nav, toggle, swipePane(from, go, rest)];
+    return [compactHead(nav, toggle), swipePane(from, go, rest)];
   }
 
   const loadMonth = (m) => api("GET", `/api/summary/month?month=${m}`);
@@ -1269,8 +1272,7 @@ async function summary(params) {
     route();
   };
   return [
-    monthNav(month, go),
-    toggle,
+    compactHead(monthNav(month, go), toggle),
     swipePane(from, go,
     h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(-s.expense))),
