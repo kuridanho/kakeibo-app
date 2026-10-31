@@ -413,7 +413,7 @@ async function home() {
     // その日が来た予定。開くと中身が入った記録の画面になり、確かめて記録する
     ...duePlans.map((p) => [`#/new?planned=${p.id}`, `${dayLabel(p.date)}の予定${p.payee ? `「${p.payee}」` : ""}`, num(p.amount), "flag", "#FF9F0A"]),
     counts.unsure && ["#/list?unsure=1", "AIが決めたカテゴリの確認", counts.unsure, "sparkle", "#BF5AF2"],
-    counts.provisional && ["#/import", "カード明細の取り込み", counts.provisional, "card", "#5E5CE6"],
+    counts.provisional && ["#/list?provisional=1", "明細と未照合のカード払い", counts.provisional, "card", "#5E5CE6"],
     counts.advances && ["#/advances", "回収待ちの立て替え", counts.advances, "hand", "#FF9F0A"],
     ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の棚卸し`, 1, "wallet", "#30D158"]),
     ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りません`, 1, "bolt", "#FF453A"]),
@@ -1132,8 +1132,11 @@ async function list(params) {
   }
   draw();
 
-  const title = params.get("provisional") ? h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い")
-    : params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
+  if (params.get("provisional")) {
+    return [h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い"),
+      h("a", { class: "button", href: "#/import" }, "カード明細を取り込む"), search, body];
+  }
+  const title = params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
     : listHead("list", month);
   return [title, search, body];
 }
@@ -2038,7 +2041,7 @@ async function importView() {
     group(
       field("カード", h("select", { name: "account_id", "data-num": "", required: true }, options(cards, saved?.accountId ?? cards[0]?.id))),
       field("明細CSV", h("input", { name: "file", type: "file", accept: ".csv,text/csv", required: !saved })),
-      field("請求月", h("input", { name: "billing_month", type: "month", required: true, value: saved?.billingMonth }))),
+      field("請求月", h("input", { name: "billing_month", type: "month", required: true, value: saved?.billingMonth ?? thisMonth() }))),
     h("button", { type: "submit" }, "照合する"),
     status.el);
   form.elements.file.addEventListener("change", () => {
