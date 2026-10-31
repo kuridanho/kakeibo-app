@@ -66,7 +66,7 @@ html, body { height: 100%; overflow: hidden; }
 main {
   position: fixed; top: calc(env(safe-area-inset-top) + 32px); bottom: 0; left: 0; right: 0;
   overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
-  padding: 4px max(16px, calc(50% - 284px)) calc(120px + env(safe-area-inset-bottom));
+  padding: 4px max(16px, calc(50% - 284px)) calc(190px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -75,7 +75,6 @@ main > * { flex-shrink: 0; }
 /* Safari のタブで開いたときはぼかしの帯がないので、上の余白はふつうに戻す */
 @media not all and (display-mode: standalone) {
   main { top: env(safe-area-inset-top); padding-top: 16px; }
-  .sheetbar { margin-top: -16px; }
   main > .cal-top { top: 16px; }
 }
 a { color: var(--tint); }
@@ -146,7 +145,7 @@ a.cell.plain::after { display: none; }
 .dock {
   position: fixed; z-index: 10; left: 0; right: 0; bottom: 0;
   padding: 0 16px max(8px, calc(env(safe-area-inset-bottom) - 14px));
-  display: flex; gap: 10px; align-items: center; justify-content: center; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; pointer-events: none;
 }
 .tabbar, .dock .add { pointer-events: auto; }
 .tabbar {
@@ -173,9 +172,12 @@ a.cell.plain::after { display: none; }
 }
 .tabbar a[aria-current="page"] { color: var(--tint); font-weight: 600; opacity: 1; }
 .tabbar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* 記録ボタンは下端から離し、タブバーの右上に浮かせて親指の届く高さに置く */
 .dock .add {
-  width: 62px; height: 62px; flex-shrink: 0; border-radius: 31px; background: var(--tint); color: var(--on-tint);
+  position: absolute; right: max(16px, calc(50% - 260px)); bottom: calc(100% + 14px);
+  width: 60px; height: 60px; border-radius: 30px; background: var(--tint); color: var(--on-tint);
   display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 }
 .dock .add svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
 
@@ -280,8 +282,27 @@ details.card[open] > summary::after { content: "－"; }
 .empty { color: var(--secondary); text-align: center; padding: 32px 0; }
 
 /* 記録や設定のシート。タブバーを隠し、上の帯に取り消しと保存を置く */
-body.sheet .dock { display: none; }
-body.sheet main { padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
+/* 下からせり上がるシートにし、元の画面を暗くして後ろに残す。今いる場所を見失わないように */
+.sheet-layer { position: fixed; inset: 0; z-index: 15; pointer-events: none; }
+body.sheet .sheet-layer { pointer-events: auto; }
+.sheet-dim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.32); opacity: 0; transition: opacity 300ms ease; }
+body.sheet .sheet-dim { opacity: 1; }
+.sheet-panel {
+  position: absolute; left: 0; right: 0; bottom: 0; top: calc(env(safe-area-inset-top) + 32px);
+  width: 100%; max-width: 640px; margin: 0 auto;
+  background: var(--bg); border-radius: 12px 12px 0 0; box-shadow: 0 -2px 24px rgba(0, 0, 0, 0.18);
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  padding: 4px 16px calc(32px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 8px;
+  transform: translate3d(0, 105%, 0); transition: transform 380ms cubic-bezier(.32, .72, 0, 1);
+}
+.sheet-panel > * { flex-shrink: 0; }
+body.sheet .sheet-panel { transform: none; }
+.sheet-panel .sheetbar { border-radius: 12px 12px 0 0; }
+/* Safari のタブで開いたときはぼかしの帯がないので、シートを上まで寄せる */
+@media not all and (display-mode: standalone) {
+  .sheet-panel { top: calc(env(safe-area-inset-top) + 10px); }
+}
 .sheetbar {
   position: sticky; top: 0; z-index: 5; margin: -4px -16px 0; padding: 4px 8px;
   display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); align-items: center; min-height: 52px; background: var(--bg);

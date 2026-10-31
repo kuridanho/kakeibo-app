@@ -1,6 +1,10 @@
 // 家計簿の画面。ビルドなしで動くよう、素のJavaScriptで書いている。
 
-const view = document.getElementById("view");
+const page = document.getElementById("view");
+const sheet = document.getElementById("sheet");
+const sheetLayer = document.querySelector(".sheet-layer");
+// いま描く先。タブの画面は page、記録や設定は page の上に重ねるシート
+let view = page;
 
 // ---- 小さな道具 ----
 
@@ -2101,42 +2105,76 @@ function placeTabGlider(animate = true) {
 const typing = () => view.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
 
 let routeRun = 0;
+// page に描いてある画面。シートを閉じて同じ画面に戻ったら、スクロールの位置を保つ
+let pageHash = null;
+const tabRoots = { home: "/", list: "/list", summary: "/summary", accounts: "/accounts" };
+let sheetTimer = 0;
+
+function showSheet(on) {
+  clearTimeout(sheetTimer);
+  document.body.classList.toggle("sheet", on);
+  sheetLayer.setAttribute("aria-hidden", on ? "false" : "true");
+  page.inert = on;
+  document.querySelector(".dock").inert = on;
+  // 閉じる動きが終わってから中身を消す
+  if (!on) sheetTimer = setTimeout(() => sheet.replaceChildren(), 400);
+}
+
+async function render(found, path, params, fresh, served, run) {
+  const match = path.match(found[0]) ?? [];
+  fromReads = found[3] || fresh ? null : served;
+  try {
+    return await (match[1] ? found[1](match[1], params) : found[1](params));
+  } catch (e) {
+    return [h("h1", {}, "読み込めませんでした"), h("p", { class: "sub" }, e.message),
+      h("button", { onclick: () => route({ fresh: true }) }, "もう一度")];
+  } finally {
+    if (run === routeRun) fromReads = null;
+  }
+}
+
 async function route(opts) {
   const { quiet = false, fresh = false } = opts instanceof Event ? {} : opts ?? {};
   const run = ++routeRun;
   if (!quiet) cancelAhead();
+  const hash = location.hash || "#/";
   const [path, query] = (location.hash.slice(1) || "/").split("?");
   const params = new URLSearchParams(query ?? "");
   const found = routes.find(([re]) => re.test(path)) ?? routes[0];
-  const match = path.match(found[0]) ?? [];
-  document.body.classList.toggle("sheet", !!found[3]);
+  const isSheet = !!found[3];
+  const wasSheet = document.body.classList.contains("sheet");
+  view = isSheet ? sheet : page;
   for (const a of document.querySelectorAll(".tabbar a[data-tab]")) {
     if (a.dataset.tab === found[2]) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
   if (!quiet) placeTabGlider();
+  if (isSheet !== wasSheet) showSheet(isSheet);
   // 保存に失敗したシートは、入力したままの中身で出し直す
-  if (restore && restore.hash === (location.hash || "#/")) {
+  if (restore && restore.hash === hash) {
     view.replaceChildren(...restore.nodes);
     restore = null;
     return;
   }
-  // シートは入力を消さないよう描き直さないので、控えを使わず最新を読む
+  // シートを閉じて元の画面に戻るときは、同じ位置のまま描き直す
+  const keep = quiet || (!isSheet && wasSheet && pageHash === hash);
   const served = new Set();
-  fromReads = found[3] || (fresh && !quiet) ? null : served;
   const top = view.scrollTop;
-  let content;
-  try {
-    content = await (match[1] ? found[1](match[1], params) : found[1](params));
-  } catch (e) {
-    content = [h("h1", {}, "読み込めませんでした"), h("p", { class: "sub" }, e.message),
-      h("button", { onclick: () => route({ fresh: true }) }, "もう一度")];
-  } finally {
-    if (run === routeRun) fromReads = null;
-  }
+  const content = await render(found, path, params, fresh && !quiet, served, run);
   if (run !== routeRun) return;
   view.replaceChildren(...[content].flat(Infinity).filter(Boolean));
-  view.scrollTo(0, quiet ? top : 0);
+  view.scrollTo(0, keep ? top : 0);
+  if (!isSheet) pageHash = hash;
+  // 記録や設定を直接開いたときは、下に置くタブの画面がまだないので描いておく
+  if (isSheet && !page.childNodes.length) {
+    const root = `#${tabRoots[found[2]] ?? "/"}`;
+    const under = routes.find(([re]) => re.test(root.slice(1)));
+    const below = await render(under, root.slice(1), new URLSearchParams(), true, null, run);
+    if (run === routeRun && !page.childNodes.length) {
+      page.replaceChildren(...[below].flat(Infinity).filter(Boolean));
+      pageHash = root;
+    }
+  }
   if (quiet || !served.size) return;
   // 控えで描いた画面は後ろで読み直し、変わっていれば同じ位置のまま描き直す
   const before = [...served].map((p) => reads.get(p));
