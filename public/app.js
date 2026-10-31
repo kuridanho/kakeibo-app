@@ -545,7 +545,7 @@ async function entryForm(existing, opts = {}) {
       kind !== "expense" && !existing && !src ? h("details", { class: "more" },
         h("summary", {}, "その他"),
         group(toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })))) : null,
-      existing && !inst ? group(h("button", { type: "button", class: "cell danger", onclick: remove }, "削除")) : null,
+      existing ? group(h("button", { type: "button", class: "cell danger", onclick: remove }, inst ? "分割をやめる" : "削除")) : null,
       src ? group(h("button", { type: "button", class: "cell danger", onclick: dropPlan }, "予定をやめる")) : null);
 
     const setBusy = (value) => {
@@ -743,6 +743,13 @@ async function entryForm(existing, opts = {}) {
     if (!existing) setTimeout(() => amount.focus({ preventScroll: true }), 0);
   };
   async function remove() {
+    // 分割払いの回だけを消すと毎日の記録で作り直すので、分割払いごとやめる
+    if (inst) {
+      if (!confirm("この分割払いをやめます。明細で確かめていない回の記録も消えます。")) return;
+      toast("分割払いをやめました");
+      saveAhead(() => api("DELETE", `/api/installments/${inst.id}`), () => { location.hash = "#/list"; });
+      return;
+    }
     if (!confirm("この取引を削除しますか？")) return;
     toast("削除しました");
     saveAhead(() => api("DELETE", `/api/entries/${existing.id}`), () => { location.hash = "#/list"; });

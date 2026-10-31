@@ -224,6 +224,8 @@ export async function deleteInstallment(db: D1Database, id: number) {
   await getInstallment(db, id);
   for (const { entry } of await recordedPayments(db, id)) {
     if (entry.statement_import_id !== null && entry.provisional === 0) continue;
+    // 予定から記録した取引をあとから分割にしたときは、予定が取引を指しているので先に消す
+    await db.prepare("DELETE FROM planned WHERE entry_id = ?").bind(entry.id).run();
     await deleteEntry(db, entry.id);
   }
   await db.prepare("DELETE FROM installments WHERE id = ?").bind(id).run();
