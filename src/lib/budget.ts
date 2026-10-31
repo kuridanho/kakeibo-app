@@ -175,6 +175,20 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
   return items.sort((x, y) => x.date.localeCompare(y.date));
 }
 
+/** まだ回収していない立て替え。いつ返るかは分からないので、来月の初めに入る見込みとして数える */
+async function advanceItems(db: D1Database, month: string): Promise<BudgetItem[]> {
+  const { results } = await db
+    .prepare(`SELECT e.payee,
+        (SELECT SUM(l.amount) FROM lines l JOIN accounts a ON a.id = l.account_id WHERE l.entry_id = e.id AND a.type = 'expense')
+        - COALESCE((SELECT SUM(l.amount) FROM entries r JOIN lines l ON l.entry_id = r.id JOIN accounts a ON a.id = l.account_id
+          WHERE r.related_entry_id = e.id AND r.kind = 'recovery' AND a.type = 'asset'), 0) AS remaining
+      FROM entries e WHERE e.advance = 1 AND e.settled = 0 AND e.date <= ? ORDER BY e.date`)
+    .bind(`${month}-31`).all<{ payee: string | null; remaining: number | null }>();
+  return results.filter((r) => (r.remaining ?? 0) > 0).map((r) => ({
+    date: `${month}-01`, label: `${r.payee || "立て替え"} の回収`, amount: r.remaining!, cash_delta: r.remaining!, kind: "income",
+  }));
+}
+
 /** 来月末の手元資金から、余裕を引いた使える額 */
 export async function nextMonthBudget(db: D1Database, today = todayJST()): Promise<NextMonthBudget> {
   const current = monthOf(today);
@@ -187,13 +201,16 @@ export async function nextMonthBudget(db: D1Database, today = todayJST()): Promi
   const owed = await Promise.all(cards.map((c) => balanceOf(db, c, `${month}-31`)));
   const cardOwed = new Map(cards.map((c, i) => [c.id, owed[i]]));
 
-  const [pendingCurrent, pendingNext, recordedNext, balances, bufferSetting] = await Promise.all([
+  const [pendingCurrent, pendingSchedule, advances, recordedNext, balances, bufferSetting] = await Promise.all([
     pendingItems(db, current, liquidIds, today, cardOwed),
     pendingItems(db, month, liquidIds, today, cardOwed),
+    advanceItems(db, month),
     recordedItems(db, `${month}-01`, `${month}-31`),
     Promise.all(liquid.map((a) => balanceOf(db, a, `${month}-31`))),
     getSetting(db, "budget_buffer", "0"),
   ]);
+
+  const pendingNext = [...pendingSchedule, ...advances];
 
   // 記録済みは残高に入っているので、まだ記録されていない分だけ足す
   let projected = balances.reduce((s, b) => s + b, 0);
