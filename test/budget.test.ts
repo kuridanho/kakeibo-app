@@ -5,6 +5,7 @@ import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import { app } from "../src/index";
 import { nextMonthBudget } from "../src/lib/budget";
+import { calendarMonth } from "../src/lib/calendar";
 import { recordRecurring } from "../src/lib/recurring";
 import { recordDuePayments } from "../src/lib/reports";
 import type { Env } from "../src/types";
@@ -106,6 +107,9 @@ describe("来月の予算", () => {
     expect(b.income).toContainEqual(expect.objectContaining({ date: "2026-11-01", label: "飲み会 の回収", amount: 4000 }));
     // 立て替えた6000円が出て2000円が戻り、残り4000円が来月に戻る見込み
     expect(b.budget).toBe(before.budget);
+    // カレンダーのこれからの予定にも同じ見込みを出す
+    expect((await calendarMonth(db, "2026-11", today)).planned)
+      .toContainEqual(expect.objectContaining({ date: "2026-11-01", label: "飲み会 の回収", amount: 4000, kind: "income" }));
     await api("POST", `/api/entries/${id}/settle`, {});
     expect((await nextMonthBudget(db, today)).budget).toBe(before.budget - 4000);
     await api("DELETE", `/api/entries/${id}`);

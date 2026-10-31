@@ -3,7 +3,8 @@
 // 日ごとの合計は集計と同じく report_date で数える。立て替えの回収は元の取引の日の支出を減らす。
 
 import type { Account } from "../types";
-import { dayInMonth, nextBankDay, todayJST } from "./dates";
+import { advanceItems } from "./budget";
+import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import type { Planned as PlannedRow } from "./planned";
 import { occurrence, type Recurring } from "./recurring";
 import { cardDueAhead } from "./reports";
@@ -65,6 +66,10 @@ export async function calendarMonth(db: D1Database, month: string, today = today
     } else if (a.payment_amount) {
       planned.push({ date, label: `${a.name} 返済`, amount: a.payment_amount, kind: "payment" });
     }
+  }
+  // 来月使える額と同じく、回収していない立て替えは来月の初めに戻る見込みとして出す
+  if (month === addMonths(monthOf(today), 1)) {
+    for (const a of await advanceItems(db, month)) planned.push({ date: a.date, label: a.label, amount: a.amount, kind: "income" });
   }
   planned.sort((x, y) => x.date.localeCompare(y.date));
   return { month, today, days, planned };

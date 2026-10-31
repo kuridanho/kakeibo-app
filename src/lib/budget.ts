@@ -176,7 +176,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
 }
 
 /** まだ回収していない立て替え。いつ返るかは分からないので、来月の初めに入る見込みとして数える */
-async function advanceItems(db: D1Database, month: string): Promise<BudgetItem[]> {
+export async function advanceItems(db: D1Database, month: string): Promise<BudgetItem[]> {
   const { results } = await db
     .prepare(`SELECT e.payee,
         (SELECT SUM(l.amount) FROM lines l JOIN accounts a ON a.id = l.account_id WHERE l.entry_id = e.id AND a.type = 'expense')
