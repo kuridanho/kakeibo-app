@@ -2163,6 +2163,7 @@ async function route(opts) {
     else a.removeAttribute("aria-current");
   }
   if (!quiet) placeTabGlider();
+  if (!isSheet) document.body.dataset.tab = found[2];
   if (isSheet !== wasSheet) showSheet(isSheet);
   // 保存に失敗したシートは、入力したままの中身で出し直す
   if (restore && restore.hash === hash) {

@@ -179,6 +179,8 @@ a.cell.plain::after { display: none; }
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 }
+/* 集計と資産では記録しないので出さない */
+body[data-tab="summary"] .dock .add, body[data-tab="accounts"] .dock .add { display: none; }
 .dock .add svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
 
 /* 入力 */
