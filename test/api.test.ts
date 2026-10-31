@@ -58,6 +58,10 @@ describe("開始残高と使えるお金", () => {
     expect(b.card_unpaid).toBe(40000);
     expect(b.loan_due).toBe(15000);
     expect(b.available_cash).toBe(312000 - 40000 - 15000);
+    // ホームで開く内訳。カードは請求月ごと、借入は次回の返済日と額
+    expect(b.card_dues.reduce((t: number, x: { amount: number }) => t + x.amount, 0)).toBe(40000);
+    expect(b.card_dues.every((x: { account_id: number }) => x.account_id === card)).toBe(true);
+    expect(b.loan_dues).toEqual([{ account_id: loan, name: "奨学金", date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), amount: 15000 }]);
     expect(b.non_liquid_total).toBe(500000);
     expect(b.net_worth).toBe(312000 + 500000 - 40000 - 900000);
 

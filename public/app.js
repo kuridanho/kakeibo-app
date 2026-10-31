@@ -336,6 +336,15 @@ async function home() {
   const legend = (n, label, amount) => h("div", { class: "cell" },
     h("span", { class: "legend grow" }, n === "stripe" ? h("span", { class: "swatch stripe" }) : h("span", { class: "swatch", style: `background:var(${n})` }), label),
     h("span", { class: "amount" }, num(amount)));
+  // 未払いと返済は、押すとどのカードや借入のいくらが、いつ落ちるかを開く
+  const foldLegend = (n, label, amount, rows) => {
+    if (!rows.length) return legend(n, label, amount);
+    const head = legend(n, label, amount);
+    return h("details", { class: "fold" }, h("summary", { class: "cell" }, ...head.childNodes), rows);
+  };
+  const dueRow = (name, date, note, amount) => h("div", { class: "cell sub" },
+    h("span", { class: "grow" }, h("span", {}, name), date || note ? h("span", { class: "detail" }, date ? dayLabel(date) : note) : null),
+    h("span", { class: "amount" }, num(-amount)));
 
   return [
     // 道具と設定はタブに置かず、右上の歯車から開く
@@ -351,10 +360,11 @@ async function home() {
         h("div", { style: `flex:${avail}` }), h("div", { style: `flex:${b.card_unpaid}` }), h("div", { style: `flex:${b.loan_due}` }),
         short ? h("div", { class: "short", style: `width:${Math.min(100, (short / (b.card_unpaid + b.loan_due)) * 100)}%` }) : null),
       // 未払いと返済は、口座と財布の合計から引く額なのでマイナスで出す
-      h("div", { class: "group", style: "padding-left:0;border-radius:0" },
+      h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
         h("div", { class: "cell" }, h("span", { class: "grow" }, "手元資金"), h("span", { class: "amount" }, num(b.liquid_total))),
-        legend("--tint-2", "カードの未払い", -b.card_unpaid),
-        b.loan_due ? legend("stripe", "次の返済", -b.loan_due) : null,
+        foldLegend("--tint-2", "カードの未払い", -b.card_unpaid,
+          b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount))),
+        b.loan_due ? foldLegend("stripe", "次回の借入返済", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null,
         b.non_liquid_total ? h("div", { class: "cell sub" }, h("span", { class: "grow" }, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null)),
     todos.length ? [
       h("span", { class: "section-head" }, "確かめること"),
