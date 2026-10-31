@@ -67,6 +67,7 @@ const ACCOUNT_NUMBER_FIELDS: Record<string, { label: string; min: number; max: n
   closing_day: { label: "締め日", min: 1, max: 31 },
   payment_day: { label: "引き落とし日", min: 1, max: 31 },
   payment_account_id: { label: "引き落とし口座", min: 1, max: Number.MAX_SAFE_INTEGER },
+  prepay_account_id: { label: "先に引く口座", min: 1, max: Number.MAX_SAFE_INTEGER },
   payment_amount: { label: "毎月の返済額", min: 0, max: Number.MAX_SAFE_INTEGER },
   check_interval_days: { label: "棚卸しの間隔", min: 1, max: 3650 },
   sort_order: { label: "並び順", min: 0, max: Number.MAX_SAFE_INTEGER },
@@ -97,8 +98,8 @@ function checkAccountFields(body: Record<string, unknown>) {
   }
 }
 
-const EDITABLE = ["name", "liquid", "pay_method", "closing_day", "payment_day", "payment_account_id", "payment_amount",
-  "annual_rate", "check_interval_days", "statement_card_name", "statement_import", "sort_order", "archived"] as const;
+const EDITABLE = ["name", "liquid", "pay_method", "closing_day", "payment_day", "payment_account_id", "prepay_account_id",
+  "payment_amount", "annual_rate", "check_interval_days", "statement_card_name", "statement_import", "sort_order", "archived"] as const;
 
 // カードで払ったり、カードから電子マネーにチャージしたりした日に対する、銀行からの引き落とし日
 app.get("/api/accounts/:id/due", async (c) => {
@@ -127,16 +128,17 @@ app.post("/api/accounts", async (c) => {
   if (!ACCOUNT_KINDS[type]?.includes(kind)) throw new LedgerError("種類が正しくありません");
   checkAccountFields(body as Record<string, unknown>);
   await checkPaymentAccount(c.env.DB, body.payment_account_id);
+  await checkPaymentAccount(c.env.DB, body.prepay_account_id);
   // 財布、普通預金、電子マネーは手元の現金に数える。定期預金や投資は別枠
   const liquid = body.liquid ?? (["cash", "bank", "emoney"].includes(kind) ? 1 : 0);
   const payMethod = body.pay_method ?? (["cash", "bank", "emoney", "card"].includes(kind) ? 1 : 0);
   const row = await c.env.DB
-    .prepare(`INSERT INTO accounts (name, type, kind, liquid, pay_method, closing_day, payment_day, payment_account_id, payment_amount,
-        annual_rate, check_interval_days, statement_card_name, statement_import, sort_order, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM accounts WHERE type = ?)), ?)
+    .prepare(`INSERT INTO accounts (name, type, kind, liquid, pay_method, closing_day, payment_day, payment_account_id, prepay_account_id,
+        payment_amount, annual_rate, check_interval_days, statement_card_name, statement_import, sort_order, user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM accounts WHERE type = ?)), ?)
       RETURNING *`)
     .bind(body.name!.trim(), type, kind, liquid, payMethod, body.closing_day ?? null, body.payment_day ?? null,
-      body.payment_account_id ?? null, body.payment_amount ?? null, body.annual_rate ?? null, body.check_interval_days ?? null,
+      body.payment_account_id ?? null, body.prepay_account_id ?? null, body.payment_amount ?? null, body.annual_rate ?? null, body.check_interval_days ?? null,
       body.statement_card_name ?? null, body.statement_import ?? 1, body.sort_order ?? null, type, c.get("user"))
     .first<Account>();
   return c.json(row, 201);
@@ -150,6 +152,7 @@ app.patch("/api/accounts/:id", async (c) => {
   const cols = EDITABLE.filter((k) => k in body);
   if (cols.length === 0) throw new LedgerError("変更する項目がありません");
   if ("payment_account_id" in body) await checkPaymentAccount(c.env.DB, body.payment_account_id);
+  if ("prepay_account_id" in body) await checkPaymentAccount(c.env.DB, body.prepay_account_id);
   const row = await c.env.DB
     .prepare(`UPDATE accounts SET ${cols.map((k) => `${k} = ?`).join(", ")} WHERE id = ? RETURNING *`)
     .bind(...cols.map((k) => body[k] ?? null), id)

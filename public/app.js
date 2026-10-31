@@ -1415,18 +1415,22 @@ async function accountsView(params) {
 }
 
 /** 種類ごとに要る入力欄。追加と設定の両方で使う */
-function kindFields(kind, a, banks) {
+function kindFields(kind, a, banks, wallets = []) {
   // カードは締め日と引き落とし日がないと、どの月に落ちるか決まらない
   const n = (name, label, value, placeholder) => field(label, h("input", { name, inputmode: "numeric", "data-num": "", value, placeholder, required: kind === "card" }));
   const payFrom = field("引き落とし口座", h("select", { name: "payment_account_id", "data-num": "" }, options(banks, a?.payment_account_id, "選んでください")));
+  // メルペイ残高のように、先にその残高から引き、足りない分を引き落とし口座から引く
+  const prepay = wallets.length || a?.prepay_account_id
+    ? field("先に引く残高", h("select", { name: "prepay_account_id", "data-num": "" }, options(wallets, a?.prepay_account_id, "なし")))
+    : null;
   if (kind === "card") return [
     n("closing_day", "締め日", a?.closing_day, "月末は31"),
     n("payment_day", "引き落とし日", a?.payment_day),
-    payFrom,
+    payFrom, prepay,
     toggle("明細CSVを取り込む", h("input", { type: "checkbox", name: "statement_import", checked: a ? !!a.statement_import : true })),
   ];
   // 年率があれば、締め日(なければ前回の返済日)までの日割りの利息を返済額に含めて記録する
-  if (kind === "loan") return [n("payment_day", "返済日", a?.payment_day), payFrom,
+  if (kind === "loan") return [n("payment_day", "返済日", a?.payment_day), payFrom, prepay,
     field("毎月の返済額", moneyInput({ name: "payment_amount", "data-num": "", value: a?.payment_amount, placeholder: "0" })),
     field("年率(%)", h("input", { name: "annual_rate", inputmode: "decimal", value: a?.annual_rate ?? "", placeholder: "なし" })),
     n("closing_day", "利息の締め日", a?.closing_day, "なし")];
@@ -1445,6 +1449,7 @@ function toggles(kind, a) {
 
 function normalize(d, kind) {
   for (const k of ["liquid", "pay_method", "statement_import"]) if (k in d) d[k] = d[k] ? 1 : 0;
+  if (kind === "card" || kind === "loan") d.prepay_account_id ??= null;
   // 借入の年率と締め日は空にしたら消す
   if (kind === "loan") {
     d.annual_rate = d.annual_rate ? Number(String(d.annual_rate).replace("%", "")) : null;
@@ -1456,13 +1461,14 @@ function normalize(d, kind) {
 async function newAccountView() {
   const list = await accounts(true);
   const banks = byType(list, "asset").filter((a) => a.kind === "bank");
+  const wallets = byType(list, "asset").filter((a) => a.kind === "emoney");
   let kind = "cash";
   const extra = h("div", { class: "group" });
   const kindSel = h("select", { name: "kind" }, Object.entries(KIND_LABEL).map(([k, v]) => h("option", { value: k }, v)));
   // 今の残高は開始残高として今日の日付で入れる。借入なら借りている額
   const balanceLabel = () => kind === "loan" ? "借りている額" : kind === "card" ? "今の未払い" : "今の残高";
   const balance = moneyInput({ name: "opening", "data-num": "", placeholder: "0" });
-  const draw = () => fill(extra, field(balanceLabel(), balance), ...[kindFields(kind, null, banks), toggles(kind, null)].flat().filter(Boolean));
+  const draw = () => fill(extra, field(balanceLabel(), balance), ...[kindFields(kind, null, banks, wallets), toggles(kind, null)].flat().filter(Boolean));
   kindSel.addEventListener("change", () => { kind = kindSel.value; draw(); });
   draw();
   const form = h("form", { id: "account-form" },
@@ -1548,6 +1554,7 @@ function checkForm(a, bal, history) {
 
 function accountSettings(a, list) {
   const banks = byType(list, "asset").filter((x) => x.kind === "bank" || x.id === a.payment_account_id);
+  const wallets = byType(list, "asset").filter((x) => x.kind === "emoney" || x.id === a.prepay_account_id);
   // 借入は借りた額をここで直せる。開始残高として入れ、日付は前に入れた日のまま
   const loan = a.kind === "loan";
   const borrowed = loan ? moneyInput({ name: "borrowed", "data-num": "", placeholder: "0" }) : null;
@@ -1560,7 +1567,7 @@ function accountSettings(a, list) {
   }).catch(() => {});
   const form = h("form", { id: "account-form" },
     group(field("名前", h("input", { name: "name", value: a.name })), loan ? field("借りた額", borrowed) : null,
-      kindFields(a.kind, a, banks), toggles(a.kind, a)),
+      kindFields(a.kind, a, banks, wallets), toggles(a.kind, a)),
     group(h("button", { type: "button", class: "cell danger", onclick: async () => {
       const hide = !a.archived;
       if (hide && !confirm(`${a.name}を非表示にします。記録は残り、あとで戻せます。`)) return;

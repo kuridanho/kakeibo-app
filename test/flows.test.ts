@@ -388,6 +388,31 @@ describe("年率のある借入(定額払い)", () => {
     await balanced();
   });
 
+  it("先に引く残高があれば、その残高から引き、足りない分を引き落とし口座から引く", async () => {
+    const merpay = (await api("POST", "/api/accounts", { name: "流れメルペイ", type: "asset", kind: "emoney" })).id;
+    const fixed = (await api("POST", "/api/accounts", {
+      name: "流れメルカード定額", type: "liability", kind: "loan", payment_day: 27, payment_account_id: bank,
+      prepay_account_id: merpay, payment_amount: 3000,
+    })).id;
+    await api("POST", "/api/entries", { date: "2027-12-01", kind: "expense", amount: 9000, category_id: await category("買い物"), from_account_id: fixed });
+    await api("POST", "/api/entries", { date: "2027-12-01", kind: "transfer", amount: 1200, from_account_id: bank, to_account_id: merpay });
+    const lines = async (m: string) => (await db.prepare(`SELECT l.account_id, l.amount FROM lines l JOIN entries e ON e.id = l.entry_id
+      WHERE e.auto_key = ?`).bind(`payment:${fixed}:${m}`).all<{ account_id: number; amount: number }>()).results;
+    await recordDuePayments(db, nextBankDay(dayInMonth("2027-12", 27)));
+    expect(await lines("2027-12")).toEqual(expect.arrayContaining([
+      { account_id: fixed, amount: 3000 }, { account_id: merpay, amount: -1200 }, { account_id: bank, amount: -1800 },
+    ]));
+    const mid = await snapshot();
+    expect(mid.bal(merpay)).toBe(0);
+    expect(mid.bal(fixed)).toBe(6000);
+    // 残高で足りる月は、引き落とし口座から引かない
+    await api("POST", "/api/entries", { date: "2028-01-05", kind: "transfer", amount: 5000, from_account_id: bank, to_account_id: merpay });
+    await recordDuePayments(db, nextBankDay(dayInMonth("2028-01", 27)));
+    expect(await lines("2028-01")).toHaveLength(2);
+    expect((await snapshot()).bal(merpay)).toBe(2000);
+    await balanced();
+  });
+
   it("年率は0〜100の範囲で受け付ける", async () => {
     await expect(api("POST", "/api/accounts", { name: "流れ年率", type: "liability", kind: "loan", annual_rate: 120 })).rejects.toThrow();
   });
