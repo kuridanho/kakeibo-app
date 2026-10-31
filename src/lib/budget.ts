@@ -18,6 +18,8 @@ export interface BudgetItem {
   /** 手元資金の増減。収入は +、支出は − */
   cash_delta: number;
   kind: "income" | "expense" | "transfer" | "payment" | "card";
+  /** カードの引き落としのうち、明細でまだ確定していない額 */
+  pending?: number;
 }
 
 export interface NextMonthBudget {
@@ -127,9 +129,8 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
   }));
 
   const fromPayments = Promise.all(paymentDue.filter((x) => !done.has(x.key)).map(async ({ a, billMonth, due }): Promise<BudgetItem | null> => {
-    const amount = a.kind === "card"
-      ? (await cardDueAhead(db, a, billMonth)).amount
-      : Math.min(a.payment_amount ?? 0, Math.max(await balanceOf(db, a, today), 0));
+    const ahead = a.kind === "card" ? await cardDueAhead(db, a, billMonth) : null;
+    const amount = ahead ? ahead.amount : Math.min(a.payment_amount ?? 0, Math.max(await balanceOf(db, a, today), 0));
     if (amount <= 0) return null;
     owe(a.id, -amount);
     // 先に引く口座(メルペイ残高など)の今の残高で足りる分は、そちらから出る
@@ -142,6 +143,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
       amount,
       cash_delta: cashDelta,
       kind: "payment",
+      ...(ahead?.pending ? { pending: ahead.pending } : {}),
     };
   }));
 
