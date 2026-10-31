@@ -268,8 +268,8 @@ button:disabled { opacity: 0.4; }
 
 /* セグメントコントロール */
 /* iOS 26 と同じく、セグメントは両端の丸いカプセルにする */
-.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--fill); border-radius: 999px; padding: 2px; }
-.seg button { min-height: 32px; border-radius: 999px; background: transparent; color: var(--label); font-size: 13px; font-weight: 500; padding: 0 8px; }
+.seg { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--fill); border-radius: 999px; padding: 2px; }
+.seg button { position: relative; z-index: 1; min-height: 32px; border-radius: 999px; background: transparent; color: var(--label); font-size: 13px; font-weight: 500; padding: 0 8px; }
 .seg button[aria-pressed="true"] { background: var(--seg-on); font-weight: 600; box-shadow: 0 3px 8px rgba(0, 0, 0, .12), 0 3px 1px rgba(0, 0, 0, .04); }
 
 .pill { font-size: 12px; font-weight: 600; color: var(--tint); background: var(--tint-soft); border-radius: 8px; padding: 2px 7px; white-space: nowrap; }
@@ -326,7 +326,8 @@ body.sheet .sheet-panel { transform: none; }
   border: 0.5px solid var(--bar-border); -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8);
   opacity: 0; pointer-events: none; transition: opacity .2s; max-width: calc(100% - 32px); z-index: 20;
 }
-#toast.show { opacity: 1; }
+#toast { transform: translate3d(-50%, -14px, 0) scale(.94); transition: opacity .2s, transform 420ms cubic-bezier(.22, 1.2, .36, 1); }
+#toast.show { opacity: 1; transform: translate3d(-50%, 0, 0); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 .bars a { color: inherit; text-decoration: none; }
@@ -464,3 +465,39 @@ button.pick { width: 100%; min-height: 44px; padding: 8px 0; border-radius: 0; b
 .home-top { padding-right: 0; }
 .home-top .gear { width: 44px; height: 44px; margin: -10px -10px -10px 0; display: inline-flex; align-items: center; justify-content: center; color: var(--tint); }
 .home-top .gear svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 動き。iOS の純正アプリに合わせ、押した手応え、開閉、画面の出入りを付ける。動きを減らす設定では付けない */
+
+/* 押したとき。ボタンは少し縮み、行は灰色に光って、離すとゆっくり消える */
+button, .button, .dock .add, .icon, .gear { transition: transform 260ms cubic-bezier(.3, .7, .4, 1.5), opacity 200ms ease; }
+button:not(:disabled):active, .button:active, a.icon:active, .gear:active { transform: scale(.95); opacity: .75; transition-duration: 80ms; }
+.seg button:not(:disabled):active { transform: scale(.94); opacity: 1; }
+.dock .add:active { transform: scale(.88); transition-duration: 100ms; }
+.tabbar svg { transition: transform 220ms cubic-bezier(.3, .7, .4, 1.5); }
+.tabbar a:active svg { transform: scale(.85); transition-duration: 80ms; }
+.group > a.cell, .group > .cell.link, summary.cell, button.pick { transition: background-color 360ms ease, box-shadow 360ms ease; }
+.group > a.cell:active, .group > .cell.link:active { background-color: var(--fill); box-shadow: -16px 0 0 var(--fill); transition: none; }
+summary.cell:active, button.pick:active { background-color: var(--fill); box-shadow: -16px 0 0 var(--fill), 16px 0 0 var(--fill); transition: none; }
+
+/* セグメントの選ばれた板は、押した先へすべらせる */
+.seg-thumb {
+  position: absolute; left: 0; top: 2px; bottom: 2px; z-index: 0; pointer-events: none;
+  border-radius: 999px; background: var(--seg-on); box-shadow: 0 3px 8px rgba(0, 0, 0, .12), 0 3px 1px rgba(0, 0, 0, .04);
+}
+.seg.thumbed button[aria-pressed="true"] { background: transparent; box-shadow: none; }
+
+/* 内訳を閉じる途中は、矢印を先に戻す */
+details.fold.closing > summary::after { transform: rotate(45deg); }
+
+/* シートを出すと、後ろの画面が少し奥へ下がる */
+main { transform-origin: 50% 0; transition: transform 380ms cubic-bezier(.32, .72, 0, 1), border-radius 380ms; }
+body.sheet main { transform: scale(.94); border-radius: 16px; }
+
+/* 開いた画面の帯とグラフは、左から伸ばす */
+@media (prefers-reduced-motion: no-preference) {
+  main.entering .meter { animation: grow-x 700ms cubic-bezier(.22, 1, .36, 1) both; }
+  main.entering .bar > div { transform-origin: 0 50%; animation: grow-bar 700ms cubic-bezier(.22, 1, .36, 1) both; }
+}
+@keyframes grow-x { from { clip-path: inset(0 100% 0 0 round 5px); } to { clip-path: inset(0 0 0 0 round 5px); } }
+@keyframes grow-bar { from { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { body.sheet main { transform: none; } }
