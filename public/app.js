@@ -1131,10 +1131,15 @@ async function calendarView(params) {
   swipe.from = 0;
   const [cal, all] = await loadAhead(`cal:${month}`, () => loadCalendar(month), from);
   readAhead([-1, 1].map((n) => `cal:${addMonths(month, n)}`), (k) => loadCalendar(k.slice(4)));
-  const entries = all.filter((e) => e.kind !== "opening");
+  // 分割払いの回は締め日に記録するだけで、その日に使ったものではない。日からは外し、月の分割払いとしてまとめる。月の支出には含める
+  const installments = all.filter((e) => e.source === "installment");
+  const entries = all.filter((e) => e.kind !== "opening" && e.source !== "installment");
   const selected = params.get("day");
   // 日ごとの合計と同じく集計の日でまとめる。立て替えの回収は元の取引の日に並ぶ
   const byDay = Map.groupBy(entries, (e) => e.report_date);
+  const instOut = new Map();
+  for (const e of installments) instOut.set(e.report_date, (instOut.get(e.report_date) ?? 0) + entryAmount(e));
+  const daily = Object.fromEntries(Object.entries(cal.days).map(([d, t]) => [d, { ...t, expense: t.expense - (instOut.get(d) ?? 0) }]));
   const plannedBy = Map.groupBy(cal.planned, (p) => p.date);
   const [y, m] = month.split("-").map(Number);
   const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
@@ -1178,7 +1183,7 @@ async function calendarView(params) {
       // 前後の月の日は数字を出さず、空いたマスにする
       if (i < 1 || i > last) return h("span", { class: "cal-d out" });
       const d = `${month}-${String(i).padStart(2, "0")}`;
-      const t = cal.days[d];
+      const t = daily[d];
       const ps = plannedBy.get(d) ?? [];
       const [pin, pout] = [planIn(ps), planOut(ps)];
       return h("button", {
@@ -1204,9 +1209,14 @@ async function calendarView(params) {
 
   // 月の取引と予定を日ごとに、新しい日から並べる
   const days = [...new Set([...byDay.keys(), ...plannedBy.keys()])].sort().reverse();
-  const dayIn = (d) => cal.days[d]?.income ?? 0;
-  const dayOut = (d) => cal.days[d]?.expense ?? 0;
-  const listBody = days.length === 0 ? [h("p", { class: "empty" }, "取引はありません")] : days.map((d) => [
+  const dayIn = (d) => daily[d]?.income ?? 0;
+  const dayOut = (d) => daily[d]?.expense ?? 0;
+  const instTotal = installments.reduce((s, e) => s + entryAmount(e), 0);
+  const instBody = installments.length ? [
+    h("div", { class: "section-head day-head" }, h("span", {}, "分割払い"), h("span", {}, minus(instTotal))),
+    h("div", { class: "group" }, installments.map(entryCell)),
+  ] : [];
+  const listBody = days.length === 0 && !installments.length ? [h("p", { class: "empty" }, "取引はありません")] : [...instBody, ...days.map((d) => [
     h("div", { class: "section-head day-head", id: `day-${d}` }, h("span", {}, dayLabel(d)),
       // 受け取った額と使った額を差し引かずに並べる
       dayIn(d) || dayOut(d) ? h("span", {}, dayIn(d) ? h("span", { class: "inc" }, plus(dayIn(d))) : null,
@@ -1216,7 +1226,7 @@ async function calendarView(params) {
       (plannedBy.get(d) ?? []).map((p) => cell(p.planned_id ? { href: p.date <= today() ? `#/new?planned=${p.planned_id}` : `#/planned/${p.planned_id}` } : {},
         h("div", { class: "grow" }, h("span", {}, p.label), h("span", { class: "detail" }, p.kind === "card" ? `${p.via}の引き落とし分` : "予定")),
         h("span", { class: "amount muted" }, p.kind === "income" ? plus(p.amount) : minus(p.amount))))),
-  ]);
+  ])];
 
   if (selected) setTimeout(() => toDay(selected, "instant"), 0);
   const go = (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; };
