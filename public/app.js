@@ -1135,8 +1135,10 @@ async function calendarView(params) {
   const [cal, all] = await loadAhead(`cal:${month}`, () => loadCalendar(month), from);
   readAhead([-1, 1].map((n) => `cal:${addMonths(month, n)}`), (k) => loadCalendar(k.slice(4)));
   // 分割払いの回は締め日に記録するだけで、その日に使ったものではない。日からは外し、月の分割払いとしてまとめる。月の支出には含める
-  const installments = all.filter((e) => e.source === "installment");
-  const entries = all.filter((e) => e.kind !== "opening" && e.source !== "installment");
+  // 明細と照合した回は source が statement になるので、分割払いの回の印 auto_key でも見分ける
+  const isInstallment = (e) => e.source === "installment" || e.auto_key?.startsWith("installment:");
+  const installments = all.filter(isInstallment);
+  const entries = all.filter((e) => e.kind !== "opening" && !isInstallment(e));
   const selected = params.get("day");
   // 日ごとの合計と同じく集計の日でまとめる。立て替えの回収は元の取引の日に並ぶ
   const byDay = Map.groupBy(entries, (e) => e.report_date);
