@@ -5,7 +5,7 @@ import type { Account, Env } from "../types";
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import { pendingPayments } from "./installments";
 import { balanceOf, buildSimple, resolveAccount } from "./ledger";
-import { cardDueAhead, getSetting } from "./reports";
+import { cardDueAhead, getSetting, splitPayment } from "./reports";
 import { type Planned, plannedInput } from "./planned";
 import { occurrence, toInput, type Recurring } from "./recurring";
 
@@ -131,7 +131,9 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
       : Math.min(a.payment_amount ?? 0, Math.max(await balanceOf(db, a, today), 0));
     if (amount <= 0) return null;
     owe(a.id, -amount);
-    const cashDelta = liquidIds.has(a.payment_account_id!) ? -amount : 0;
+    // 先に引く口座(メルペイ残高など)の今の残高で足りる分は、そちらから出る
+    const { prepay, rest } = await splitPayment(db, a, amount, today);
+    const cashDelta = (liquidIds.has(a.prepay_account_id!) ? -prepay : 0) + (liquidIds.has(a.payment_account_id!) ? -rest : 0);
     if (cashDelta === 0) return null;
     return {
       date: due,

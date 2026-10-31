@@ -24,6 +24,8 @@ export interface Account {
   closing_day: number | null;
   payment_day: number | null;
   payment_account_id: number | null;
+  /** 引き落とし口座より先に残高から引く口座(メルペイ残高など) */
+  prepay_account_id: number | null;
   payment_amount: number | null;
   /** 借入の年率(%) */
   annual_rate: number | null;

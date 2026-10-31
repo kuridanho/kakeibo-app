@@ -4,7 +4,7 @@ import type { Account, Env } from "../types";
 import { addDays, addMonths, billingMonth, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
 import { pendingPayments, recordInstallments } from "./installments";
 import { accruedInterest, interestPeriod } from "./interest";
-import { createEntry } from "./ledger";
+import { balanceOf, createEntry } from "./ledger";
 import type { Planned } from "./planned";
 import { occurrence, recordRecurring, type Recurring } from "./recurring";
 
@@ -69,7 +69,9 @@ export async function balances(db: D1Database, today = todayJST()) {
       if (date < today || date > until) continue;
       if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(`payment:${x.id}:${m}`).first()) continue;
       const amount = x.kind === "card" ? await cardDue(db, x.id, m) : Math.min(x.payment_amount ?? 0, Math.max(x.balance, 0));
-      if (amount > 0) dueSoon.push({ bank: x.payment_account_id, date, amount });
+      // 先に引く口座の残高で足りる分は、引き落とし口座の不足に数えない
+      const { rest } = await splitPayment(db, x, amount, today);
+      if (rest > 0) dueSoon.push({ bank: x.payment_account_id, date, amount: rest });
     }
   }
   const shortfalls = accounts
@@ -259,9 +261,20 @@ export async function cardDueAhead(db: D1Database, card: Account, month: string)
 }
 
 /**
+ * 引き落としの額を、先に引く口座(メルペイ残高など)とその残りを引く引き落とし口座に分ける。
+ * 先に引く口座からは、その日の残高の分まで引く
+ */
+export async function splitPayment(db: D1Database, a: Pick<Account, "payment_account_id" | "prepay_account_id">, amount: number, date: string) {
+  if (!a.prepay_account_id || a.prepay_account_id === a.payment_account_id) return { prepay: 0, rest: amount };
+  const prepay = Math.min(amount, Math.max(await balanceOf(db, { id: a.prepay_account_id, type: "asset" }, date), 0));
+  return { prepay, rest: amount - prepay };
+}
+
+/**
  * 引き落とし日が来たカードと借入の引き落としを記録する。
  * カードは請求月の利用の合計を、引き落とし口座からカードへの振替にする。
  * 借入は返済額を元金として扱う。年率があれば日割りの利息を返済額に含め、利息・手数料に分ける。
+ * 先に引く口座があれば、その残高から引き、足りない分を引き落とし口座から引く。
  */
 export async function recordDuePayments(db: D1Database, today = todayJST()) {
   const month = monthOf(today);
@@ -290,6 +303,7 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
       interest = Math.min(interest, amount);
     }
     if (amount <= 0) continue;
+    const { prepay, rest } = await splitPayment(db, a, amount, due);
     const interestId = interest > 0
       ? (await db.prepare("SELECT id FROM accounts WHERE seed_key = 'interest'").first<{ id: number }>())?.id
       : undefined;
@@ -303,7 +317,8 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
     }, [
       { account_id: a.id, amount: interestId ? amount - interest : amount },
       ...(interestId ? [{ account_id: interestId, amount: interest }] : []),
-      { account_id: a.payment_account_id!, amount: -amount },
+      ...(prepay ? [{ account_id: a.prepay_account_id!, amount: -prepay }] : []),
+      { account_id: a.payment_account_id!, amount: -rest },
     ].filter((l) => l.amount !== 0)));
   }
   return created;
