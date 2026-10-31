@@ -2165,6 +2165,8 @@ const typing = () => view.contains(document.activeElement) && /^(INPUT|SELECT|TE
 let routeRun = 0;
 // page に描いてある画面。シートを閉じて同じ画面に戻ったら、スクロールの位置を保つ
 let pageHash = null;
+// シートを開いたときの page の位置。iOS ではシートを出している間に page の位置が先頭に戻ることがあるので、開く前に控える
+let pageTop = 0;
 const tabRoots = { home: "/", list: "/list", summary: "/summary", accounts: "/accounts" };
 let sheetTimer = 0;
 
@@ -2208,7 +2210,10 @@ async function route(opts) {
   }
   if (!quiet) placeTabGlider();
   if (!isSheet) document.body.dataset.tab = found[2];
+  if (isSheet && !wasSheet) pageTop = page.scrollTop;
   if (isSheet !== wasSheet) showSheet(isSheet);
+  // 閉じる動きの間も、元の位置の画面が見えるようにする
+  if (!isSheet && wasSheet && pageHash === hash) page.scrollTop = pageTop;
   // 保存に失敗したシートは、入力したままの中身で出し直す
   if (restore && restore.hash === hash) {
     view.replaceChildren(...restore.nodes);
@@ -2218,11 +2223,14 @@ async function route(opts) {
   // シートを閉じて元の画面に戻るときは、同じ位置のまま描き直す
   const keep = quiet || (!isSheet && wasSheet && pageHash === hash);
   const served = new Set();
-  const top = view.scrollTop;
+  const back = !isSheet && wasSheet;
+  const top = back ? pageTop : view.scrollTop;
   const content = await render(found, path, params, fresh && !quiet, served, run);
   if (run !== routeRun) return;
   view.replaceChildren(...[content].flat(Infinity).filter(Boolean));
   view.scrollTo(0, keep ? top : 0);
+  // 描き直した直後は高さが決まりきらず位置が詰められることがあるので、次の描画でもう一度合わせる
+  if (keep && back) requestAnimationFrame(() => { if (run === routeRun) page.scrollTo(0, top); });
   if (!isSheet) pageHash = hash;
   // 記録や設定を直接開いたときは、下に置くタブの画面がまだないので描いておく
   if (isSheet && !page.childNodes.length) {
