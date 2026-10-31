@@ -169,6 +169,7 @@ const group = (...rows) => h("div", { class: "group" }, ...rows);
 /** 金額の大きな入力欄。数字のあとに「円」を置き、右に添えるもの(レシートのカメラなど)を受ける */
 function amountField(input, extra) {
   input.placeholder ||= "0";
+  attachKeypad(input);
   return h("div", { class: "card amount-card" }, input, h("span", { class: "yen", "aria-hidden": "true" }, "円"), extra);
 }
 
@@ -222,6 +223,94 @@ function moneyInput(attrs) {
   });
   return el;
 }
+
+/** 式を左から読み、× と ÷ を先に計算する。末尾の演算子は無視し、円に丸める */
+function calcExpr(expr) {
+  const tokens = expr.replace(/[-+*/]+$/, "").match(/\d+|[-+*/]/g);
+  if (!tokens) return null;
+  let sum = 0, term = null, sign = 1, mul = null;
+  for (const t of tokens) {
+    if (/\d/.test(t)) { const n = Number(t); term = term === null ? n : mul === "/" ? term / n : term * n; mul = null; }
+    else if (t === "*" || t === "/") mul = t;
+    else { if (term !== null) sum += sign * term; term = null; sign = t === "-" ? -1 : 1; }
+  }
+  sum += sign * (term ?? 0);
+  return Number.isFinite(sum) ? Math.round(sum) : null;
+}
+
+/** 電卓と同じ並びのテンキー。画面に1つだけ置き、大きな金額欄に触れると下から出す */
+const keypad = (() => {
+  let input = null, expr = "";
+  const exprEl = h("span", { class: "keypad-expr", "aria-live": "polite" });
+  const ops = { "/": "÷", "*": "×", "-": "−", "+": "+" };
+  const show = () => {
+    const v = calcExpr(expr);
+    input.value = v === null ? (expr === "-" ? "-" : "") : fmtNum(v);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    exprEl.textContent = /\d[-+*/]/.test(expr) ? expr.replace(/\d+/g, (d) => fmtNum(d)).replace(/[-+*/]/g, (o) => ` ${ops[o]} `) : "";
+  };
+  const press = (k) => {
+    if (!input) return;
+    const last = expr.at(-1) ?? "";
+    const num = expr.match(/\d*$/)[0];
+    if (k === "AC") expr = "";
+    else if (k === "Del") expr = expr.slice(0, -1);
+    else if (k in ops) {
+      if (!expr || expr === "-") expr = k === "-" ? "-" : "";
+      else expr = (/[-+*/]/.test(last) ? expr.slice(0, -1) : expr) + k;
+    } else if (k === "8%" || k === "10%") {
+      const v = calcExpr(expr);
+      if (v !== null) expr = String(Math.floor((v * (k === "8%" ? 108 : 110)) / 100));
+    } else {
+      const d = num === "0" || (!num && k === "00") ? k.slice(-1) : k;
+      if ((num + d).length > 10) return;
+      expr = num === "0" ? expr.slice(0, -1) + d : expr + d;
+    }
+    show();
+  };
+  const key = (k, label = k, cls = "") => h("button", {
+    type: "button", class: cls, "aria-label": { "/": "割る", "*": "掛ける", "-": "引く", "+": "足す", Del: "1文字消す", AC: "全部消す" }[k],
+    onpointerdown: (ev) => ev.preventDefault(), onclick: () => press(k),
+  }, label);
+  const close = () => input?.blur();
+  const el = h("div", { class: "keypad", role: "group", "aria-label": "テンキー" },
+    h("div", { class: "keypad-bar" },
+      h("div", { class: "keypad-tax" }, exprEl,
+        key("8%", "税込8%", "chip"), key("10%", "税込10%", "chip")),
+      h("button", { type: "button", class: "keypad-done", "aria-label": "閉じる", onpointerdown: (ev) => ev.preventDefault(), onclick: close }, "✓")),
+    h("div", { class: "keypad-keys" },
+      key("7"), key("8"), key("9"), key("/", "÷", "op"), key("AC", "AC", "op"),
+      key("4"), key("5"), key("6"), key("*", "×", "op"), key("Del", "Del", "op del"),
+      key("1"), key("2"), key("3"), key("-", "−", "op"),
+      h("button", { type: "button", class: "op ok", onpointerdown: (ev) => ev.preventDefault(), onclick: close }, "OK"),
+      key("0"), key("00", "00", "wide"), key("+", "+", "op")));
+  const hide = () => {
+    input = null;
+    document.body.classList.remove("keypad-open");
+    el.classList.remove("open");
+  };
+  addEventListener("hashchange", () => input?.blur());
+  return {
+    attach(target) {
+      target.setAttribute("inputmode", "none");
+      target.addEventListener("focus", () => {
+        if (!el.isConnected) document.body.append(el);
+        input = target;
+        expr = String(parseNum(target.value) || "");
+        exprEl.textContent = "";
+        document.body.classList.add("keypad-open");
+        requestAnimationFrame(() => el.classList.add("open"));
+      });
+      target.addEventListener("blur", () => { if (input === target) hide(); });
+      target.addEventListener("keydown", (ev) => {
+        const k = { Backspace: "Del", Escape: "OK", Enter: "OK", "×": "*", "÷": "/" }[ev.key] ?? ev.key;
+        if (k === "OK") { ev.preventDefault(); close(); }
+        else if (/^[0-9]$/.test(k) || k in ops || k === "Del") { ev.preventDefault(); press(k); }
+      });
+    },
+  };
+})();
+const attachKeypad = (input) => { if (!input.disabled) keypad.attach(input); };
 
 function formData(form) {
   const out = {};
