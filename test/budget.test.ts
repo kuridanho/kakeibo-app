@@ -94,6 +94,23 @@ describe("来月の予算", () => {
     expect(b.budget).toBe(360000);
   });
 
+  it("回収していない立て替えは、来月の収入の見込みに含める", async () => {
+    const before = await nextMonthBudget(db, today);
+    const { id } = await api("POST", "/api/entries", {
+      kind: "expense", date: "2026-10-20", amount: 6000, from_account_id: bank,
+      category_id: await category("その他"), payee: "飲み会", advance: true,
+    });
+    await api("POST", `/api/entries/${id}/recoveries`, { date: "2026-10-21", account_id: bank, amount: 2000 });
+    const b = await nextMonthBudget(db, today);
+
+    expect(b.income).toContainEqual(expect.objectContaining({ date: "2026-11-01", label: "飲み会 の回収", amount: 4000 }));
+    // 立て替えた6000円が出て2000円が戻り、残り4000円が来月に戻る見込み
+    expect(b.budget).toBe(before.budget);
+    await api("POST", `/api/entries/${id}/settle`, {});
+    expect((await nextMonthBudget(db, today)).budget).toBe(before.budget - 4000);
+    await api("DELETE", `/api/entries/${id}`);
+  });
+
   it("すでに記録した回は、繰り返しから二重に足さない", async () => {
     await recordRecurring(db, "2026-11-25");
     const b = await nextMonthBudget(db, today);
