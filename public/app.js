@@ -1429,11 +1429,11 @@ function kindFields(kind, a, banks, wallets = []) {
     payFrom, prepay,
     toggle("明細CSVを取り込む", h("input", { type: "checkbox", name: "statement_import", checked: a ? !!a.statement_import : true })),
   ];
-  // 年率があれば、締め日(なければ前回の返済日)までの日割りの利息を返済額に含めて記録する
+  // 年率があれば、前の締め日(なければ前月末)までの日割りの利息を返済額に含めて記録する
   if (kind === "loan") return [n("payment_day", "返済日", a?.payment_day), payFrom, prepay,
     field("毎月の返済額", moneyInput({ name: "payment_amount", "data-num": "", value: a?.payment_amount, placeholder: "0" })),
     field("年率(%)", h("input", { name: "annual_rate", inputmode: "decimal", value: a?.annual_rate ?? "", placeholder: "なし" })),
-    n("closing_day", "利息の締め日", a?.closing_day, "なし")];
+    n("closing_day", "利息の締め日", a?.closing_day, "月末")];
   if (CHECKABLE.includes(kind)) return [n("check_interval_days", "棚卸しの間隔", a?.check_interval_days, "日数")];
   return [];
 }
@@ -1493,8 +1493,8 @@ async function accountView(id) {
   const list = await accounts(true);
   const a = list.find((x) => x.id === Number(id));
   if (!a) throw new Error("見つかりません");
-  const [b, history, entries] = await Promise.all([api("GET", "/api/balances"), api("GET", `/api/balance-checks?account_id=${id}`),
-    api("GET", `/api/entries?account_id=${id}&limit=30`)]);
+  const [b, history, entries, interest] = await Promise.all([api("GET", "/api/balances"), api("GET", `/api/balance-checks?account_id=${id}`),
+    api("GET", `/api/entries?account_id=${id}&limit=30`), a.kind === "loan" ? api("GET", `/api/accounts/${id}/interest`) : null]);
   const bal = b.accounts.find((x) => x.id === a.id)?.balance ?? 0;
   const recent = entries.filter((e) => e.kind !== "opening");
   // 設定は編集から開く別の画面に分け、ここには残高、棚卸し、取引だけを置く
@@ -1502,10 +1502,27 @@ async function accountView(id) {
     h("div", { class: "navrow" }, h("h1", {}, a.name), h("div", {}, h("a", { class: "text", href: `#/account/${a.id}/edit` }, "編集"))),
     h("div", { class: "card" }, h("div", { class: "row" },
       h("span", {}, a.kind === "card" ? "未払い" : a.kind === "loan" ? "借りている額" : "残高"), h("span", { class: "title1" }, yen(bal)))),
+    interest ? loanInterest(interest) : null,
     CHECKABLE.includes(a.kind) || a.kind === "investment" ? checkForm(a, bal, history) : null,
     a.kind === "investment" ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "売買は、記録の振替で銀行口座との間を移します。") : null,
     recent.length ? [...Map.groupBy(recent, (e) => e.date)].map(([d, es]) => [
       h("span", { class: "section-head" }, dayLabel(d)), group(es.map(entryCell))]) : null,
+  ];
+}
+
+// 借入の次の返済と、その内訳、たまっている利息
+function loanInterest(r) {
+  const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  const row = (label, value) => cell({}, h("span", { class: "grow" }, label), h("span", { class: "value" }, value));
+  return [
+    r.next ? group(
+      row(`次の返済 ${md(r.next.date)}`, num(r.next.amount)),
+      row("元金", num(r.next.amount - r.next.interest)),
+      row("利息", num(r.next.interest))) : null,
+    group(
+      r.annual_rate ? row("年率", `${r.annual_rate}%`) : null,
+      r.annual_rate ? row(`${md(r.accrued.from)}からの利息`, num(r.accrued.amount)) : null,
+      row("これまでの利息", num(r.paid_total))),
   ];
 }
 

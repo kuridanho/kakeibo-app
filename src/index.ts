@@ -7,6 +7,7 @@ import {
   resolveAccount, type SimpleInput, updateEntry,
 } from "./lib/ledger";
 import { calendarMonth } from "./lib/calendar";
+import { loanOverview } from "./lib/interest";
 import { nextMonthBudget } from "./lib/budget";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
@@ -112,6 +113,12 @@ app.get("/api/accounts/:id/due", async (c) => {
   if (a.kind !== "card" || !a.closing_day || !a.payment_day) return c.json({ billing_month: null, date: null, payment_account_id: null });
   const month = given ?? billingMonth(date, a.closing_day, a.payment_day);
   return c.json({ billing_month: month, date: nextBankDay(dayInMonth(month, a.payment_day)), payment_account_id: a.payment_account_id });
+});
+
+app.get("/api/accounts/:id/interest", async (c) => {
+  const a = await getAccount(c.env.DB, int(c.req.param("id"), "id"));
+  if (a.kind !== "loan") throw new LedgerError("借入ではありません");
+  return c.json(await loanOverview(c.env.DB, a));
 });
 
 app.get("/api/accounts", async (c) => {
