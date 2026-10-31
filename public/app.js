@@ -2345,7 +2345,7 @@ function placeTabGlider(animate = true) {
   tabGlider.animate([
     { transform: `translate3d(${from}px, 0, 0)` },
     { transform: `translate3d(${x}px, 0, 0)` },
-  ], { duration: 420, easing: "cubic-bezier(.22, 1.12, .36, 1)" });
+  ], { duration: 320, easing: "cubic-bezier(.32, .72, 0, 1)" });
   gliderX = x;
 }
 
@@ -2417,7 +2417,7 @@ function keepHero(hash) {
   if (before && before !== hero.textContent) countUp(hero, before);
 }
 
-// 画面の出入り。奥へ進むと右から、戻ると左から、タブを替えるとその場で浮かび上がる
+// 画面の出入り。奥へ進むと右から、戻ると左から入れる。タブは対等な画面なので、替えたときは動かさずに切り替える
 const depth = (path) => (/^\/(list|plan|budget|summary|recurring)?$/.test(path) ? 0 : 1);
 let shownPath = null;
 let shownTab = null;
@@ -2426,23 +2426,10 @@ function enterPage(path, tab) {
   const beforeTab = shownTab;
   shownPath = path;
   shownTab = tab;
-  page.classList.remove("entering");
-  void page.offsetWidth;
-  page.classList.add("entering");
-  clearTimeout(enterPage.timer);
-  enterPage.timer = setTimeout(() => page.classList.remove("entering"), 800);
-  if (!before || before === path || !moving()) return;
-  const dir = tab !== beforeTab ? 0 : Math.sign(depth(path) - depth(before));
-  const frames = dir
-    ? { transform: [`translate3d(${dir * 28}%, 0, 0)`, "none"], opacity: [0.4, 1] }
-    : { transform: ["translate3d(0, 10px, 0)", "none"], opacity: [0, 1] };
-  page.animate(frames, { duration: dir ? 420 : 280, easing: SPRING });
-}
-
-// 押したタブの絵を軽く弾ませる
-function bounceTab() {
-  const svg = tabbar?.querySelector('a[aria-current="page"] svg');
-  if (svg && moving()) svg.animate({ transform: ["scale(1)", "scale(.82)", "scale(1.12)", "scale(1)"] }, { duration: 420, easing: "ease-out" });
+  if (!before || before === path || tab !== beforeTab || !moving()) return;
+  const dir = Math.sign(depth(path) - depth(before));
+  if (!dir) return;
+  page.animate({ transform: [`translate3d(${dir * 28}%, 0, 0)`, "none"], opacity: [0.4, 1] }, { duration: 420, easing: SPRING });
 }
 
 // セグメントの選ばれた板を、押す前の位置から新しい位置へすべらせる。押したあとに描き直されても続けて動かす
@@ -2473,7 +2460,7 @@ function syncSegs() {
     if (tap && tap.key === seg.getAttribute("aria-label") && tap.x !== x && performance.now() - tap.t < 1500 && moving()) {
       segTap = null;
       thumb.animate({ transform: [`translate3d(${tap.x}px, 0, 0)`, `translate3d(${x}px, 0, 0)`], width: [`${tap.w}px`, `${w}px`] },
-        { duration: 380, easing: "cubic-bezier(.22, 1.12, .36, 1)" });
+        { duration: 300, easing: "cubic-bezier(.32, .72, 0, 1)" });
     }
   }
 }
@@ -2535,9 +2522,7 @@ async function route(opts) {
     if (a.dataset.tab === found[2]) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
-  const tabChanged = !isSheet && found[2] !== document.body.dataset.tab;
   if (!quiet) placeTabGlider();
-  if (tabChanged && document.body.dataset.tab) bounceTab();
   if (!isSheet) document.body.dataset.tab = found[2];
   if (isSheet && !wasSheet) pageTop = page.scrollTop;
   if (isSheet !== wasSheet) showSheet(isSheet);

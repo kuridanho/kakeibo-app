@@ -10,6 +10,7 @@ iPhone の Safari で使う個人用の家計簿。Cloudflare Workers(Hono)で�
 - `src/lib/recurring.ts` 繰り返し、`planned.ts` 予定、`installments.ts` カードの分割払い(明細の分割の行との照合は statement.ts)、`dates.ts` 日付(JST)、`receipt-eval.ts` レシート読み取り。
 - `src/types.ts` 型。`migrations/` D1 のスキーマ(連番 SQL)。
 - `public/app.js` 画面すべて(SPA、ビルドなし)。画面の対応は末尾近くの `const routes` にある。`public/app.css` 見た目、`public/sw.js` Service Worker。
+- `.claude/skills/` appllama-skills(MIT)。画面を作り直すときは `appllama-app-design-skill` の決まり(角丸の段階、灰色の系統、押したときの動き)に従う。Expo 向けの部分と Appllama MCP は使わない。
 - `test/` vitest。資金の流れの決まりは `test/flows.test.ts`、API は `test/api.test.ts`。
 
 ## データの要点
