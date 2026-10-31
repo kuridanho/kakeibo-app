@@ -431,7 +431,7 @@ async function home() {
     const head = legend(n, label, amount);
     return h("details", { class: "fold" }, h("summary", { class: "cell" }, ...head.childNodes), rows);
   };
-  const dueRow = (name, date, note, amount) => h("div", { class: "cell sub" },
+  const dueRow = (name, date, note, amount, href) => cell({ class: "sub", href },
     h("span", { class: "grow" }, h("span", {}, name), date || note ? h("span", { class: "detail" }, date ? dayLabel(date) : note) : null),
     h("span", { class: "amount" }, num(-amount)));
 
@@ -452,7 +452,7 @@ async function home() {
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
         h("div", { class: "cell" }, h("span", { class: "grow" }, "手元資金"), h("span", { class: "amount" }, num(b.liquid_total))),
         foldLegend("--tint-2", "カードの未払い", -b.card_unpaid,
-          b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount))),
+          b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount, `#/account/${x.account_id}`))),
         b.loan_due ? foldLegend("stripe", "次回の借入返済", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null,
         b.non_liquid_total ? h("div", { class: "cell sub" }, h("span", { class: "grow" }, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null)),
     todos.length ? [
@@ -1686,16 +1686,24 @@ async function accountView(id) {
   const list = await accounts(true);
   const a = list.find((x) => x.id === Number(id));
   if (!a) throw new Error("見つかりません");
-  const [b, history, entries, interest] = await Promise.all([api("GET", "/api/balances"), api("GET", `/api/balance-checks?account_id=${id}`),
-    api("GET", `/api/entries?account_id=${id}&limit=30`), a.kind === "loan" ? api("GET", `/api/accounts/${id}/interest`) : null]);
+  const [b, history, entries, interest, installments] = await Promise.all([api("GET", "/api/balances"), api("GET", `/api/balance-checks?account_id=${id}`),
+    api("GET", `/api/entries?account_id=${id}&limit=30`), a.kind === "loan" ? api("GET", `/api/accounts/${id}/interest`) : null,
+    a.kind === "card" ? api("GET", "/api/installments") : []]);
   const bal = b.accounts.find((x) => x.id === a.id)?.balance ?? 0;
+  // 未払いには請求に載った回までしか入らないので、まだ載っていない分割の回を別に足して見せる
+  const paying = installments.filter((x) => x.card_id === a.id && !x.done);
+  const later = paying.reduce((s, x) => s + x.remaining, 0);
+  const name = (cid) => list.find((x) => x.id === cid)?.name ?? "";
+  const row = (label, value) => cell({}, h("span", { class: "grow" }, label), h("span", { class: "value" }, value));
   const recent = entries.filter((e) => e.kind !== "opening");
   // 設定は編集から開く別の画面に分け、ここには残高、棚卸し、取引だけを置く
   return [
     h("div", { class: "navrow" }, h("h1", {}, a.name), h("div", {}, h("a", { class: "text", href: `#/account/${a.id}/edit` }, "編集"))),
     h("div", { class: "card" }, h("div", { class: "row" },
       h("span", {}, a.kind === "card" ? "未払い" : a.kind === "loan" ? "借りている額" : "残高"), h("span", { class: "title1" }, yenBig(bal)))),
+    paying.length ? group(row("これからの分割", num(later)), row("分割を含めた額", num(bal + later))) : null,
     interest ? loanInterest(interest) : null,
+    paying.length ? [h("span", { class: "section-head" }, "分割払い"), group(paying.map((x) => installmentCell(x, name, false)))] : null,
     CHECKABLE.includes(a.kind) || a.kind === "investment" ? checkForm(a, bal, history) : null,
     a.kind === "investment" ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "売買は、記録の振替で銀行口座との間を移します。") : null,
     recent.length ? [...Map.groupBy(recent, (e) => e.date)].map(([d, es]) => [
@@ -1941,14 +1949,19 @@ async function recurringView() {
     // 分割払い。記録の画面で支払回数を選ぶか、取引からあとから分割にすると入る
     paying.length ? [
       h("span", { class: "section-head" }, "分割払い"),
-      h("div", { class: "group" }, paying.map((x) => cell({ href: `#/installment/${x.id}`, class: "tall" },
-        h("div", { class: "grow" },
-          h("span", {}, x.payee || name(x.category_id)),
-          h("span", { class: "detail" }, [name(x.card_id), `残り${x.count - x.start_number + 1 - x.recorded}回`,
-            x.next ? `次は${monthTitle(x.next.month)}の請求` : ""].filter(Boolean).join("　"))),
-        h("span", { class: "amount" }, minus(x.remaining))))),
+      h("div", { class: "group" }, paying.map((x) => installmentCell(x, name))),
     ] : null,
   ];
+}
+
+// 分割払いの行。まだ請求に載っていない回の数と額を出す
+function installmentCell(x, name, withCard = true) {
+  return cell({ href: `#/installment/${x.id}`, class: "tall" },
+    h("div", { class: "grow" },
+      h("span", {}, x.payee || name(x.category_id)),
+      h("span", { class: "detail" }, [withCard ? name(x.card_id) : "", `残り${x.count - x.start_number + 1 - x.recorded}回`,
+        x.next ? `次は${monthTitle(x.next.month)}の請求` : ""].filter(Boolean).join("　"))),
+    h("span", { class: "amount" }, minus(x.remaining)));
 }
 
 async function recurringForm(id) {
