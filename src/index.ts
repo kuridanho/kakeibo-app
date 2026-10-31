@@ -8,7 +8,7 @@ import {
 } from "./lib/ledger";
 import { calendarMonth } from "./lib/calendar";
 import { loanOverview } from "./lib/interest";
-import { nextMonthBudget } from "./lib/budget";
+import { monthEndProjection, nextMonthBudget } from "./lib/budget";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
 import {
@@ -893,6 +893,7 @@ app.get("/api/counts", async (c) => {
 });
 
 app.get("/api/budget", async (c) => c.json(await nextMonthBudget(c.env.DB)));
+app.get("/api/month-end", async (c) => c.json(await monthEndProjection(c.env.DB)));
 
 app.get("/api/summary/month", async (c) => {
   const month = c.req.query("month") ?? monthOf(todayJST());

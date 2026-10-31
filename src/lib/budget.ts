@@ -2,7 +2,7 @@
 // 引くのは来月のうちに手元から出る分だけで、再来月以降に引き落とされるカードの利用は引かない。
 
 import type { Account, Env } from "../types";
-import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
+import { addDays, addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import { beforeFirstPayment } from "./interest";
 import { pendingPayments } from "./installments";
 import { balanceOf, buildSimple, resolveAccount } from "./ledger";
@@ -235,5 +235,41 @@ export async function nextMonthBudget(db: D1Database, today = todayJST()): Promi
     card_unpaid: cardUnpaid,
     buffer,
     budget: projected - buffer,
+  };
+}
+
+export interface MonthEnd {
+  month: string;
+  /** 今日の終わりの手元資金 */
+  current_liquid: number;
+  /** 明日から月末までに手元を動かす、記録済みと予定の入出金 */
+  income: BudgetItem[];
+  expenses: BudgetItem[];
+  projected_liquid: number;
+}
+
+/**
+ * 今月末の手元資金の見込み。来月の予算の月初残高と同じ数え方で、
+ * 立て替えの回収は来月の初めに入る見込みなので含めない。
+ */
+export async function monthEndProjection(db: D1Database, today = todayJST()): Promise<MonthEnd> {
+  const month = monthOf(today);
+  const liquid = await liquidAccounts(db);
+  const liquidIds = new Set(liquid.map((a) => a.id));
+  const [pending, recordedAhead, balances] = await Promise.all([
+    pendingItems(db, month, liquidIds, today, new Map()),
+    recordedItems(db, addDays(today, 1), `${month}-31`),
+    Promise.all(liquid.map((a) => balanceOf(db, a, `${month}-31`))),
+  ]);
+  let projected = balances.reduce((s, b) => s + b, 0);
+  for (const item of pending) projected += item.cash_delta;
+  const items = [...recordedAhead, ...pending].sort((x, y) => x.date.localeCompare(y.date));
+  const change = items.reduce((s, item) => s + item.cash_delta, 0);
+  return {
+    month,
+    current_liquid: projected - change,
+    income: items.filter((i) => i.cash_delta > 0),
+    expenses: items.filter((i) => i.cash_delta < 0),
+    projected_liquid: projected,
   };
 }

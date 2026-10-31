@@ -4,7 +4,7 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import { app } from "../src/index";
-import { nextMonthBudget } from "../src/lib/budget";
+import { monthEndProjection, nextMonthBudget } from "../src/lib/budget";
 import { calendarMonth } from "../src/lib/calendar";
 import { recordRecurring } from "../src/lib/recurring";
 import { recordDuePayments } from "../src/lib/reports";
@@ -74,6 +74,15 @@ beforeAll(async () => {
   // 10月分の返済を済ませておく
   await recordDuePayments(db, "2026-10-27");
   await api("PUT", "/api/settings", { budget_buffer: 30000 });
+});
+
+describe("今月末の残高見込み", () => {
+  it("来月の予算の月初残高と同じ額になり、今の手元に入出金を足し引きした式になる", async () => {
+    const [m, b] = await Promise.all([monthEndProjection(db, today), nextMonthBudget(db, today)]);
+    expect(m.projected_liquid).toBe(b.opening_liquid);
+    const flow = [...m.income, ...m.expenses].reduce((s, x) => s + x.cash_delta, 0);
+    expect(m.current_liquid + flow).toBe(m.projected_liquid);
+  });
 });
 
 describe("来月の予算", () => {
