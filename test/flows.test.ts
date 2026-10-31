@@ -5,10 +5,10 @@ import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import { app } from "../src/index";
 import { calendarMonth } from "../src/lib/calendar";
-import { dayInMonth, nextBankDay } from "../src/lib/dates";
+import { addMonths, billingMonth, dayInMonth, nextBankDay, todayJST } from "../src/lib/dates";
 import { recordRecurring } from "../src/lib/recurring";
 import { loanOverview } from "../src/lib/interest";
-import { recordDuePayments } from "../src/lib/reports";
+import { cardDue, recordDuePayments } from "../src/lib/reports";
 import type { Env } from "../src/types";
 
 const testEnv = env as unknown as Env;
@@ -304,6 +304,20 @@ describe("品目ごとの支出の編集", () => {
     expect(e.memo).toBe("直した");
     const byCat = Object.fromEntries(e.lines.map((l: any) => [l.account_id, l.amount]));
     expect(byCat).toEqual({ [food]: 1000, [shop]: 500, [wallet]: -1500 });
+    await balanced();
+  });
+  it("締める前に取り込んだ明細の月は、そのあとの仮の取引も未確定として引き落としに足す", async () => {
+    const other = await category("その他");
+    // 取り込んだ今日の利用がまだこの請求月に入るので、明細は締める前の途中のもの
+    const month = billingMonth(todayJST(), 15, 10);
+    const used = dayInMonth(addMonths(month, -2), 16);
+    const csv = `様,1,流れカード\n${used.replaceAll("-", "/")},ホンヤ,1200,１,１,1200,\n,,,,,1200,\n`;
+    await api("POST", "/api/statements/commit", { account_id: card, billing_month: month, text: csv, choices: {} });
+    await api("POST", "/api/entries", { kind: "expense", date: used, amount: 800, from_account_id: card, category_id: other, payee: "あとの利用" });
+    const pay = (await calendarMonth(db, month, `${month}-01`)).planned.find((p) => p.label === "流れカード 引き落とし");
+    expect(pay).toMatchObject({ amount: 2000, pending: 800 });
+    // 実際の引き落としは明細の額のまま
+    expect(await cardDue(db, card, month)).toBe(1200);
     await balanced();
   });
 });

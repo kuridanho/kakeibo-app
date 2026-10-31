@@ -252,12 +252,25 @@ export interface CardUsage { date: string; label: string; amount: number; planne
  * 繰り返しや予定でカード払いにしたものは、締め日と引き落とし日から請求月を決め、その月の引き落としに足す。
  * 明細を取り込んだ月は明細の額がそのまま落ちるので、何も足さない。
  */
-export async function cardDueAhead(db: D1Database, card: Account, month: string): Promise<{ amount: number; usage: CardUsage[] }> {
+export async function cardDueAhead(db: D1Database, card: Account, month: string): Promise<{ amount: number; usage: CardUsage[]; pending: number }> {
   const imported = await db
-    .prepare("SELECT 1 FROM statement_imports WHERE account_id = ? AND billing_month = ? LIMIT 1")
-    .bind(card.id, month).first();
+    .prepare("SELECT created_at FROM statement_imports WHERE account_id = ? AND billing_month = ? ORDER BY id DESC LIMIT 1")
+    .bind(card.id, month).first<{ created_at: string }>();
   const due = await cardDue(db, card.id, month);
-  if (imported || !card.closing_day || !card.payment_day) return { amount: due, usage: [] };
+  // 明細とまだ照合していない仮の取引。明細のない月は cardDue に含まれている
+  const pendingRow = await db
+    .prepare(`SELECT -COALESCE(SUM(l.amount), 0) AS s FROM lines l JOIN entries e ON e.id = l.entry_id
+      WHERE l.account_id = ? AND e.billing_month = ? AND e.provisional = 1`)
+    .bind(card.id, month).first<{ s: number }>();
+  const pending = pendingRow?.s ?? 0;
+  if (imported) {
+    // 締める前に取り込んだ明細はまだ途中なので、そのあとの仮の取引も請求に載る見込みとして足す。
+    // 締めたあとの明細に載らなかった仮の取引は、照合し直すまでカードの未払いに残す
+    const at = todayJST(new Date(`${imported.created_at.replace(" ", "T")}Z`));
+    const open = !!card.closing_day && !!card.payment_day && billingMonth(at, card.closing_day, card.payment_day) === month;
+    return open ? { amount: due + pending, usage: [], pending } : { amount: due, usage: [], pending: 0 };
+  }
+  if (!card.closing_day || !card.payment_day) return { amount: due, usage: [], pending };
   const billed = (date: string) => billingMonth(date, card.closing_day!, card.payment_day!) === month;
 
   const [{ results: rs }, { results: ps }, installments] = await Promise.all([
@@ -283,7 +296,7 @@ export async function cardDueAhead(db: D1Database, card: Account, month: string)
   // 分割払いの回は cardDue がもう足しているので、内訳にだけ並べる
   usage.push(...installments.map((p) => ({ date: p.date, label: `${p.plan.payee || "分割払い"} ${p.number}/${p.plan.count}回`, amount: p.amount })));
   usage.sort((x, y) => x.date.localeCompare(y.date));
-  return { amount: due + extra, usage };
+  return { amount: due + extra, usage, pending };
 }
 
 /**

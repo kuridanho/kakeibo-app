@@ -20,6 +20,8 @@ export interface Planned {
   via?: string;
   /** 一度きりの予定のとき、その id */
   planned_id?: number;
+  /** カードの引き落としのうち、明細でまだ確定していない額 */
+  pending?: number;
 }
 
 export async function calendarMonth(db: D1Database, month: string, today = todayJST()) {
@@ -61,8 +63,8 @@ export async function calendarMonth(db: D1Database, month: string, today = today
     const date = nextBankDay(dayInMonth(month, a.payment_day!));
     if (date <= today || beforeFirstPayment(a, month)) continue;
     if (a.kind === "card") {
-      const { amount, usage } = await cardDueAhead(db, a, month);
-      if (amount > 0) planned.push({ date, label: `${a.name} 引き落とし`, amount, kind: "payment" });
+      const { amount, usage, pending } = await cardDueAhead(db, a, month);
+      if (amount > 0) planned.push({ date, label: `${a.name} 引き落とし`, amount, kind: "payment", ...(pending ? { pending } : {}) });
       for (const u of usage) planned.push({ date, label: u.label, amount: u.amount, kind: "card", via: a.name, planned_id: u.planned_id });
     } else if (a.payment_amount) {
       planned.push({ date, label: `${a.name} 返済`, amount: a.payment_amount, kind: "payment" });

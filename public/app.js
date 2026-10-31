@@ -469,13 +469,17 @@ async function home() {
 
 // ---- 来月の予算 ----
 
+/** カードの引き落とし見込みのうち、明細でまだ確定していない額の添え書き */
+const pendingNote = (p) => !p.pending ? "" : p.pending >= p.amount ? "未確定" : `うち未確定 ${num(p.pending)}`;
+
 async function budgetView() {
   const b = budgetCache ?? await api("GET", "/api/budget");
   budgetCache = null;
   const sum = (items) => items.reduce((t, x) => t + x.amount, 0);
   const hero = h("span", { class: `hero${b.budget < 0 ? " neg" : ""}` }, yenBig(b.budget));
-  const item = (label, date, amount) => h("div", { class: "cell sub" },
-    h("span", { class: "grow" }, h("span", {}, label), date ? h("span", { class: "detail" }, dayLabel(date)) : null),
+  const item = (label, date, amount, note) => h("div", { class: "cell sub" },
+    h("span", { class: "grow" }, h("span", {}, label),
+      date ? h("span", { class: "detail" }, [dayLabel(date), note].filter(Boolean).join("・")) : null),
     h("span", { class: "amount" }, amount));
   // 内訳を持つ行は押すと開く。残高見込みまでを上から順に足し引きする式として並べる
   const part = (label, total, rows) => rows.length === 0
@@ -509,7 +513,7 @@ async function budgetView() {
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
       h("div", { class: "cell" }, h("span", { class: "grow" }, "月初残高"), h("span", { class: "amount" }, num(b.opening_liquid))),
       part("収入予定", plus(sum(b.income)), b.income.map((x) => item(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
-      part("支払予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount)))),
+      part("支払予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount), pendingNote(x)))),
       h("label", { class: "cell field" }, h("span", { class: "grow" }, "貯金に回す額"), h("span", { class: "minus" }, "−"), buffer))),
   ];
 }
@@ -1387,7 +1391,7 @@ async function calendarView(params) {
     h("div", { class: "group" },
       (byDay.get(d) ?? []).map(entryCell),
       (plannedBy.get(d) ?? []).map((p) => cell(p.planned_id ? { href: p.date <= today() ? `#/new?planned=${p.planned_id}` : `#/planned/${p.planned_id}` } : {},
-        h("div", { class: "grow" }, h("span", {}, p.label), h("span", { class: "detail" }, p.kind === "card" ? `${p.via}の引き落とし分` : "予定")),
+        h("div", { class: "grow" }, h("span", {}, p.label), h("span", { class: "detail" }, p.kind === "card" ? `${p.via}の引き落とし分` : ["予定", pendingNote(p)].filter(Boolean).join("・"))),
         h("span", { class: "amount muted" }, p.kind === "income" ? plus(p.amount) : minus(p.amount))))),
   ])];
 
