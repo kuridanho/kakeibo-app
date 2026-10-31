@@ -407,7 +407,9 @@ async function budgetView() {
     try {
       await api("PUT", "/api/settings", { budget_buffer: String(v) });
       const budget = b.projected_liquid - v;
+      const was = hero.textContent;
       hero.replaceChildren(...yenBig(budget));
+      countUp(hero, was);
       hero.classList.toggle("neg", budget < 0);
     } catch (e) { toast(e.message); }
   });
@@ -2238,6 +2240,143 @@ function placeTabGlider(animate = true) {
   gliderX = x;
 }
 
+// ---- 動き ----
+
+const SPRING = "cubic-bezier(.32, .72, 0, 1)";
+const moving = () => !reducedMotion.matches && typeof document.body.animate === "function";
+
+// iOS の Safari は、触ったときに何か聞いていないと :active を付けない
+document.addEventListener("touchstart", () => {}, { passive: true });
+
+// 内訳を押したら、高さをなめらかに開け閉めする
+function foldDetails(d, open) {
+  const from = d.getBoundingClientRect().height;
+  for (const a of d.getAnimations()) a.cancel();
+  d.open = open;
+  const to = d.getBoundingClientRect().height;
+  d.open = true;
+  d.classList.toggle("closing", !open);
+  d.style.overflow = "hidden";
+  const anim = d.animate({ height: [`${from}px`, `${to}px`] }, { duration: open ? 380 : 300, easing: SPRING });
+  if (open) {
+    for (const c of d.children) {
+      if (c.tagName !== "SUMMARY") c.animate({ opacity: [0, 1] }, { duration: 260, delay: 60, easing: "ease-out", fill: "backwards" });
+    }
+  }
+  anim.onfinish = () => {
+    d.open = open;
+    d.classList.remove("closing");
+    d.style.overflow = "";
+  };
+}
+document.addEventListener("click", (e) => {
+  const summary = e.target.closest?.("summary");
+  const d = summary?.parentElement;
+  if (!(d instanceof HTMLDetailsElement) || d.firstElementChild !== summary || !moving()) return;
+  if (e.target.closest("input, select, textarea, button, a") && summary.contains(e.target.closest("input, select, textarea, button, a"))) return;
+  e.preventDefault();
+  foldDetails(d, d.classList.contains("closing") || !d.open);
+});
+
+// 数字が変わったら、前の額から数えて変える
+function countUp(el, fromText) {
+  const parse = (t) => {
+    const m = t.replace(/,/g, "").match(/([−-]?)(\d+)/);
+    return m ? (m[1] ? -1 : 1) * Number(m[2]) : null;
+  };
+  const from = parse(fromText);
+  const to = parse(el.textContent);
+  const node = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && /\d/.test(n.textContent));
+  if (from === null || to === null || from === to || !node || !moving()) return;
+  const end = node.textContent;
+  const start = performance.now();
+  const step = (now) => {
+    if (!node.isConnected) return;
+    const t = Math.min(1, (now - start) / 700);
+    if (t >= 1) { node.textContent = end; return; }
+    node.textContent = num(Math.round(from + (to - from) * (1 - (1 - t) ** 3)));
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+const heroText = new Map();
+function keepHero(hash) {
+  const hero = page.querySelector(".hero");
+  if (!hero) return;
+  const before = heroText.get(hash);
+  heroText.set(hash, hero.textContent);
+  if (before && before !== hero.textContent) countUp(hero, before);
+}
+
+// 画面の出入り。奥へ進むと右から、戻ると左から、タブを替えるとその場で浮かび上がる
+const depth = (path) => (/^\/(list|plan|budget|summary|recurring)?$/.test(path) ? 0 : 1);
+let shownPath = null;
+let shownTab = null;
+function enterPage(path, tab) {
+  const before = shownPath;
+  const beforeTab = shownTab;
+  shownPath = path;
+  shownTab = tab;
+  page.classList.remove("entering");
+  void page.offsetWidth;
+  page.classList.add("entering");
+  clearTimeout(enterPage.timer);
+  enterPage.timer = setTimeout(() => page.classList.remove("entering"), 800);
+  if (!before || before === path || !moving()) return;
+  const dir = tab !== beforeTab ? 0 : Math.sign(depth(path) - depth(before));
+  const frames = dir
+    ? { transform: [`translate3d(${dir * 28}%, 0, 0)`, "none"], opacity: [0.4, 1] }
+    : { transform: ["translate3d(0, 10px, 0)", "none"], opacity: [0, 1] };
+  page.animate(frames, { duration: dir ? 420 : 280, easing: SPRING });
+}
+
+// 押したタブの絵を軽く弾ませる
+function bounceTab() {
+  const svg = tabbar?.querySelector('a[aria-current="page"] svg');
+  if (svg && moving()) svg.animate({ transform: ["scale(1)", "scale(.82)", "scale(1.12)", "scale(1)"] }, { duration: 420, easing: "ease-out" });
+}
+
+// セグメントの選ばれた板を、押す前の位置から新しい位置へすべらせる。押したあとに描き直されても続けて動かす
+let segTap = null;
+document.addEventListener("pointerdown", (e) => {
+  const seg = e.target.closest?.(".seg");
+  const on = seg?.querySelector('button[aria-pressed="true"]');
+  if (on) segTap = { key: seg.getAttribute("aria-label"), x: on.offsetLeft, w: on.offsetWidth, t: performance.now() };
+}, true);
+function syncSegs() {
+  for (const seg of document.querySelectorAll(".seg")) {
+    const on = seg.querySelector('button[aria-pressed="true"]');
+    let thumb = seg.querySelector(":scope > .seg-thumb");
+    if (!on || !on.offsetWidth) continue;
+    if (!thumb) {
+      thumb = h("span", { class: "seg-thumb", "aria-hidden": "true" });
+      seg.prepend(thumb);
+      seg.classList.add("thumbed");
+    }
+    const x = on.offsetLeft;
+    const w = on.offsetWidth;
+    if (thumb.dataset.x === String(x) && thumb.dataset.w === String(w)) continue;
+    thumb.dataset.x = x;
+    thumb.dataset.w = w;
+    thumb.style.width = `${w}px`;
+    thumb.style.transform = `translate3d(${x}px, 0, 0)`;
+    const tap = segTap;
+    if (tap && tap.key === seg.getAttribute("aria-label") && tap.x !== x && performance.now() - tap.t < 1500 && moving()) {
+      segTap = null;
+      thumb.animate({ transform: [`translate3d(${tap.x}px, 0, 0)`, `translate3d(${x}px, 0, 0)`], width: [`${tap.w}px`, `${w}px`] },
+        { duration: 380, easing: "cubic-bezier(.22, 1.12, .36, 1)" });
+    }
+  }
+}
+let segFrame = 0;
+const segWatch = new MutationObserver(() => {
+  cancelAnimationFrame(segFrame);
+  segFrame = requestAnimationFrame(syncSegs);
+});
+segWatch.observe(page, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-pressed"] });
+segWatch.observe(sheet, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-pressed"] });
+window.addEventListener("resize", () => { for (const t of document.querySelectorAll(".seg-thumb")) delete t.dataset.x; syncSegs(); });
+
 // 入力中なら描き直さない
 const typing = () => view.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
 
@@ -2287,7 +2426,9 @@ async function route(opts) {
     if (a.dataset.tab === found[2]) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
+  const tabChanged = !isSheet && found[2] !== document.body.dataset.tab;
   if (!quiet) placeTabGlider();
+  if (tabChanged && document.body.dataset.tab) bounceTab();
   if (!isSheet) document.body.dataset.tab = found[2];
   if (isSheet && !wasSheet) pageTop = page.scrollTop;
   if (isSheet !== wasSheet) showSheet(isSheet);
@@ -2310,7 +2451,11 @@ async function route(opts) {
   view.scrollTo(0, keep ? top : 0);
   // 描き直した直後は高さが決まりきらず位置が詰められることがあるので、次の描画でもう一度合わせる
   if (keep && back) requestAnimationFrame(() => { if (run === routeRun) page.scrollTo(0, top); });
-  if (!isSheet) pageHash = hash;
+  if (!isSheet) {
+    if (!keep) enterPage(path, found[2]);
+    keepHero(hash);
+    pageHash = hash;
+  }
   // 記録や設定を直接開いたときは、下に置くタブの画面がまだないので描いておく
   if (isSheet && !page.childNodes.length) {
     const root = `#${tabRoots[found[2]] ?? "/"}`;
