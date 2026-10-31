@@ -299,7 +299,7 @@ async function home() {
     h("span", { class: "overline" }, `${Number(today().slice(5, 7))}月${Number(today().slice(8))}日 ${weekday}曜日`),
     h("div", { class: "card", style: "padding-bottom:4px" },
       h("div", { class: "stack", style: "gap:2px" },
-        h("span", { class: "footnote legend", style: "gap:8px" }, h("span", { class: "swatch", style: `background:var(${short ? "--red" : "--meter"})` }), "使えるお金"),
+        h("span", { class: "footnote legend", style: "gap:8px" }, h("span", { class: "swatch", style: `background:var(${short ? "--red" : "--meter"})` }), "実質残高"),
         h("span", { class: `hero${b.available_cash < 0 ? " neg" : ""}` }, yen(b.available_cash))),
       // 足りないときは、未払いと返済の帯のうち手元のお金で払えない右側を赤で覆う
       h("div", { class: "meter", "aria-hidden": "true" },
@@ -307,13 +307,13 @@ async function home() {
         short ? h("div", { class: "short", style: `width:${Math.min(100, (short / (b.card_unpaid + b.loan_due)) * 100)}%` }) : null),
       // 未払いと返済は、口座と財布の合計から引く額なのでマイナスで出す
       h("div", { class: "group", style: "padding-left:0;border-radius:0" },
-        h("div", { class: "cell" }, h("span", { class: "grow" }, "手元のお金"), h("span", { class: "amount" }, num(b.liquid_total))),
+        h("div", { class: "cell" }, h("span", { class: "grow" }, "手元資金"), h("span", { class: "amount" }, num(b.liquid_total))),
         legend("--tint-2", "カードの未払い", -b.card_unpaid),
         b.loan_due ? legend("stripe", "次の返済", -b.loan_due) : null,
         b.non_liquid_total ? h("div", { class: "cell sub" }, h("span", { class: "grow" }, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null)),
     h("a", { class: "card", href: "#/budget", style: "text-decoration:none;color:inherit" },
       h("div", { class: "row" },
-        h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月使える額（概算）"),
+        h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月末残高見込み"),
         h("span", { class: "footnote" }, "内訳")),
       h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yen(budget.budget))),
     h("span", { class: "section-head" }, `${Number(thisMonth().slice(5))}月の支出`),
@@ -344,12 +344,12 @@ async function budgetView() {
   const item = (label, date, amount) => h("div", { class: "cell sub" },
     h("span", { class: "grow" }, h("span", {}, label), date ? h("span", { class: "detail" }, dayLabel(date)) : null),
     h("span", { class: "amount" }, amount));
-  // 内訳を持つ行は押すと開く。使える額までを上から順に足し引きする式として並べる
+  // 内訳を持つ行は押すと開く。残高見込みまでを上から順に足し引きする式として並べる
   const part = (label, total, rows) => rows.length === 0
     ? h("div", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total))
     : h("details", { class: "fold" }, h("summary", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total)), rows);
 
-  // 貯金に回す額は、その場で書き換えると保存して使える額を出し直す
+  // 貯金に回す額は、その場で書き換えると保存して残高見込みを出し直す
   const buffer = moneyInput({ "aria-label": "貯金に回す額", value: b.buffer, placeholder: "0" });
   // 幅を数字の長さに合わせ、− の符号のすぐ右に数字が来るようにする
   const fit = () => {
@@ -369,10 +369,10 @@ async function budgetView() {
   });
 
   return [
-    h("h1", {}, `${Number(b.month.slice(5))}月に使える額`),
+    h("h1", {}, `${Number(b.month.slice(5))}月末残高見込み`),
     h("div", { class: "card" }, hero,
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
-      h("div", { class: "cell" }, h("span", { class: "grow" }, "月初めの残高"), h("span", { class: "amount" }, num(b.opening_liquid))),
+      h("div", { class: "cell" }, h("span", { class: "grow" }, "月初残高"), h("span", { class: "amount" }, num(b.opening_liquid))),
       part("収入予定", plus(sum(b.income)), b.income.map((x) => item(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
       part("支払予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount)))),
       h("label", { class: "cell field" }, h("span", { class: "grow" }, "貯金に回す額"), h("span", { class: "minus" }, "−"), buffer))),
