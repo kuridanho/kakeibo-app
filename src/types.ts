@@ -25,6 +25,8 @@ export interface Account {
   payment_day: number | null;
   payment_account_id: number | null;
   payment_amount: number | null;
+  /** 借入の年率(%) */
+  annual_rate: number | null;
   check_interval_days: number | null;
   statement_card_name: string | null;
   statement_import: number;

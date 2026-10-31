@@ -366,3 +366,29 @@ describe("カードから電子マネーへのチャージ", () => {
     expect((await api("GET", `/api/accounts/${bank}/due?date=2029-10-29`)).date).toBeNull();
   });
 });
+
+describe("年率のある借入(定額払い)", () => {
+  it("締め日までの日割りの利息を返済額に含め、利息・手数料に分ける", async () => {
+    const fixed = (await api("POST", "/api/accounts", {
+      name: "流れ定額払い", type: "liability", kind: "loan", payment_day: 31, closing_day: 31, payment_account_id: bank,
+      payment_amount: 2000, annual_rate: 18, pay_method: 1,
+    })).id;
+    await api("POST", "/api/entries", { date: "2027-09-17", kind: "expense", amount: 4500, category_id: await category("買い物"), from_account_id: fixed });
+    const lines = async (m: string) => (await db.prepare(`SELECT l.account_id, l.amount FROM lines l JOIN entries e ON e.id = l.entry_id
+      WHERE e.auto_key = ?`).bind(`payment:${fixed}:${m}`).all<{ account_id: number; amount: number }>()).results;
+    const interestId = (await db.prepare("SELECT id FROM accounts WHERE seed_key = 'interest'").first<{ id: number }>())!.id;
+    // 9月分は 9/18〜9/30 の13日。4500 × 18% × 13 / 365 = 28.8
+    await recordDuePayments(db, "2027-11-01");
+    expect(await lines("2027-10")).toEqual(expect.arrayContaining([
+      { account_id: fixed, amount: 1972 }, { account_id: interestId, amount: 28 }, { account_id: bank, amount: -2000 },
+    ]));
+    // 10月分は 10/1〜10/31 の31日。4500 × 18% × 31 / 365 = 68.7
+    await recordDuePayments(db, "2027-11-30");
+    expect(await lines("2027-11")).toEqual(expect.arrayContaining([{ account_id: interestId, amount: 68 }]));
+    await balanced();
+  });
+
+  it("年率は0〜100の範囲で受け付ける", async () => {
+    await expect(api("POST", "/api/accounts", { name: "流れ年率", type: "liability", kind: "loan", annual_rate: 120 })).rejects.toThrow();
+  });
+});
