@@ -57,6 +57,30 @@ export async function balances(db: D1Database, today = todayJST()) {
   const loanDue = loans.reduce((s, a) => s + Math.min(a.payment_amount ?? 0, Math.max(a.balance, 0)), 0);
   const nonLiquid = accounts.filter((a) => a.type === "asset" && !a.liquid);
 
+  // ホームで内訳を開いたときに出す、カードの請求月ごとの未払いと、借入ごとの次回の返済
+  const dueDate = (a: Account, m: string | null) => (m && a.payment_day ? nextBankDay(dayInMonth(m, a.payment_day)) : null);
+  const cardDues = unpaid
+    .filter((u) => u.amount !== 0)
+    .map((u) => {
+      const a = cards.find((c) => c.id === u.account_id);
+      return a ? { account_id: a.id, name: a.name, billing_month: u.billing_month, date: dueDate(a, u.billing_month), amount: u.amount } : null;
+    })
+    .filter((x) => x !== null)
+    .sort((x, y) => (x.date ?? "9999").localeCompare(y.date ?? "9999") || x.account_id - y.account_id);
+  const loanDues: { account_id: number; name: string; date: string | null; amount: number }[] = [];
+  for (const a of loans) {
+    const amount = Math.min(a.payment_amount ?? 0, Math.max(a.balance, 0));
+    if (amount <= 0) continue;
+    let date: string | null = null;
+    for (let m = addMonths(monthOf(today), -1), i = 0; a.payment_day && i < 24 && !date; m = addMonths(m, 1), i++) {
+      const d = dueDate(a, m)!;
+      if (d < today || beforeFirstPayment(a, m)) continue;
+      if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(`payment:${a.id}:${m}`).first()) continue;
+      date = d;
+    }
+    loanDues.push({ account_id: a.id, name: a.name, date, amount });
+  }
+
   // 引き落とし口座の残高が、近いうちに落ちる額に足りるか。先の請求まで含めると毎日警告が出るので、
   // 引き落とし日が SHORTFALL_DAYS 日以内に来るもので、まだ記録されていないものだけを見る
   const dueSoon: { bank: number; date: string; amount: number }[] = [];
@@ -91,6 +115,8 @@ export async function balances(db: D1Database, today = todayJST()) {
     liquid_total: liquidTotal,
     card_unpaid: cardUnpaid,
     loan_due: loanDue,
+    card_dues: cardDues,
+    loan_dues: loanDues,
     available_cash: liquidTotal - cardUnpaid - loanDue,
     non_liquid_total: nonLiquid.reduce((s, a) => s + a.balance, 0),
     assets,
