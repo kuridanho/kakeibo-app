@@ -1425,8 +1425,11 @@ function kindFields(kind, a, banks) {
     payFrom,
     toggle("明細CSVを取り込む", h("input", { type: "checkbox", name: "statement_import", checked: a ? !!a.statement_import : true })),
   ];
+  // 年率があれば、締め日(なければ前回の返済日)までの日割りの利息を返済額に含めて記録する
   if (kind === "loan") return [n("payment_day", "返済日", a?.payment_day), payFrom,
-    field("毎月の返済額", moneyInput({ name: "payment_amount", "data-num": "", value: a?.payment_amount, placeholder: "0" }))];
+    field("毎月の返済額", moneyInput({ name: "payment_amount", "data-num": "", value: a?.payment_amount, placeholder: "0" })),
+    field("年率(%)", h("input", { name: "annual_rate", inputmode: "decimal", value: a?.annual_rate ?? "", placeholder: "なし" })),
+    n("closing_day", "利息の締め日", a?.closing_day, "なし")];
   if (CHECKABLE.includes(kind)) return [n("check_interval_days", "棚卸しの間隔", a?.check_interval_days, "日数")];
   return [];
 }
@@ -1436,13 +1439,17 @@ function toggles(kind, a) {
   const defPay = ["cash", "bank", "emoney", "card"].includes(kind);
   return [
     isAsset ? toggle("手元のお金に数える", h("input", { type: "checkbox", name: "liquid", checked: a ? !!a.liquid : ["cash", "bank", "emoney"].includes(kind) })) : null,
-    kind !== "loan" ? toggle("支払方法に出す", h("input", { type: "checkbox", name: "pay_method", checked: a ? !!a.pay_method : defPay })) : null,
+    toggle("支払方法に出す", h("input", { type: "checkbox", name: "pay_method", checked: a ? !!a.pay_method : defPay })),
   ];
 }
 
 function normalize(d, kind) {
   for (const k of ["liquid", "pay_method", "statement_import"]) if (k in d) d[k] = d[k] ? 1 : 0;
-  if (kind === "loan") d.pay_method = 0;
+  // 借入の年率と締め日は空にしたら消す
+  if (kind === "loan") {
+    d.annual_rate = d.annual_rate ? Number(String(d.annual_rate).replace("%", "")) : null;
+    d.closing_day ??= null;
+  }
   return d;
 }
 

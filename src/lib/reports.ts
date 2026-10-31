@@ -3,6 +3,7 @@
 import type { Account, Env } from "../types";
 import { addDays, addMonths, billingMonth, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
 import { pendingPayments, recordInstallments } from "./installments";
+import { accruedInterest, interestPeriod } from "./interest";
 import { createEntry } from "./ledger";
 import type { Planned } from "./planned";
 import { occurrence, recordRecurring, type Recurring } from "./recurring";
@@ -260,7 +261,7 @@ export async function cardDueAhead(db: D1Database, card: Account, month: string)
 /**
  * 引き落とし日が来たカードと借入の引き落としを記録する。
  * カードは請求月の利用の合計を、引き落とし口座からカードへの振替にする。
- * 借入は返済額を元金として扱う。利息の内訳は後から直せる。
+ * 借入は返済額を元金として扱う。年率があれば日割りの利息を返済額に含め、利息・手数料に分ける。
  */
 export async function recordDuePayments(db: D1Database, today = todayJST()) {
   const month = monthOf(today);
@@ -277,13 +278,21 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
     const exists = await db.prepare("SELECT id FROM entries WHERE auto_key = ?").bind(autoKey).first();
     if (exists) continue;
     let amount: number;
+    let interest = 0;
     if (a.kind === "card") {
       amount = await cardDue(db, a.id, month);
     } else {
       const bal = await db.prepare("SELECT -COALESCE(SUM(amount), 0) AS s FROM lines WHERE account_id = ?").bind(a.id).first<{ s: number }>();
-      amount = Math.min(a.payment_amount ?? 0, bal?.s ?? 0);
+      const { from, to } = interestPeriod(a, month);
+      interest = await accruedInterest(db, a, from, to);
+      amount = Math.min(a.payment_amount ?? 0, (bal?.s ?? 0) + interest);
+      // 返済額が利息に届かないときは、全額を利息にする
+      interest = Math.min(interest, amount);
     }
     if (amount <= 0) continue;
+    const interestId = interest > 0
+      ? (await db.prepare("SELECT id FROM accounts WHERE seed_key = 'interest'").first<{ id: number }>())?.id
+      : undefined;
     created.push(await createEntry(db, {
       date: due,
       kind: a.kind === "card" ? "card_payment" : "transfer",
@@ -292,9 +301,10 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
       billing_month: a.kind === "card" ? month : null,
       auto_key: autoKey,
     }, [
-      { account_id: a.id, amount },
+      { account_id: a.id, amount: interestId ? amount - interest : amount },
+      ...(interestId ? [{ account_id: interestId, amount: interest }] : []),
       { account_id: a.payment_account_id!, amount: -amount },
-    ]));
+    ].filter((l) => l.amount !== 0)));
   }
   return created;
 }
