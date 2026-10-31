@@ -434,6 +434,24 @@ describe("年率のある借入(定額払い)", () => {
     await balanced();
   });
 
+  it("最初の返済日より前の月は返済を記録せず、次の返済はその日になる", async () => {
+    const later = await api("POST", "/api/accounts", {
+      name: "流れ後払い", type: "liability", kind: "loan", payment_day: 27, payment_account_id: bank,
+      payment_amount: 3605, first_payment_date: "2028-03-27",
+    });
+    await api("POST", "/api/opening", { date: "2028-02-01", balances: [{ account_id: later.id, amount: 86540 }] });
+    const key = (m: string) => db.prepare("SELECT id FROM entries WHERE auto_key = ?").bind(`payment:${later.id}:${m}`).first();
+    await recordDuePayments(db, nextBankDay(dayInMonth("2028-02", 27)));
+    expect(await key("2028-02")).toBeNull();
+    expect((await loanOverview(db, later, "2028-02-28")).next).toMatchObject({ month: "2028-03", amount: 3605 });
+    expect((await calendarMonth(db, "2028-02", "2028-02-01")).planned.find((p) => p.label === "流れ後払い 返済")).toBeUndefined();
+    expect((await calendarMonth(db, "2028-03", "2028-03-01")).planned.find((p) => p.label === "流れ後払い 返済")).toBeDefined();
+    await recordDuePayments(db, nextBankDay(dayInMonth("2028-03", 27)));
+    expect(await key("2028-03")).not.toBeNull();
+    await api("PATCH", `/api/accounts/${later.id}`, { first_payment_date: null });
+    await balanced();
+  });
+
   it("年率は0〜100の範囲で受け付ける", async () => {
     await expect(api("POST", "/api/accounts", { name: "流れ年率", type: "liability", kind: "loan", annual_rate: 120 })).rejects.toThrow();
   });

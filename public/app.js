@@ -1519,7 +1519,8 @@ function kindFields(kind, a, banks, wallets = []) {
   if (kind === "loan") return [n("payment_day", "返済日", a?.payment_day), payFrom, prepay,
     field("毎月の返済額", moneyInput({ name: "payment_amount", "data-num": "", value: a?.payment_amount, placeholder: "0" })),
     field("年率(%)", h("input", { name: "annual_rate", inputmode: "decimal", value: a?.annual_rate ?? "", placeholder: "なし" })),
-    n("closing_day", "利息の締め日", a?.closing_day, "月末")];
+    n("closing_day", "利息の締め日", a?.closing_day, "月末"),
+    field("最初の返済日", h("input", { name: "first_payment_date", type: "date", value: a?.first_payment_date ?? "" }))];
   if (CHECKABLE.includes(kind)) return [n("check_interval_days", "棚卸しの間隔", a?.check_interval_days, "日数")];
   return [];
 }
@@ -1540,6 +1541,7 @@ function normalize(d, kind) {
   if (kind === "loan") {
     d.annual_rate = d.annual_rate ? Number(String(d.annual_rate).replace("%", "")) : null;
     d.closing_day ??= null;
+    d.first_payment_date ||= null;
   }
   return d;
 }

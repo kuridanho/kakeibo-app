@@ -5,6 +5,7 @@
 import type { Account } from "../types";
 import { advanceItems } from "./budget";
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
+import { beforeFirstPayment } from "./interest";
 import type { Planned as PlannedRow } from "./planned";
 import { occurrence, type Recurring } from "./recurring";
 import { cardDueAhead } from "./reports";
@@ -58,7 +59,7 @@ export async function calendarMonth(db: D1Database, month: string, today = today
 
   for (const a of payers) {
     const date = nextBankDay(dayInMonth(month, a.payment_day!));
-    if (date <= today) continue;
+    if (date <= today || beforeFirstPayment(a, month)) continue;
     if (a.kind === "card") {
       const { amount, usage } = await cardDueAhead(db, a, month);
       if (amount > 0) planned.push({ date, label: `${a.name} 引き落とし`, amount, kind: "payment" });

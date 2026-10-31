@@ -3,7 +3,7 @@
 import type { Account, Env } from "../types";
 import { addDays, addMonths, billingMonth, dayInMonth, diffDays, monthOf, monthsOfYear, nextBankDay, periodYear, todayJST } from "./dates";
 import { pendingPayments, recordInstallments } from "./installments";
-import { loanPayment } from "./interest";
+import { beforeFirstPayment, loanPayment } from "./interest";
 import { balanceOf, createEntry } from "./ledger";
 import type { Planned } from "./planned";
 import { occurrence, recordRecurring, type Recurring } from "./recurring";
@@ -66,7 +66,7 @@ export async function balances(db: D1Database, today = todayJST()) {
     if ((x.kind !== "card" && x.kind !== "loan") || !x.payment_day || !x.payment_account_id) continue;
     for (const m of [addMonths(month, -1), month, addMonths(month, 1)]) {
       const date = nextBankDay(dayInMonth(m, x.payment_day));
-      if (date < today || date > until) continue;
+      if (date < today || date > until || beforeFirstPayment(x, m)) continue;
       if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(`payment:${x.id}:${m}`).first()) continue;
       const amount = x.kind === "card" ? await cardDue(db, x.id, m) : Math.min(x.payment_amount ?? 0, Math.max(x.balance, 0));
       // 先に引く口座の残高で足りる分は、引き落とし口座の不足に数えない
@@ -285,7 +285,7 @@ export async function recordDuePayments(db: D1Database, today = todayJST()) {
   const created: number[] = [];
   // 引き落とし日が休みなら翌営業日に落ちる。月末の休みで翌月にずれた前月分も拾う
   const targets = results.flatMap((a) => [addMonths(month, -1), month].map((m) => ({ a, month: m, due: nextBankDay(dayInMonth(m, a.payment_day!)) })))
-    .filter((t) => t.due <= today && (t.month === month || monthOf(t.due) === month));
+    .filter((t) => t.due <= today && (t.month === month || monthOf(t.due) === month) && !beforeFirstPayment(t.a, t.month));
   for (const { a, month, due } of targets) {
     const autoKey = `payment:${a.id}:${month}`;
     const exists = await db.prepare("SELECT id FROM entries WHERE auto_key = ?").bind(autoKey).first();

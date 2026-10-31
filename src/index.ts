@@ -91,6 +91,9 @@ function checkAccountFields(body: Record<string, unknown>) {
     if (!Number.isFinite(r) || r < 0 || r > 100) throw new LedgerError("年率の値が正しくありません");
     body.annual_rate = r;
   }
+  if ("first_payment_date" in body && body.first_payment_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.first_payment_date))) {
+    throw new LedgerError("最初の返済日が正しくありません");
+  }
   for (const k of ACCOUNT_FLAG_FIELDS) {
     if (!(k in body) || body[k] === null) continue;
     const n = Number(body[k]);
@@ -100,7 +103,7 @@ function checkAccountFields(body: Record<string, unknown>) {
 }
 
 const EDITABLE = ["name", "liquid", "pay_method", "closing_day", "payment_day", "payment_account_id", "prepay_account_id",
-  "payment_amount", "annual_rate", "check_interval_days", "statement_card_name", "statement_import", "sort_order", "archived"] as const;
+  "payment_amount", "annual_rate", "first_payment_date", "check_interval_days", "statement_card_name", "statement_import", "sort_order", "archived"] as const;
 
 // カードで払ったり、カードから電子マネーにチャージしたりした日に対する、銀行からの引き落とし日
 app.get("/api/accounts/:id/due", async (c) => {
@@ -141,11 +144,11 @@ app.post("/api/accounts", async (c) => {
   const payMethod = body.pay_method ?? (["cash", "bank", "emoney", "card"].includes(kind) ? 1 : 0);
   const row = await c.env.DB
     .prepare(`INSERT INTO accounts (name, type, kind, liquid, pay_method, closing_day, payment_day, payment_account_id, prepay_account_id,
-        payment_amount, annual_rate, check_interval_days, statement_card_name, statement_import, sort_order, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM accounts WHERE type = ?)), ?)
+        payment_amount, annual_rate, first_payment_date, check_interval_days, statement_card_name, statement_import, sort_order, user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM accounts WHERE type = ?)), ?)
       RETURNING *`)
     .bind(body.name!.trim(), type, kind, liquid, payMethod, body.closing_day ?? null, body.payment_day ?? null,
-      body.payment_account_id ?? null, body.prepay_account_id ?? null, body.payment_amount ?? null, body.annual_rate ?? null, body.check_interval_days ?? null,
+      body.payment_account_id ?? null, body.prepay_account_id ?? null, body.payment_amount ?? null, body.annual_rate ?? null, body.first_payment_date ?? null, body.check_interval_days ?? null,
       body.statement_card_name ?? null, body.statement_import ?? 1, body.sort_order ?? null, type, c.get("user"))
     .first<Account>();
   return c.json(row, 201);

@@ -7,7 +7,11 @@ import type { Account } from "../types";
 import { addDays, addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import { chargeDate } from "./installments";
 
-type Loan = Pick<Account, "id" | "annual_rate" | "closing_day" | "payment_day" | "payment_amount">;
+type Loan = Pick<Account, "id" | "annual_rate" | "closing_day" | "payment_day" | "payment_amount"> & Partial<Pick<Account, "first_payment_date">>;
+
+/** 請求月 month が最初の返済日の月より前なら、その月の返済はない */
+export const beforeFirstPayment = (a: Partial<Pick<Account, "first_payment_date">>, month: string) =>
+  !!a.first_payment_date && month < monthOf(a.first_payment_date);
 
 const yearDays = (date: string) => {
   const y = Number(date.slice(0, 4));
@@ -61,7 +65,8 @@ export async function loanPayment(db: D1Database, a: Loan, month: string): Promi
 export async function loanOverview(db: D1Database, a: Loan & Pick<Account, "kind">, today = todayJST()) {
   const month = monthOf(today);
   const recorded = await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(`payment:${a.id}:${month}`).first();
-  const dueMonth = recorded || !a.payment_day ? addMonths(month, 1) : month;
+  let dueMonth = recorded || !a.payment_day ? addMonths(month, 1) : month;
+  if (beforeFirstPayment(a, dueMonth)) dueMonth = monthOf(a.first_payment_date!);
   const next = a.payment_day ? { month: dueMonth, date: nextBankDay(dayInMonth(dueMonth, a.payment_day)), ...(await loanPayment(db, a, dueMonth)) } : null;
   // 今たまっている利息は、まだどの返済にも入っていない期間の分
   const current = interestPeriod(a, addMonths(dueMonth, 1));

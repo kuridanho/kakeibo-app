@@ -3,6 +3,7 @@
 
 import type { Account, Env } from "../types";
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
+import { beforeFirstPayment } from "./interest";
 import { pendingPayments } from "./installments";
 import { balanceOf, buildSimple, resolveAccount } from "./ledger";
 import { cardDueAhead, getSetting, splitPayment } from "./reports";
@@ -100,7 +101,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
   }));
   const paymentDue = payers.flatMap((a) => months.flatMap((billMonth) => {
     const due = nextBankDay(dayInMonth(billMonth, a.payment_day!));
-    return monthOf(due) === month ? [{ a, billMonth, due, key: `payment:${a.id}:${billMonth}` }] : [];
+    return monthOf(due) === month && !beforeFirstPayment(a, billMonth) ? [{ a, billMonth, due, key: `payment:${a.id}:${billMonth}` }] : [];
   }));
   const done = await recordedKeys(db, [...recurringDue, ...paymentDue].map((x) => x.key));
 
