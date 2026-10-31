@@ -975,9 +975,8 @@ async function list(params) {
 
   const title = params.get("provisional") ? h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い")
     : params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
-    : monthNav(month, (n) => { location.hash = `#/list?view=list&month=${addMonths(month, n)}`; });
-  const plain = !params.get("provisional") && !params.get("unsure");
-  return [title, plain ? listTabs("list", month) : null, search, body];
+    : listHead("list", month);
+  return [title, search, body];
 }
 
 /** AIやキーワード表が決めたカテゴリを、店ごとにまとめて確かめる。直したい店だけカテゴリを変え、残りはそのまま確定する */
@@ -1093,6 +1092,15 @@ function swipePane(from, go, ...children) {
 }
 
 const loadCalendar = (month) => Promise.all([api("GET", `/api/calendar?month=${month}`), api("GET", `/api/entries?month=${month}`)]);
+
+// 一覧の上端。月の題と月送り、表示の切り替えを1行にまとめ、表を上に詰める
+function listHead(current, month) {
+  const go = (n) => { location.hash = `#/list?view=${current}&month=${addMonths(month, n)}`; };
+  const nav = monthNav(month, go);
+  nav.classList.add("compact");
+  nav.append(listTabs(current, month));
+  return nav;
+}
 
 function listTabs(current, month) {
   return h("div", { class: "seg", role: "group", "aria-label": "表示" },
@@ -1217,7 +1225,7 @@ async function calendarView(params) {
       h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${minus(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
   swipe(card, go);
   if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.classList.add(from > 0 ? "in-right" : "in-left");
-  return [h("div", { class: "cal-top" }, monthNav(month, go), listTabs("cal", month), card), listBody];
+  return [h("div", { class: "cal-top" }, listHead("cal", month), card), listBody];
 }
 
 // ---- 集計 ----
