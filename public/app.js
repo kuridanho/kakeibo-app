@@ -243,6 +243,54 @@ const icon = (d) => {
   return s;
 };
 
+// iOS の設定アプリにならい、行の頭に色の付いた角丸の印を置く。カテゴリは名前、資産は種類、設定は行ごとに決める
+const GLYPH = {
+  store: "M4 10h16M5 10v10h14V10M4 10l1.5-5h13L20 10M10 20v-5h4v5",
+  cart: "M3 4h2l2.2 10.5h10.6L20 7H6.2M9 19.5h.01M17 19.5h.01",
+  fork: "M7 3v7a2 2 0 0 0 4 0V3M9 10v11M16 21V3c-2 1.5-3 4-3 7h3",
+  bag: "M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2",
+  train: "M7 3h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM5 11h14M8 21l2-4M16 21l-2-4M8.5 14h.01M15.5 14h.01",
+  bolt: "M13 3 5 13h6l-1 8 8-10h-6z",
+  phone: "M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM11 18h2",
+  repeat: "M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4",
+  music: "M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
+  sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z",
+  chart: "M3 17l6-6 4 4 8-8M15 7h6v6",
+  dots: "M6 12h.01M12 12h.01M18 12h.01",
+  question: "M9 9a3 3 0 1 1 4 2.8c-.6.3-1 .9-1 1.6V15M12 18.5h.01",
+  percent: "M19 5 5 19M7 5a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM17 15a2 2 0 1 1 0 4 2 2 0 0 1 0-4z",
+  yen: "M6 3l6 8 6-8M12 11v10M7 13h10M7 17h10",
+  plus: "M12 6v12M6 12h12",
+  arrows: "M4 8h15l-3-3M20 16H5l3 3",
+  wallet: "M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 7l11-3v3M16 13.5h.01",
+  bank: "M3 10l9-6 9 6M5 10v9M19 10v9M9.5 10v9M14.5 10v9M3 21h18",
+  card: "M3 6h18v13H3zM3 10.5h18M7 15h4",
+  doc: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6",
+  hand: "M7 11V6a1.5 1.5 0 0 1 3 0v4M10 10V4.5a1.5 1.5 0 0 1 3 0V10M13 10V5.5a1.5 1.5 0 0 1 3 0V12M16 9.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-2.7L4.5 14a1.5 1.5 0 0 1 2.5-1.6L7 13",
+  flag: "M5 21V4h12l-2.5 4L17 12H5",
+  tag: "M3 12V4h8l10 10-8 8zM7.5 7.5h.01",
+  eye: "M3 3l18 18M10.6 6.1A9.7 9.7 0 0 1 12 6c5 0 9 6 9 6a15 15 0 0 1-2.6 3.1M6.6 6.6C4.4 8 3 12 3 12s4 6 9 6a8.6 8.6 0 0 0 4.4-1.2",
+};
+const BADGE = {
+  "コンビニ": ["store", "#FF9F0A"], "食料品": ["cart", "#30D158"], "外食": ["fork", "#FF6B3D"], "買い物": ["bag", "#AC8E68"],
+  "交通": ["train", "#0A84FF"], "光熱費": ["bolt", "#F2B300"], "通信": ["phone", "#5E5CE6"], "サブスク": ["repeat", "#BF5AF2"],
+  "趣味・娯楽": ["music", "#FF375F"], "美容": ["sparkle", "#FF6FAE"], "投資": ["chart", "#00C7BE"], "その他": ["dots", "#8E8E93"],
+  "使途不明": ["question", "#636366"], "利息・手数料": ["percent", "#FF453A"], "給与": ["yen", "#1E9FDB"], "その他の収入": ["plus", "#1E9FDB"],
+  cash: ["wallet", "#30D158"], bank: ["bank", "#0A84FF"], emoney: ["phone", "#FF9F0A"], card: ["card", "#5E5CE6"], loan: ["percent", "#FF453A"],
+  transfer: ["arrows", "#8E8E93"],
+};
+const BADGE_COLORS = ["#FF9F0A", "#30D158", "#0A84FF", "#BF5AF2", "#FF375F", "#00C7BE", "#5E5CE6", "#AC8E68"];
+/** 名前か種類から印を作る。知らない名前は頭の1文字を、名前から決まる色の上に置く */
+const badgeColor = (key) => BADGE[key]?.[1] ?? BADGE_COLORS[[...String(key)].reduce((n, ch) => n + ch.codePointAt(0), 0) % BADGE_COLORS.length];
+function badge(key, glyph, color) {
+  glyph ??= BADGE[key]?.[0];
+  color ??= badgeColor(key);
+  return h("span", { class: "badge", style: `background:${color}`, "aria-hidden": "true" }, glyph ? icon(GLYPH[glyph]) : String(key).slice(0, 1));
+}
+
+/** 大きな額。円は数字より小さく添える */
+const yenBig = (n) => [num(n), h("span", { class: "unit" }, "円")];
+
 function monthNav(month, go, label = monthTitle(month)) {
   return h("div", { class: "navrow" },
     h("h1", {}, label),
@@ -277,12 +325,12 @@ async function home() {
 
   const todos = [
     // その日が来た予定。開くと中身が入った記録の画面になり、確かめて記録する
-    ...duePlans.map((p) => [`#/new?planned=${p.id}`, `${dayLabel(p.date)}の予定${p.payee ? `「${p.payee}」` : ""}`, num(p.amount)]),
-    counts.unsure && ["#/list?unsure=1", "AIが決めたカテゴリの確認", counts.unsure],
-    counts.provisional && ["#/list?provisional=1", "明細と照合していないカード払い", counts.provisional],
-    counts.advances && ["#/advances", "回収待ちの立て替え", counts.advances],
-    ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の棚卸し`, 1]),
-    ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りません`, 1]),
+    ...duePlans.map((p) => [`#/new?planned=${p.id}`, `${dayLabel(p.date)}の予定${p.payee ? `「${p.payee}」` : ""}`, num(p.amount), "flag", "#FF9F0A"]),
+    counts.unsure && ["#/list?unsure=1", "AIが決めたカテゴリの確認", counts.unsure, "sparkle", "#BF5AF2"],
+    counts.provisional && ["#/list?provisional=1", "明細と未照合のカード払い", counts.provisional, "card", "#5E5CE6"],
+    counts.advances && ["#/advances", "回収待ちの立て替え", counts.advances, "hand", "#FF9F0A"],
+    ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の棚卸し`, 1, "wallet", "#30D158"]),
+    ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りません`, 1, "bolt", "#FF453A"]),
   ].filter(Boolean);
 
   const avail = Math.max(b.available_cash, 0);
@@ -300,7 +348,7 @@ async function home() {
     h("div", { class: "card", style: "padding-bottom:4px" },
       h("div", { class: "stack", style: "gap:2px" },
         h("span", { class: "footnote legend", style: "gap:8px" }, h("span", { class: "swatch", style: `background:var(${short ? "--red" : "--meter"})` }), "実質残高"),
-        h("span", { class: `hero${b.available_cash < 0 ? " neg" : ""}` }, yen(b.available_cash))),
+        h("span", { class: `hero${b.available_cash < 0 ? " neg" : ""}` }, yenBig(b.available_cash))),
       // 足りないときは、未払いと返済の帯のうち手元のお金で払えない右側を赤で覆う
       h("div", { class: "meter", "aria-hidden": "true" },
         h("div", { style: `flex:${avail}` }), h("div", { style: `flex:${b.card_unpaid}` }), h("div", { style: `flex:${b.loan_due}` }),
@@ -315,21 +363,21 @@ async function home() {
       h("div", { class: "row" },
         h("span", { class: "footnote legend" }, h("span", { class: "swatch", style: "background:var(--tint-2)" }), "来月末残高見込み"),
         h("span", { class: "footnote" }, "内訳")),
-      h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yen(budget.budget))),
+      h("span", { class: `title1${budget.budget < 0 ? " neg" : ""}` }, yenBig(budget.budget))),
     h("span", { class: "section-head" }, `${Number(thisMonth().slice(5))}月の支出`),
     h("a", { class: "card", href: "#/summary", style: "text-decoration:none;color:inherit" },
       h("div", { class: "row" },
-        h("span", { class: "title2" }, yen(-s.expense)),
+        h("span", { class: "title2" }, yenBig(-s.expense)),
         s.income ? h("span", { class: "sub" }, `収入 ${plus(s.income)}`) : null),
       top.length ? h("div", { class: "bars" }, top.map((c) => [
-        h("span", {}, c.name),
-        h("div", { class: "bar" }, h("div", { style: `width:${(c.amount / max) * 100}%` })),
+        h("span", { class: "bar-name" }, badge(c.name), c.name),
+        h("div", { class: "bar" }, h("div", { style: `width:${(c.amount / max) * 100}%;background:${badgeColor(c.name)}` })),
         h("span", { style: "text-align:right" }, minus(c.amount)),
       ])) : null),
     todos.length ? [
       h("span", { class: "section-head" }, "確かめること"),
-      h("div", { class: "group" }, todos.map(([href, label, n]) =>
-        cell({ href }, h("span", { class: "grow" }, label), h("span", { class: "value" }, n)))),
+      h("div", { class: "group" }, todos.map(([href, label, n, glyph, color]) =>
+        cell({ href }, badge(null, glyph, color), h("span", { class: "grow" }, label), h("span", { class: "value" }, n)))),
     ] : null,
   ];
 }
@@ -340,7 +388,7 @@ async function budgetView() {
   const b = budgetCache ?? await api("GET", "/api/budget");
   budgetCache = null;
   const sum = (items) => items.reduce((t, x) => t + x.amount, 0);
-  const hero = h("span", { class: `hero${b.budget < 0 ? " neg" : ""}` }, yen(b.budget));
+  const hero = h("span", { class: `hero${b.budget < 0 ? " neg" : ""}` }, yenBig(b.budget));
   const item = (label, date, amount) => h("div", { class: "cell sub" },
     h("span", { class: "grow" }, h("span", {}, label), date ? h("span", { class: "detail" }, dayLabel(date)) : null),
     h("span", { class: "amount" }, amount));
@@ -363,7 +411,7 @@ async function budgetView() {
     try {
       await api("PUT", "/api/settings", { budget_buffer: String(v) });
       const budget = b.projected_liquid - v;
-      hero.textContent = yen(budget);
+      hero.replaceChildren(...yenBig(budget));
       hero.classList.toggle("neg", budget < 0);
     } catch (e) { toast(e.message); }
   });
@@ -1113,7 +1161,9 @@ function listTabs(current, month) {
 
 function entryCell(e) {
   const transfer = !["expense", "income"].includes(e.kind) && !e.lines.some((l) => l.type === "expense" || l.type === "income");
+  const cat = e.lines.find((l) => l.type === "expense" || l.type === "income");
   return cell({ href: `#/entry/${e.id}`, class: "tall plain" },
+    cat ? badge(cat.name) : badge(transfer ? "transfer" : e.lines.find((l) => l.amount > 0)?.kind ?? "transfer"),
     h("div", { class: "grow" }, h("span", {}, e.payee || (transfer ? "振替" : "（内容なし）")), h("span", { class: "detail" }, describeEntry(e))),
     e.provisional ? h("span", { class: "pill" }, "仮") : null,
     e.advance && !e.settled ? h("span", { class: "pill" }, "立替") : null,
@@ -1277,7 +1327,7 @@ async function summary(params) {
     compactHead(monthNav(month, go), toggle),
     swipePane(from, go,
     h("div", { class: "card" },
-      h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(-s.expense))),
+      h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yenBig(-s.expense))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(s.income))),
       h("div", { class: "row sub" }, h("span", {}, "収支"), h("span", {}, plus(s.income - s.expense)))),
     s.report && (s.changes.length || changedTotal) ? h("details", { class: "banner" },
@@ -1288,13 +1338,13 @@ async function summary(params) {
     h("span", { class: "section-head" }, "カテゴリごと"),
     h("div", { class: "card" },
       expenses.length === 0 ? h("p", { class: "empty" }, "支出はありません") : h("div", { class: "bars" }, expenses.map((c) => [
-        h("span", {}, c.name),
-        h("div", { class: "bar" }, h("div", { style: `width:${Math.max(0, (c.amount / max) * 100)}%` })),
+        h("span", { class: "bar-name" }, badge(c.name), c.name),
+        h("div", { class: "bar" }, h("div", { style: `width:${Math.max(0, (c.amount / max) * 100)}%;background:${badgeColor(c.name)}` })),
         h("span", { style: "text-align:right" }, minus(c.amount),
           c.changed ? h("span", { class: "footnote" }, ` ${c.changed > 0 ? "+" : ""}${num(c.changed)}`) : null),
       ]))),
     incomes.length ? [h("span", { class: "section-head" }, "収入"), h("div", { class: "group" },
-      incomes.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value inc" }, plus(c.amount)))))] : null,
+      incomes.map((c) => cell({}, badge(c.name), h("span", { class: "grow" }, c.name), h("span", { class: "value inc" }, plus(c.amount)))))] : null,
     !s.report && month < thisMonth() ? h("button", { class: "plain", onclick: makeReport }, "この月のまとめを作る") : null),
   ];
 }
@@ -1313,7 +1363,7 @@ async function yearView(params, from) {
     monthNav(String(y.year), (n) => go(y.year + n), start === 4 ? `${y.year}年度` : `${y.year}年`),
     (n) => go(y.year + n),
     h("div", { class: "card" },
-      h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yen(-y.months.reduce((s, m) => s + m.expense, 0)))),
+      h("div", { class: "row" }, h("span", {}, "支出"), h("span", { class: "title1" }, yenBig(-y.months.reduce((s, m) => s + m.expense, 0)))),
       h("div", { class: "row sub" }, h("span", {}, "収入"), h("span", {}, plus(y.months.reduce((s, m) => s + m.income, 0))))),
     h("span", { class: "section-head" }, "月ごとの支出"),
     h("div", { class: "card" }, h("div", { class: "bars" }, y.months.map((m) => [
@@ -1322,7 +1372,7 @@ async function yearView(params, from) {
       h("span", { style: "text-align:right" }, minus(m.expense)),
     ]))),
     cats.length ? [h("span", { class: "section-head" }, "カテゴリごと"), h("div", { class: "group" },
-      cats.map((c) => cell({}, h("span", { class: "grow" }, c.name), h("span", { class: "value" }, minus(c.amount)))))] : null,
+      cats.map((c) => cell({}, badge(c.name), h("span", { class: "grow" }, c.name), h("span", { class: "value" }, minus(c.amount)))))] : null,
     // 年の始まりは一度決めれば変えないので、その他にしまう
     h("details", { class: "more" },
       h("summary", {}, "その他"),
@@ -1415,6 +1465,7 @@ async function accountsView(params) {
     ...groups.map(([title, as]) => [
       h("span", { class: "section-head" }, title),
       h("div", { class: "group" }, as.map((a) => cell({ href: `#/account/${a.id}` },
+        badge(a.kind),
         h("span", { class: "grow" }, a.name),
         a.check_overdue ? h("span", { class: "pill" }, "棚卸し") : null,
         h("span", { class: "value" }, num(a.balance))))),
@@ -1427,12 +1478,12 @@ async function accountsView(params) {
       cell({}, h("b", { class: "grow" }, "純資産"), h("b", {}, num(b.net_worth)))),
     h("span", { class: "section-head" }, "記録と設定"),
     h("div", { class: "group" },
-      cell({ href: "#/import" }, h("span", { class: "grow" }, "カード明細を取り込む")),
-      cell({ href: "#/recurring" }, h("span", { class: "grow" }, "繰り返し")),
-      cell({ href: "#/advances" }, h("span", { class: "grow" }, "立て替え")),
-      cell({ href: "#/opening" }, h("span", { class: "grow" }, "開始残高")),
-      cell({ href: "#/categories" }, h("span", { class: "grow" }, "カテゴリと学んだ対応")),
-      hidden.length ? cell({ href: "#/accounts?hidden=1" }, h("span", { class: "grow" }, "非表示にしたもの"), h("span", { class: "value" }, hidden.length)) : null),
+      cell({ href: "#/import" }, badge(null, "doc", "#0A84FF"), h("span", { class: "grow" }, "カード明細を取り込む")),
+      cell({ href: "#/recurring" }, badge(null, "repeat", "#BF5AF2"), h("span", { class: "grow" }, "繰り返し")),
+      cell({ href: "#/advances" }, badge(null, "hand", "#FF9F0A"), h("span", { class: "grow" }, "立て替え")),
+      cell({ href: "#/opening" }, badge(null, "flag", "#8E8E93"), h("span", { class: "grow" }, "開始残高")),
+      cell({ href: "#/categories" }, badge(null, "tag", "#30D158"), h("span", { class: "grow" }, "カテゴリと学んだ対応")),
+      hidden.length ? cell({ href: "#/accounts?hidden=1" }, badge(null, "eye", "#636366"), h("span", { class: "grow" }, "非表示にしたもの"), h("span", { class: "value" }, hidden.length)) : null),
   ];
 }
 
@@ -1523,7 +1574,7 @@ async function accountView(id) {
   return [
     h("div", { class: "navrow" }, h("h1", {}, a.name), h("div", {}, h("a", { class: "text", href: `#/account/${a.id}/edit` }, "編集"))),
     h("div", { class: "card" }, h("div", { class: "row" },
-      h("span", {}, a.kind === "card" ? "未払い" : a.kind === "loan" ? "借りている額" : "残高"), h("span", { class: "title1" }, yen(bal)))),
+      h("span", {}, a.kind === "card" ? "未払い" : a.kind === "loan" ? "借りている額" : "残高"), h("span", { class: "title1" }, yenBig(bal)))),
     interest ? loanInterest(interest) : null,
     CHECKABLE.includes(a.kind) || a.kind === "investment" ? checkForm(a, bal, history) : null,
     a.kind === "investment" ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "売買は、記録の振替で銀行口座との間を移します。") : null,
