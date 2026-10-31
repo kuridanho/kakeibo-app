@@ -186,8 +186,6 @@ a.cell.plain::after { display: none; }
   display: flex; align-items: center; justify-content: center;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 20px rgba(0, 0, 0, 0.22);
 }
-/* 集計と資産では記録しないので出さない */
-body[data-tab="summary"] .dock .add, body[data-tab="accounts"] .dock .add { display: none; }
 .dock .add svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
 
 /* 入力 */
@@ -340,8 +338,9 @@ body.sheet .sheet-panel { transform: none; }
 .navrow.compact h1 { font-size: 22px; line-height: 28px; padding: 0 0 0 4px; }
 .navrow.compact > div { margin: 0 auto 0 0; padding: 0; }
 .navrow.compact button.icon { width: 40px; }
-.navrow.compact > .seg { display: grid; flex: none; width: 168px; margin: 0; padding: 2px; }
-.navrow.compact .seg button { min-height: 28px; padding: 0 4px; }
+.navrow.compact > .seg { display: grid; flex: none; width: 204px; margin: 0; padding: 2px; }
+.navrow.compact .seg button { min-height: 28px; padding: 0 4px; white-space: nowrap; letter-spacing: -0.02em; }
+.navrow.compact h1 { white-space: nowrap; }
 .navrow a.text, .navrow button.text { background: transparent; color: var(--tint); font-size: 17px; font-weight: 400; min-height: 44px; padding: 0 8px; text-decoration: none; display: inline-flex; align-items: center; }
 .navrow a.icon { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; color: var(--tint); }
 .navrow a.icon svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
@@ -460,3 +459,8 @@ button.pick { width: 100%; min-height: 44px; padding: 8px 0; border-radius: 0; b
 .cell.tall:has(> .badge) .badge { width: 36px; height: 36px; border-radius: 10px; }
 .cell.tall:has(> .badge) .badge svg { width: 20px; height: 20px; }
 .cell.tall:has(> .badge):not(:last-child)::before { left: 48px; }
+
+/* ホームの上端。日付の右に設定の歯車を置く */
+.home-top { padding-right: 0; }
+.home-top .gear { width: 44px; height: 44px; margin: -10px -10px -10px 0; display: inline-flex; align-items: center; justify-content: center; color: var(--tint); }
+.home-top .gear svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
