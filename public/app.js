@@ -394,8 +394,9 @@ function monthNav(month, go, label = monthTitle(month)) {
 let budgetCache = null;
 
 async function home() {
-  const [b, counts, duePlans] = await Promise.all([
+  const [b, m, counts, duePlans] = await Promise.all([
     api("GET", "/api/balances"),
+    api("GET", "/api/month-end"),
     api("GET", "/api/counts"),
     api("GET", "/api/planned?due=1"),
   ]);
@@ -419,8 +420,14 @@ async function home() {
     ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りません`, 1, "bolt", "#FF453A"]),
   ].filter(Boolean);
 
-  const avail = Math.max(b.available_cash, 0);
-  const short = Math.max(-b.available_cash, 0);
+  const sum = (items) => items.reduce((t, x) => t + x.amount, 0);
+  const flowItem = (label, date, amount, note) => h("div", { class: "cell sub" },
+    h("span", { class: "grow" }, h("span", {}, label),
+      date ? h("span", { class: "detail" }, [dayLabel(date), note].filter(Boolean).join("・")) : null),
+    h("span", { class: "amount" }, amount));
+  const flowPart = (label, total, rows) => rows.length === 0
+    ? h("div", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total))
+    : h("details", { class: "fold" }, h("summary", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total)), rows);
   const weekday = "日月火水木金土"[new Date(`${today()}T00:00:00Z`).getUTCDay()];
   const legend = (n, label, amount) => h("div", { class: "cell" },
     h("span", { class: "legend grow" }, n === "stripe" ? h("span", { class: "swatch stripe" }) : h("span", { class: "swatch", style: `background:var(${n})` }), label),
@@ -440,20 +447,18 @@ async function home() {
     h("div", { class: "row home-top" },
       h("span", { class: "overline" }, `${Number(today().slice(5, 7))}月${Number(today().slice(8))}日 ${weekday}曜日`),
       h("a", { class: "icon gear", href: "#/accounts", "aria-label": "資産と設定" }, icon(GEAR))),
+    // 主役は今月末の手元資金の見込み。今の手元から月末までの入出金を足し引きする式として並べる
     h("div", { class: "card", style: "padding-bottom:4px" },
       h("div", { class: "stack", style: "gap:2px" },
-        h("span", { class: "footnote legend", style: "gap:8px" }, h("span", { class: "swatch", style: `background:var(${short ? "--red" : "--meter"})` }), "実質残高"),
-        h("span", { class: `hero${b.available_cash < 0 ? " neg" : ""}` }, yenBig(b.available_cash))),
-      // 足りないときは、未払いと返済の帯のうち手元のお金で払えない右側を赤で覆う
-      h("div", { class: "meter", "aria-hidden": "true" },
-        h("div", { style: `flex:${avail}` }), h("div", { style: `flex:${b.card_unpaid}` }), h("div", { style: `flex:${b.loan_due}` }),
-        short ? h("div", { class: "short", style: `width:${Math.min(100, (short / (b.card_unpaid + b.loan_due)) * 100)}%` }) : null),
-      // 未払いと返済は、口座と財布の合計から引く額なのでマイナスで出す
+        h("span", { class: "footnote" }, `${Number(m.month.slice(5))}月末残高見込み`),
+        h("span", { class: `hero${m.projected_liquid < 0 ? " neg" : ""}` }, yenBig(m.projected_liquid))),
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
-        h("div", { class: "cell" }, h("span", { class: "grow" }, "手元資金"), h("span", { class: "amount" }, num(b.liquid_total))),
+        h("div", { class: "cell" }, h("span", { class: "grow" }, "手元資金"), h("span", { class: "amount" }, num(m.current_liquid))),
+        flowPart("収入予定", h("span", { class: "inc" }, plus(sum(m.income))),
+          m.income.map((x) => flowItem(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
+        flowPart("支払予定", minus(sum(m.expenses)), m.expenses.map((x) => flowItem(x.label, x.date, minus(x.amount), pendingNote(x)))),
         foldLegend("--tint-2", "カードの未払い", -b.card_unpaid,
           b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount, `#/account/${x.account_id}`))),
-        b.loan_due ? foldLegend("stripe", "次回の借入返済", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null,
         b.non_liquid_total ? h("div", { class: "cell sub" }, h("span", { class: "grow" }, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null)),
     todos.length ? [
       h("span", { class: "section-head" }, "確かめること"),
