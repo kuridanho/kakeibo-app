@@ -346,31 +346,31 @@ details.more > summary + * { margin-top: 4px; }
 .item select { min-height: 36px; padding-top: 6px; padding-bottom: 6px; background-color: var(--fill); }
 
 /* カレンダー。iOS のカレンダーにならい、縦線と枠はなくして週の区切りの横線だけにする。
-   マスは日付と金額2行が入る高さに固定し、どの週も同じ間隔にする */
+   マスは日付と金額2行がちょうど入る 44px に固定し、どの週も同じ間隔にする */
 .cal-card { margin: 0 -4px; }
 /* 日を押しても月の表は動かさず、下の一覧だけをスクロールさせる。
    止まる位置は main の上の余白と同じにし、余白の帯は影で地の色に塗って一覧を隠す */
-.cal-top { position: sticky; top: 4px; z-index: 4; padding-bottom: 4px; background: var(--bg); box-shadow: 0 -16px 0 var(--bg); display: flex; flex-direction: column; gap: 8px; }
+.cal-top { position: sticky; top: 4px; z-index: 4; padding-bottom: 4px; background: var(--bg); box-shadow: 0 -16px 0 var(--bg); display: flex; flex-direction: column; gap: 6px; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--label); padding: 0 0 6px; }
+.cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--label); padding: 0 0 3px; }
 .cal-d {
-  height: 56px; overflow: hidden; padding: 3px 1px 0; border-radius: 0; background: none; color: var(--label);
+  height: 44px; overflow: hidden; padding: 2px 1px 0; border-radius: 0; background: none; color: var(--label);
   border-top: 0.5px solid var(--separator);
   display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0; font-weight: 400; text-align: center;
 }
-.cal-d .n { flex: none; font-size: 16px; line-height: 26px; width: 26px; height: 26px; border-radius: 13px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
-.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10.5px; line-height: 12px; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; color: var(--secondary); }
+.cal-d .n { flex: none; font-size: 15px; line-height: 22px; width: 22px; height: 22px; border-radius: 11px; font-variant-numeric: tabular-nums; }
+.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10px; line-height: 10px; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; color: var(--secondary); }
 .cal-d .i, .cal-d .p.inc { color: var(--tint); }
 .cal-d .p { text-decoration: underline dashed; text-underline-offset: 2px; }
 .cal-w.sun, .cal-w.sat, .cal-d.sun .n, .cal-d.sat .n { color: var(--secondary); }
 .cal-d.on .n { background: var(--label); color: var(--bg); font-weight: 600; }
 .cal-d.today .n { background: var(--tint); color: var(--on-tint); font-weight: 600; }
-.cal-sum { display: flex; justify-content: space-between; gap: 8px; padding: 10px 4px 0; border-top: 0.5px solid var(--separator); font-variant-numeric: tabular-nums; }
+.cal-sum { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 0; border-top: 0.5px solid var(--separator); font-variant-numeric: tabular-nums; }
 .cal-sum div { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
 .cal-sum span { font-size: 13px; color: var(--secondary); }
-.cal-sum b { font-size: 16px; font-weight: 600; }
+.cal-sum b { font-size: 15px; font-weight: 600; }
 .cal-sum .inc { color: var(--tint); }
-.cal-plan { display: flex; justify-content: space-between; padding: 6px 4px 0; font-size: 13px; color: var(--secondary); }
+.cal-plan { display: flex; justify-content: space-between; padding: 2px 4px 0; font-size: 13px; color: var(--secondary); }
 .day-head { display: flex; justify-content: space-between; padding-right: 20px; scroll-margin-top: 12px; }
 .item .row button.icon { width: 36px; min-height: 36px; margin-right: -6px; color: var(--secondary); }
 
