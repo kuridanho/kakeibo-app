@@ -236,4 +236,16 @@ describe("分割払い", () => {
     await api("DELETE", `/api/installments/${p.id}`);
     expect(await db.prepare("SELECT 1 FROM entries WHERE auto_key LIKE ?").bind(`installment:${p.id}:%`).first()).toBeNull();
   });
+  it("予定から記録した取引をあとから分割にしても、分割をやめられる", async () => {
+    const card = await newCard("分割カードH");
+    const { id } = await api("POST", "/api/entries", {
+      kind: "expense", amount: 30000, date: "2030-06-05", from_account_id: card, category_id: shopping, payee: "机",
+    });
+    await db.prepare("INSERT INTO planned (kind, amount, date, from_account_id, category_id, payee, entry_id) VALUES ('expense', 30000, '2030-06-05', ?, ?, '机', ?)")
+      .bind(card, shopping, id).run();
+    const p = await api("POST", `/api/entries/${id}/installment`, { count: 3 });
+    await api("DELETE", `/api/installments/${p.id}`);
+    expect(await db.prepare("SELECT 1 FROM installments WHERE id = ?").bind(p.id).first()).toBeNull();
+    expect(await db.prepare("SELECT 1 FROM entries WHERE id = ?").bind(id).first()).toBeNull();
+  });
 });
