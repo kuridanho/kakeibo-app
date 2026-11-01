@@ -749,7 +749,9 @@ async function entryForm(existing, opts = {}) {
         h("div", { class: "group" }, items.map((it, n) => h("div", { class: "item" },
           it.unclear ? h("span", { class: "question" }, `${it.name} これは何ですか？`) : null,
           h("div", { class: "row" },
-            h("span", { class: "grow" }, it.name),
+            h("input", { class: "item-name grow", value: it.name, placeholder: "品目", "aria-label": "品目の名前", enterkeyhint: "done", onchange: (ev) => {
+              it.name = ev.target.value.trim();
+            } }),
             moneyInput({ class: "item-amount", value: it.amount, "aria-label": `${it.name}の金額`, onchange: (ev) => {
               it.amount = parseNum(ev.target.value) || 0;
               showItems();
@@ -760,7 +762,13 @@ async function entryForm(existing, opts = {}) {
             } }, icon("M6 6l12 12M18 6 6 18"))),
           categorySelect({ "aria-label": `${it.name}のカテゴリ`, required: true, onchange: (ev) => {
             if (ev.target.value && ev.target.value !== NEW_CATEGORY) { it.category_id = Number(ev.target.value); it.unclear = false; }
-          } }, expense, "expense", it.category_id, it.category_id ? null : "選んでください")))),
+          } }, expense, "expense", it.category_id, it.category_id ? null : "選んでください"))),
+          h("button", { type: "button", class: "item-add", onclick: () => {
+            const left = total - items.reduce((s, i) => s + i.amount, 0);
+            items.push({ name: "", amount: left > 0 ? left : 0, category_id: null, unclear: false });
+            showItems();
+            itemsBox.querySelectorAll(".item-name")[items.length - 1]?.focus();
+          } }, "品目を足す")),
         ...(sum !== total ? [h("p", { class: "footnote neg", style: "margin:0;padding:0 4px" }, `品目の合計 ${yen(sum)} が、金額と ${yen(total - sum)} 違います`)] : []));
     };
 

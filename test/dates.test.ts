@@ -60,8 +60,35 @@ describe("レシートの品目", () => {
     expect(r.items.map((i) => [i.name, i.amount])).toEqual([["551 L ミックスグリル", 1089], ["280 L レギュラーセット", 220]]);
   });
 
-  it("内税で合計と合うときはそのまま", () => {
+  it("内税で合計と合うときは値引きを直前の品目に合算するだけ", () => {
     const r = normalizeReceipt({ store: null, date: null, total: 500, items: [{ name: "牛乳", amount: 300, quantity: 1 }, { name: "卵", amount: 250, quantity: 1 }, { name: "値引", amount: -50, quantity: null }] }, null);
-    expect(r.items.map((i) => i.amount)).toEqual([300, 250, -50]);
+    expect(r.items.map((i) => i.amount)).toEqual([300, 200]);
+  });
+});
+
+import { parseLines } from "../src/lib/receipt-eval";
+
+describe("レシートの値引きと行の写し", () => {
+  const lines = [
+    "ﾊﾞｲｵﾏｽﾚｼﾞﾌｸﾛﾍﾞﾝﾄｳﾋｶﾞｼ ¥5",
+    "ＭＳ幕の内弁当 ¥598軽",
+    "単品値引( 40%) -240",
+    "茨城県産笠間栗のﾓﾝﾌﾞﾗﾝ ¥458軽",
+    "単品値引( 30%) -138",
+    "TVFFｼｵﾀﾞｹｱｼﾞﾂｹｻﾞｸｷﾘﾎﾟﾃ ¥208軽",
+  ];
+
+  it("行の写しから品名と金額を組にし、半角カナを全角にする", () => {
+    const items = parseLines(lines);
+    expect(items.map((i) => i.amount)).toEqual([5, 598, -240, 458, -138, 208]);
+    expect(items[0].name).toBe("バイオマスレジフクロベントウヒガシ");
+  });
+
+  it("値引きは直前の品目に合算し、外税を割り振って合計と合わせる", () => {
+    const r = normalizeReceipt({ store: null, date: null, total: 961, items: parseLines(lines) }, 70);
+    expect(r.items.map((i) => i.name)).toEqual(["バイオマスレジフクロベントウヒガシ", "MS幕の内弁当", "茨城県産笠間栗のモンブラン", "TVFFシオダケアジツケザクキリポテ"]);
+    expect(r.items.reduce((s, i) => s + i.amount, 0)).toBe(961);
+    expect(r.items[0].amount).toBe(5);
+    expect(r.items[1].amount).toBeGreaterThan(358);
   });
 });
