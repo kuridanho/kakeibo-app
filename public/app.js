@@ -2239,15 +2239,20 @@ async function importView() {
       for (const update of rows.values()) update();
       const chosen = new Set(open.map(linkOf).filter((v) => typeof v === "number"));
       const left = p.provisional.filter((c) => !chosen.has(c.entry_id));
+      // 前に取り込んだ行と分割の行は選べない。選べる行がなければ、選ぶ欄は出さずに理由を書く
+      const linkable = open.filter((r) => !r.installment_id);
       fill(leftoverBox, left.length ? h("div", { class: "card" }, h("h2", {}, `結びつかなかった仮の取引 ${left.length}件`),
-        h("p", { class: "sub", style: "margin:0" }, "明細の行を選ぶと結びつきます。次の請求月に回ったものは、そのままにしてください。"),
+        h("p", { class: "sub", style: "margin:0" }, linkable.length
+          ? "明細の行を選ぶと結びつきます。次の請求月に回ったものは、そのままにしてください。"
+          : "この明細には結びつけられる新しい行がありません。明細に載ってから、もう一度取り込んでください。"),
         left.map((c) => {
+          const head = h("div", { class: "row" }, h("span", {}, `${c.date.slice(5)} ${c.payee}`), h("span", {}, num(c.amount)));
+          if (!linkable.length) return h("div", { class: "import-row" }, head);
           const select = h("select", { "aria-label": `${c.payee} を結びつける明細の行`, onchange: () => {
             const r = open.find((o) => o.index === Number(select.value));
             if (r) setLink(r, c.entry_id, c);
-          } }, h("option", { value: "" }, "明細の行を選ぶ"), open.filter((r) => !r.installment_id).map((r) => h("option", { value: r.index }, rowLabel(r))));
-          return h("div", { class: "stack import-row" },
-            h("div", { class: "row" }, h("span", {}, `${c.date.slice(5)} ${c.payee}`), h("span", {}, num(c.amount))), select);
+          } }, h("option", { value: "" }, "明細の行を選ぶ"), linkable.map((r) => h("option", { value: r.index }, rowLabel(r))));
+          return h("div", { class: "stack import-row" }, head, select);
         })) : null);
     }
 
@@ -2262,7 +2267,8 @@ async function importView() {
       h("div", { class: "card" },
         h("div", { class: "row" }, h("span", {}, "明細の合計"), h("span", {}, p.declared_total === null ? "なし" : num(p.declared_total))),
         h("div", { class: "row" }, h("span", {}, "読み取った行の合計"), h("span", {}, num(p.payment_total))),
-        diff ? h("b", { class: "neg" }, `合計が ${yen(diff)} 合いません`) : null),
+        diff ? h("b", { class: "neg" }, `合計が ${yen(diff)} 合いません`) : null,
+        open.length ? null : h("b", {}, "どの行も前に取り込み済みで、新しい行はありません")),
       ...sections,
       leftoverBox,
       h("div", { class: "buttons" },
