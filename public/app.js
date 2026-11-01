@@ -1340,7 +1340,7 @@ async function calendarView(params) {
     jump(d);
   };
   const jump = (d) => {
-    history.replaceState(null, "", `#/list?view=cal&month=${month}&day=${d}`);
+    history.replaceState(history.state, "", `#/list?view=cal&month=${month}&day=${d}`);
     for (const el of document.querySelectorAll(".cal-d.on")) el.classList.remove("on");
     document.querySelector(`.cal-d[data-day="${d}"]`)?.classList.add("on");
     toDay(d, "smooth");
@@ -2504,6 +2504,17 @@ let routeRun = 0;
 let pageHash = null;
 // シートを開いたときの page の位置。iOS ではシートを出している間に page の位置が先頭に戻ることがあるので、開く前に控える
 let pageTop = 0;
+// 履歴の項目ごとの page の位置。左端のスワイプや戻るで前の画面へ戻ったら、離れたときの位置に戻す
+const entryTops = new Map();
+let pageEntry = null;
+let entrySeq = 0;
+function currentEntry() {
+  const k = history.state?.k;
+  if (k) return k;
+  const id = `${Date.now().toString(36)}-${++entrySeq}`;
+  history.replaceState({ ...history.state, k: id }, "", location.href);
+  return id;
+}
 const tabRoots = { home: "/", list: "/list", summary: "/summary", accounts: "/accounts" };
 let sheetTimer = 0;
 
@@ -2540,6 +2551,10 @@ async function route(opts) {
   const found = routes.find(([re]) => re.test(path)) ?? routes[0];
   const isSheet = !!found[3];
   const wasSheet = document.body.classList.contains("sheet");
+  if (pageEntry) entryTops.set(pageEntry, wasSheet ? pageTop : page.scrollTop);
+  const entry = currentEntry();
+  // 前に開いていた画面へ履歴をたどって戻ったときの位置
+  const saved = !isSheet && !quiet && entry !== pageEntry ? entryTops.get(entry) : undefined;
   view = isSheet ? sheet : page;
   for (const a of document.querySelectorAll(".tabbar a[data-tab]")) {
     if (a.dataset.tab === found[2]) a.setAttribute("aria-current", "page");
@@ -2560,10 +2575,10 @@ async function route(opts) {
     return;
   }
   // シートを閉じて元の画面に戻るときは、同じ位置のまま描き直す
-  const keep = quiet || (!isSheet && wasSheet && pageHash === hash);
+  const keep = quiet || (!isSheet && wasSheet && pageHash === hash) || saved !== undefined;
   const served = new Set();
-  const back = !isSheet && wasSheet;
-  const top = back ? pageTop : view.scrollTop;
+  const back = (!isSheet && wasSheet) || saved !== undefined;
+  const top = saved ?? (back ? pageTop : view.scrollTop);
   const content = await render(found, path, params, fresh && !quiet, served, run);
   if (run !== routeRun) return;
   view.replaceChildren(...[content].flat(Infinity).filter(Boolean));
@@ -2571,7 +2586,8 @@ async function route(opts) {
   // 描き直した直後は高さが決まりきらず位置が詰められることがあるので、次の描画でもう一度合わせる
   if (keep && back) requestAnimationFrame(() => { if (run === routeRun) page.scrollTo(0, top); });
   if (!isSheet) {
-    if (!keep) enterPage(path, found[2]);
+    if (!keep || saved !== undefined) enterPage(path, found[2]);
+    pageEntry = entry;
     keepHero(hash);
     pageHash = hash;
   }
