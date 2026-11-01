@@ -416,6 +416,7 @@ details.more > summary + * { margin-top: 4px; }
 
 /* 来月の予算。内訳を持つ行は押すと開き、中の行は一段下げる */
 details.fold { border-bottom: 0.5px solid var(--separator); }
+details.fold:last-child { border-bottom: none; }
 details.fold > summary { list-style: none; cursor: pointer; border-bottom: none; }
 details.fold > summary::-webkit-details-marker { display: none; }
 details.fold > summary::after {
