@@ -457,9 +457,14 @@ async function home() {
         flowPart("収入予定", h("span", { class: "inc" }, plus(sum(m.income))),
           m.income.map((x) => flowItem(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
         flowPart("支払予定", minus(sum(m.expenses)), m.expenses.map((x) => flowItem(x.label, x.date, minus(x.amount), pendingNote(x)))),
-        foldLegend("--tint-2", "カードの未払い", -b.card_unpaid,
-          b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount, `#/account/${x.account_id}`))),
         b.non_liquid_total ? h("div", { class: "cell sub" }, h("span", { class: "grow" }, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null)),
+    // 実質残高は、いま手元にあるお金から、払うと決まっているカードと返済を引いた額。月末の見込みの添えとして下に置く
+    h("div", { class: "card", style: "padding-top:4px;padding-bottom:4px" }, h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
+      h("div", { class: "cell" }, h("span", { class: "grow" }, "実質残高"),
+        h("span", { class: `amount${b.available_cash < 0 ? " neg" : ""}` }, num(b.available_cash))),
+      foldLegend("--tint-2", "カードの未払い", -b.card_unpaid,
+        b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount, `#/account/${x.account_id}`))),
+      b.loan_due ? foldLegend("stripe", "次回の借入返済", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null)),
     todos.length ? [
       h("span", { class: "section-head" }, "確かめること"),
       h("div", { class: "group" }, todos.map(([href, label, n, glyph, color]) =>
