@@ -15,9 +15,11 @@ export const RECEIPT_PROMPT = [
   "これは日本のレシートの写真です。書かれている内容を読み取り、次の形のJSONだけを返してください。",
   '{"store":"店名","date":"YYYY-MM-DD","items":[{"name":"品名","amount":印字されている金額の整数,"quantity":数量}],',
   '"tax_mode":"外税なら outside、内税なら inside","tax":消費税の額の整数,"total":支払った合計の整数,',
-  '"payment":"現金やカードなど支払方法","card_last4":"カードの下4桁があれば"}',
+  '"payment":"現金やカードなど支払方法","card_last4":"カードの下4桁があれば",',
+  '"lines":["商品の欄の印字を1行ずつ、左の品名と右の金額を同じ行のまま写した文字列"]}',
+  "lines には、日付の下から合計や税の欄の前までの印字を、上から順に1行ずつそのまま写してください。右端の金額は、その行の左にある品名の金額です。上下の行と取り違えないでください。半角カナは半角のまま写してください。",
   "store には、ロゴの英字ではなく、レシートに日本語で印字された店名を入れてください。会社名と店舗名があれば店舗名にします。日本語の表記がないときだけ英字にします。",
-  "items には買った商品と、値引きや割引の行だけを入れてください。値引きは金額をマイナスにします。",
+  "items には買った商品と、値引きや割引の行だけを、印字の順に入れてください。品名と金額は同じ行に印字されたものを組にします。値引きは金額をマイナスにし、値引きされた商品とは別の行のまま、その商品の直後に置きます。",
   "小計、外税品計、内税対象、消費税、合計、総合計、お預り、お釣り、クレジット、ポイントの行は items に入れないでください。",
   "金額は印字のまま写し、自分で税を足したり引いたりしないでください。読めない項目は null にしてください。",
 ].join("\n");
@@ -125,7 +127,45 @@ export async function readReceipt(env: Env, image: Uint8Array, mime: string): Pr
     amount: toInt(i?.amount) ?? NaN,
     quantity: toInt(i?.quantity),
   })) : [];
-  return normalizeReceipt({ store: typeof p.store === "string" ? p.store : null, date, total: toInt(p.total), items }, toInt(p.tax));
+  const base = { store: typeof p.store === "string" ? p.store : null, date, total: toInt(p.total) };
+  const tax = toInt(p.tax);
+  const fromItems = normalizeReceipt({ ...base, items }, tax);
+  // 行の写しから組み立てた品目のほうが合計と合うなら、そちらを使う。JSONの組み立てで金額が隣の行にずれることがあるため
+  const lines = Array.isArray(p.lines) ? p.lines.filter((l): l is string => typeof l === "string") : [];
+  const parsed = parseLines(lines);
+  if (parsed.length) {
+    const fromLines = normalizeReceipt({ ...base, items: parsed }, tax);
+    if (fits(fromItems, tax)) return fromItems;
+    if (fits(fromLines, tax) || miss(fromLines, tax) < miss(fromItems, tax)) return fromLines;
+  }
+  return fromItems;
+}
+
+/** 品目の合計が、そのまま、または消費税を足して合計と合うか */
+function fits(r: Receipt & { raw_sum?: number }, tax: number | null): boolean {
+  if (r.total === null || r.raw_sum === undefined) return false;
+  return r.raw_sum === r.total || (tax !== null && r.raw_sum + tax === r.total);
+}
+
+function miss(r: Receipt & { raw_sum: number }, tax: number | null): number {
+  return r.total === null ? Infinity : Math.abs(r.total - r.raw_sum - (tax ?? 0));
+}
+
+/** 印字の1行から、品名と右端の金額を取り出す。金額のない行は品名の続きとみなす */
+export function parseLines(lines: string[]): Receipt["items"] {
+  const out: Receipt["items"] = [];
+  let pending = "";
+  for (const raw of lines) {
+    const line = raw.normalize("NFKC").trim();
+    const m = line.match(/^(.*?)\s*(-|－|▲|△)?\s*[¥\\]?\s*(-)?([\d,]+)\s*(?:円)?\s*[軽E※*外内非]?\s*$/);
+    if (!m || !m[1].trim() && !pending) { if (line && !/^[-=.\s]+$/.test(line)) pending = (pending + " " + line).trim(); continue; }
+    const name = (pending + " " + m[1]).trim();
+    pending = "";
+    const amount = Number(m[4].replace(/,/g, "")) * (m[2] || m[3] ? -1 : 1);
+    if (!name || !Number.isFinite(amount)) continue;
+    out.push({ name, amount, quantity: null });
+  }
+  return out;
 }
 
 // 品目に紛れ込みやすい、合計や税、支払いの行
@@ -136,10 +176,20 @@ const NOT_ITEM = /(小計|合計|品計|外税|内税|消費税|税率|対象|�
  * 合計や税の行を除き、ほかの品目を打ち消すだけのマイナスの行も除く。
  * 外税で品目の合計が足りないときは、消費税を品目の金額に比べて割り振る。
  */
-export function normalizeReceipt(r: Receipt, tax: number | null): Receipt {
-  let items = r.items.filter((i) => i.name && Number.isInteger(i.amount) && i.amount !== 0 && !NOT_ITEM.test(i.name));
+export function normalizeReceipt(r: Receipt, tax: number | null): Receipt & { raw_sum: number } {
+  let items = r.items
+    .map((i) => ({ ...i, name: i.name.normalize("NFKC").replace(/\s+/g, " ").trim() }))
+    .filter((i) => i.name && Number.isInteger(i.amount) && i.amount !== 0 && !NOT_ITEM.test(i.name));
   const positive = items.filter((i) => i.amount > 0).reduce((s, i) => s + i.amount, 0);
   items = items.filter((i) => !(i.amount < 0 && -i.amount >= positive));
+  // 値引きの行は、直前の商品の金額から引いて1つの品目にする
+  const merged: typeof items = [];
+  for (const it of items) {
+    const prev = merged[merged.length - 1];
+    if (it.amount < 0 && prev && prev.amount + it.amount >= 0) prev.amount += it.amount;
+    else merged.push({ ...it });
+  }
+  items = merged;
   const total = r.total ?? items.reduce((s, i) => s + i.amount, 0);
   const sum = items.reduce((s, i) => s + i.amount, 0);
   const gap = total - sum;
@@ -150,10 +200,10 @@ export function normalizeReceipt(r: Receipt, tax: number | null): Receipt {
     const baseSum = base.reduce((s, v) => s + v, 0);
     const shares = base.map((v) => Math.floor((gap * v) / baseSum));
     let left = gap - shares.reduce((s, v) => s + v, 0);
-    // 余りは端数の大きい品目から1円ずつ足す
-    const order = base.map((v, i) => [((gap * v) / baseSum) % 1, i] as const).sort((a, b) => b[0] - a[0]);
+    // 余りは金額の大きい品目から1円ずつ足す。レジ袋のような少額の品に端数を寄せないため
+    const order = base.map((v, i) => [v, i] as const).sort((a, b) => b[0] - a[0]);
     for (const [, i] of order) { if (left-- <= 0) break; shares[i]++; }
     items = items.map((it, i) => ({ ...it, amount: it.amount + shares[i] }));
   }
-  return { ...r, total, items };
+  return { ...r, total, items, raw_sum: sum };
 }
