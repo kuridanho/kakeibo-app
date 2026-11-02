@@ -219,7 +219,8 @@ function moneyInput(attrs) {
     el.value = digits ? `${neg ? "-" : ""}${Number(digits).toLocaleString("ja-JP")}` : neg ? "-" : "";
     let pos = el.value.length;
     for (let seen = 0; pos > 0 && seen < right; pos--) if (/\d/.test(el.value[pos - 1])) seen++;
-    el.setSelectionRange(pos, pos);
+    // テンキーで打つときは欄に触れていないことがある。触れていない欄の選択を動かすと iOS がフォーカスを外すので動かさない
+    if (document.activeElement === el) el.setSelectionRange(pos, pos);
   });
   return el;
 }
@@ -241,6 +242,8 @@ function calcExpr(expr) {
 /** 電卓と同じ並びのテンキー。画面に1つだけ置き、大きな金額欄に触れると下から出す */
 const keypad = (() => {
   let input = null, expr = "";
+  // 最後にテンキーに触れた時刻。iOS では開いてすぐの自動フォーカスの欄が鍵を押した拍子に外れることがあるので、その直後の blur では閉じない
+  let touched = 0;
   const exprEl = h("span", { class: "keypad-expr", "aria-live": "polite" });
   const ops = { "/": "÷", "*": "×", "-": "−", "+": "+" };
   const show = () => {
@@ -251,6 +254,7 @@ const keypad = (() => {
   };
   const press = (k) => {
     if (!input) return;
+    touched = performance.now();
     const last = expr.at(-1) ?? "";
     const num = expr.match(/\d*$/)[0];
     if (k === "AC") expr = "";
@@ -272,8 +276,8 @@ const keypad = (() => {
     type: "button", class: cls, "aria-label": { "/": "割る", "*": "掛ける", "-": "引く", "+": "足す", Del: "1文字消す", AC: "全部消す" }[k],
     onpointerdown: (ev) => ev.preventDefault(), onclick: () => press(k),
   }, label);
-  const close = () => input?.blur();
-  const el = h("div", { class: "keypad", role: "group", "aria-label": "テンキー" },
+  const close = () => { const t = input; hide(); t?.blur(); };
+  const el = h("div", { class: "keypad", role: "group", "aria-label": "テンキー", onpointerdown: () => { touched = performance.now(); } },
     h("div", { class: "keypad-bar" },
       h("div", { class: "keypad-tax" }, exprEl,
         key("8%", "税込8%", "chip"), key("10%", "税込10%", "chip")),
@@ -289,7 +293,11 @@ const keypad = (() => {
     document.body.classList.remove("keypad-open");
     el.classList.remove("open");
   };
-  addEventListener("hashchange", () => input?.blur());
+  addEventListener("hashchange", close);
+  // 欄からフォーカスが外れたまま開いているときは、テンキーと欄の外に触れたら閉じる
+  document.addEventListener("pointerdown", (ev) => {
+    if (input && !el.contains(ev.target) && ev.target !== input) close();
+  }, true);
   return {
     attach(target) {
       target.setAttribute("inputmode", "none");
@@ -301,7 +309,10 @@ const keypad = (() => {
         document.body.classList.add("keypad-open");
         requestAnimationFrame(() => el.classList.add("open"));
       });
-      target.addEventListener("blur", () => { if (input === target) hide(); });
+      target.addEventListener("blur", () => {
+        if (input !== target || performance.now() - touched < 800) return;
+        hide();
+      });
       target.addEventListener("keydown", (ev) => {
         const k = { Backspace: "Del", Escape: "OK", Enter: "OK", "×": "*", "÷": "/" }[ev.key] ?? ev.key;
         if (k === "OK") { ev.preventDefault(); close(); }
