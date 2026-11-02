@@ -1427,7 +1427,10 @@ async function calendarView(params) {
         h("span", { class: "amount muted" }, p.kind === "income" ? plus(p.amount) : minus(p.amount))))),
   ])];
 
-  if (selected) setTimeout(() => toDay(selected, "instant"), 0);
+  // 日を選んでいなければ、今月は当日(なければその前で一番近い日)の位置で開く
+  const start = selected ?? (month === cal.today.slice(0, 7) ? days.find((d) => d <= cal.today) : null);
+  // 戻るや描き直しで位置を戻したときは、当日へは送らない
+  if (start) setTimeout(() => { if (selected || !document.querySelector(".cal-top")?.closest("main")?.scrollTop) toDay(start, "instant"); }, 0);
   const go = (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; };
   const card = h("div", { class: "cal-card" }, head, grid, totals,
     comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
