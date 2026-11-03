@@ -7,7 +7,7 @@ import {
   resolveAccount, type SimpleInput, updateEntry,
 } from "./lib/ledger";
 import { calendarMonth } from "./lib/calendar";
-import { loanOverview } from "./lib/interest";
+import { loanOverview, payoffQuote } from "./lib/interest";
 import { monthEndProjection, nextMonthBudget } from "./lib/budget";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
@@ -122,6 +122,15 @@ app.get("/api/accounts/:id/interest", async (c) => {
   const a = await getAccount(c.env.DB, int(c.req.param("id"), "id"));
   if (a.kind !== "loan") throw new LedgerError("借入ではありません");
   return c.json(await loanOverview(c.env.DB, a));
+});
+
+// 返済日を決めない借入を、その日に返すときの利息と全額
+app.get("/api/accounts/:id/payoff", async (c) => {
+  const a = await getAccount(c.env.DB, int(c.req.param("id"), "id"));
+  if (a.kind !== "loan") throw new LedgerError("借入ではありません");
+  const date = c.req.query("date") ?? todayJST();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new LedgerError("日付が正しくありません");
+  return c.json(await payoffQuote(c.env.DB, a, date));
 });
 
 app.get("/api/accounts", async (c) => {

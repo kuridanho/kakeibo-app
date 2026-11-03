@@ -470,3 +470,30 @@ describe("年率のある借入(定額払い)", () => {
     await expect(api("POST", "/api/accounts", { name: "流れ年率", type: "liability", kind: "loan", annual_rate: 120 })).rejects.toThrow();
   });
 });
+
+describe("返済日のない借入(単発の借り入れ)", () => {
+  it("借りた額を口座に入れ、好きな日に一部と残りを返す", async () => {
+    const loan = (await api("POST", "/api/accounts", { name: "流れ単発借入", type: "liability", kind: "loan", annual_rate: 18 })).id;
+    const before = (await snapshot()).bal(bank);
+    await api("POST", "/api/entries", { date: "2027-03-01", kind: "transfer", amount: 100000, from_account_id: loan, to_account_id: bank });
+    const s1 = await snapshot();
+    expect(s1.bal(bank) - before).toBe(100000);
+    expect(s1.bal(loan)).toBe(100000);
+    // 3/2〜3/31 の30日。100000 × 18% × 30 / 365 = 1479.4
+    const q1 = await api("GET", `/api/accounts/${loan}/payoff?date=2027-03-31`);
+    expect(q1).toMatchObject({ from: "2027-03-02", interest: 1479, principal: 100000, total: 101479 });
+    // 一部を返す。利息から先に充てる
+    await api("POST", "/api/entries", { date: "2027-03-31", kind: "transfer", amount: 50000, from_account_id: bank, to_account_id: loan, interest: q1.interest });
+    expect((await snapshot()).bal(loan)).toBe(51479);
+    // 4/1〜4/30 の30日。51479 × 18% × 30 / 365 = 761.6
+    const q2 = await api("GET", `/api/accounts/${loan}/payoff?date=2027-04-30`);
+    expect(q2).toMatchObject({ from: "2027-04-01", interest: 761, total: 52240 });
+    await api("POST", "/api/entries", { date: "2027-04-30", kind: "transfer", amount: q2.total, from_account_id: bank, to_account_id: loan, interest: q2.interest });
+    expect((await snapshot()).bal(loan)).toBe(0);
+    expect((await api("GET", `/api/accounts/${loan}/payoff?date=2027-05-31`)).total).toBe(0);
+    // 自動の返済も、返済の予定も作らない
+    const b = (await snapshot()).b;
+    expect(b.loan_dues.find((x: any) => x.account_id === loan)?.amount ?? 0).toBe(0);
+    await balanced();
+  });
+});
