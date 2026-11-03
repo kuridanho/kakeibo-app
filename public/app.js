@@ -1353,7 +1353,8 @@ function entryCell(e) {
     e.provisional ? h("span", { class: "pill" }, "仮") : null,
     e.advance && !e.settled ? h("span", { class: "pill" }, "立替") : null,
     ["ai", "keyword", "none"].includes(e.category_source) ? h("span", { class: "pill" }, "AI") : null,
-    e.kind === "income" ? h("span", { class: "amount inc" }, plus(entryAmount(e)))
+    // 回収は手元に入るお金なので収入と同じく + で出す
+    e.kind === "income" || e.kind === "recovery" ? h("span", { class: "amount inc" }, plus(entryAmount(e)))
       : h("span", { class: `amount${transfer ? " muted" : ""}` }, transfer ? num(entryAmount(e)) : minus(entryAmount(e))));
 }
 
