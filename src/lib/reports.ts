@@ -123,6 +123,9 @@ export async function balances(db: D1Database, today = todayJST()) {
     liabilities,
     net_worth: assets - liabilities,
     shortfalls,
+    // 返済期限の1週間前から、借りている額が残る借入を知らせる
+    loan_reminders: loans.filter((a) => a.due_date && a.balance > 0 && diffDays(a.due_date, today) <= SHORTFALL_DAYS)
+      .map((a) => ({ id: a.id, name: a.name, due_date: a.due_date!, balance: a.balance, days_left: diffDays(a.due_date!, today) })),
     overdue_checks: accounts.filter((a) => a.check_overdue).map((a) => ({ id: a.id, name: a.name, last_checked: a.last_checked })),
   };
 }

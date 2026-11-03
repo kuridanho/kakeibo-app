@@ -8,7 +8,7 @@ import { calendarMonth } from "../src/lib/calendar";
 import { addMonths, billingMonth, dayInMonth, nextBankDay, todayJST } from "../src/lib/dates";
 import { recordRecurring } from "../src/lib/recurring";
 import { loanOverview } from "../src/lib/interest";
-import { cardDue, recordDuePayments } from "../src/lib/reports";
+import { balances, cardDue, recordDuePayments } from "../src/lib/reports";
 import type { Env } from "../src/types";
 
 const testEnv = env as unknown as Env;
@@ -495,5 +495,17 @@ describe("返済日のない借入(単発の借り入れ)", () => {
     const b = (await snapshot()).b;
     expect(b.loan_dues.find((x: any) => x.account_id === loan)?.amount ?? 0).toBe(0);
     await balanced();
+  });
+
+  it("返済期限の1週間前から、残っている借入を知らせる", async () => {
+    const loan = (await api("POST", "/api/accounts", { name: "流れ期限付き借入", type: "liability", kind: "loan", due_date: "2027-06-30" })).id;
+    await api("POST", "/api/entries", { date: "2027-06-01", kind: "transfer", amount: 30000, from_account_id: loan, to_account_id: bank });
+    const remind = async (d: string) => (await balances(db, d)).loan_reminders.find((x) => x.id === loan);
+    expect(await remind("2027-06-22")).toBeUndefined();
+    expect(await remind("2027-06-23")).toMatchObject({ days_left: 7, balance: 30000 });
+    expect(await remind("2027-07-02")).toMatchObject({ days_left: -2 });
+    await api("POST", "/api/entries", { date: "2027-06-30", kind: "transfer", amount: 30000, from_account_id: bank, to_account_id: loan });
+    expect(await remind("2027-07-02")).toBeUndefined();
+    await expect(api("PATCH", `/api/accounts/${loan}`, { due_date: "6月末" })).rejects.toThrow();
   });
 });
