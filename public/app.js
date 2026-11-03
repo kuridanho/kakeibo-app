@@ -612,7 +612,7 @@ async function entryForm(existing, opts = {}) {
   const inst = existing?.installment ?? null;
   const locked = isStatement || !!inst;
 
-  let kind = existing?.kind ?? src?.kind ?? "expense";
+  let kind = existing?.kind ?? src?.kind ?? opts.kind ?? "expense";
   const lines = existing?.lines ?? [];
   const pos = lines.find((l) => l.amount > 0 && l.type !== "expense" && l.type !== "income") ?? lines.find((l) => l.amount > 0);
   const neg = lines.find((l) => l.amount < 0);
@@ -633,7 +633,7 @@ async function entryForm(existing, opts = {}) {
   } : src ? {
     amount: src.amount, date: src.date, payee: src.payee, memo: src.memo,
     from_account_id: src.from_account_id ?? undefined, to_account_id: src.to_account_id ?? undefined, category_id: src.category_id ?? undefined,
-  } : { date: opts.date ?? today(), from_account_id: store.get("lastPay", null) };
+  } : { date: opts.date ?? today(), from_account_id: opts.from ?? (opts.to ? list.find((a) => a.id === opts.to)?.payment_account_id : null) ?? store.get("lastPay", null), to_account_id: opts.to };
   // 支払方法は選べるようにしたものだけ。編集中の取引で使っているものは残す
   const payWith = live(list).filter((a) => (a.type === "asset" || a.type === "liability") && (a.pay_method || keep(a, init.from_account_id)));
   const receiveTo = byType(list, "asset");
@@ -656,6 +656,14 @@ async function entryForm(existing, opts = {}) {
     // AIが出したカテゴリ。保存の前に変えたら、店とカテゴリの組を覚えさせる
     let aiGuess = null;
     // カードで払う、またはカードからチャージするときは、銀行から落ちる日を添える
+    let quote = null;
+    let interestTouched = false;
+    const payoffRow = h("button", { type: "button", class: "cell", hidden: true, onclick: () => {
+      if (!quote) return;
+      form.elements.amount.value = fmtNum(quote.total);
+      interestTouched = false;
+      fitInterest();
+    } }, h("span", { class: "grow" }, "全額を返す"), h("span", { class: "value" }));
     const dueRow = h("div", { class: "cell", hidden: true }, h("span", { class: "grow", style: "white-space:nowrap;flex-shrink:0" }, "引き落とし"),
       h("span", { class: "value", style: "white-space:normal;text-align:right;justify-content:flex-end;flex-wrap:wrap" }));
     const showDue = async () => {
@@ -711,7 +719,8 @@ async function entryForm(existing, opts = {}) {
         kind === "income" ? field("カテゴリ", categorySelect({ name: "category_id", required: true }, income, "income", init.category_id)) : null,
         kind === "transfer" ? field("移す元", h("select", { name: "from_account_id", "data-num": "", required: true }, sideOptions(movable, init.from_account_id, "選んでください"))) : null,
         kind === "transfer" ? field("移す先", h("select", { name: "to_account_id", "data-num": "", required: true, onchange: () => showInterest() }, sideOptions(movable, init.to_account_id, "選んでください"))) : null,
-        kind === "transfer" ? field("うち利息・手数料", moneyInput({ name: "interest", "data-num": "", value: init.interest })) : null,
+        kind === "transfer" ? field("うち利息・手数料", moneyInput({ name: "interest", "data-num": "", value: init.interest, oninput: () => { interestTouched = true; } })) : null,
+        kind === "transfer" ? payoffRow : null,
         kind !== "income" ? dueRow : null,
         inst ? cell({ href: `#/installment/${inst.id}` }, h("span", { class: "grow" }, "分割払い"), h("span", { class: "value" }, `${inst.number}/${inst.count}回`)) : null,
         field("メモ", h("input", { name: "memo", value: init.memo }))),
@@ -747,6 +756,30 @@ async function entryForm(existing, opts = {}) {
       const loan = to?.kind === "loan";
       input.closest("label").hidden = !loan;
       if (!loan) input.value = "";
+      showPayoff();
+    };
+    // 返済日のない借入は、その日までの利息を入れ、全額で返すときの額を添える
+    const showPayoff = async () => {
+      payoffRow.hidden = true;
+      quote = null;
+      const to = list.find((a) => a.id === Number(form.elements.to_account_id?.value));
+      const date = form.elements.date.value;
+      if (to?.kind !== "loan" || to.payment_day || !date) return;
+      try {
+        const q = await api("GET", `/api/accounts/${to.id}/payoff?date=${date}`);
+        if (form.elements.to_account_id.value !== String(to.id) || form.elements.date.value !== date) return;
+        quote = q;
+        payoffRow.querySelector(".value").textContent = q.interest ? `${yen(q.total)}（利息 ${yen(q.interest)}）` : yen(q.total);
+        payoffRow.hidden = q.total <= 0;
+        fitInterest();
+      } catch { /* 出せなくても記録はできる */ }
+    };
+    // 利息は返す額から先に充てる。手で直したら触らない
+    const fitInterest = () => {
+      if (!quote || interestTouched || existing) return;
+      const paying = parseNum(form.elements.amount.value || 0);
+      const v = paying ? Math.min(quote.interest, paying) : quote.interest;
+      form.elements.interest.value = v ? fmtNum(v) : "";
     };
 
     const showItems = () => {
@@ -818,7 +851,7 @@ async function entryForm(existing, opts = {}) {
       }
       camera.value = "";
     });
-    form.elements.amount.addEventListener("input", () => { if (items.length) showItems(); });
+    form.elements.amount.addEventListener("input", () => { if (items.length) showItems(); fitInterest(); });
 
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -925,6 +958,7 @@ async function entryForm(existing, opts = {}) {
     showCount();
     form.elements.date.addEventListener("change", showDue);
     form.elements.date.addEventListener("change", showPlan);
+    form.elements.date.addEventListener("change", showPayoff);
     showDue();
     showPlan();
     if (items.length) showItems();
@@ -957,7 +991,10 @@ async function newEntry(params) {
   if (id) return entryForm(null, { confirm: await api("GET", `/api/planned/${id}`) });
   // カレンダーで日をダブルタップしたときは、その日付で開く
   const date = params?.get("date");
-  return entryForm(null, /^\d{4}-\d{2}-\d{2}$/.test(date ?? "") ? { date } : {});
+  const opts = /^\d{4}-\d{2}-\d{2}$/.test(date ?? "") ? { date } : {};
+  // 借入の画面の「借りる」「返す」からは、振替で借入を入れた状態で開く
+  if (params?.get("kind") === "transfer") Object.assign(opts, { kind: "transfer", from: Number(params.get("from")) || undefined, to: Number(params.get("to")) || undefined });
+  return entryForm(null, opts);
 }
 
 async function editPlanned(id) {
@@ -1696,7 +1733,13 @@ async function newAccountView() {
   // 今の残高は開始残高として今日の日付で入れる。借入なら借りている額
   const balanceLabel = () => kind === "loan" ? "借りている額" : kind === "card" ? "今の未払い" : "今の残高";
   const balance = moneyInput({ name: "opening", "data-num": "", placeholder: "0" });
-  const draw = () => fill(extra, field(balanceLabel(), balance), ...[kindFields(kind, null, banks, wallets), toggles(kind, null)].flat().filter(Boolean));
+  // 新しく借りたなら、借りた日に入れた先へ振替で入れる。なしなら前からの借入として開始残高にする
+  const intoSel = h("select", { name: "into", "data-num": "" }, options(byType(list, "asset").filter((a) => a.liquid), null, "なし（前からの借入）"));
+  const borrowedOn = h("input", { name: "borrowed_on", type: "date", value: today() });
+  const draw = () => fill(extra, field(balanceLabel(), balance),
+    ...(kind === "loan" ? [field("入れた先", intoSel), field("借りた日", borrowedOn)] : []),
+    ...[kindFields(kind, null, banks, wallets), toggles(kind, null)].flat().filter(Boolean),
+    kind === "loan" ? h("p", { class: "footnote", style: "margin:0;padding:6px 16px" }, "返済日を空けると、好きな日に好きな額を返す借入になります。") : null);
   kindSel.addEventListener("change", () => { kind = kindSel.value; draw(); });
   draw();
   const form = h("form", { id: "account-form" },
@@ -1704,11 +1747,13 @@ async function newAccountView() {
     extra);
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const { opening, ...d } = normalize(formData(form), kind);
+    const { opening, into, borrowed_on: on, ...d } = normalize(formData(form), kind);
     d.type = ["card", "loan"].includes(kind) ? "liability" : "asset";
     try {
       const a = await api("POST", "/api/accounts", d);
-      if (opening) await api("POST", "/api/opening", { date: today(), balances: [{ account_id: a.id, amount: opening }] });
+      if (opening && kind === "loan" && into) {
+        await api("POST", "/api/entries", { kind: "transfer", date: on || today(), amount: opening, from_account_id: a.id, to_account_id: into, payee: `${d.name} 借入` });
+      } else if (opening) await api("POST", "/api/opening", { date: today(), balances: [{ account_id: a.id, amount: opening }] });
       toast("追加しました");
       accountsCache = null;
       goBack("#/accounts");
@@ -1738,6 +1783,9 @@ async function accountView(id) {
       h("span", {}, a.kind === "card" ? "未払い" : a.kind === "loan" ? "借りている額" : "残高"), h("span", { class: "title1" }, yenBig(bal)))),
     paying.length ? group(row("これからの分割", num(later)), row("分割を含めた額", num(bal + later))) : null,
     interest ? loanInterest(interest) : null,
+    a.kind === "loan" ? group(
+      cell({ href: `#/new?kind=transfer&from=${a.id}` }, h("span", { class: "grow" }, "借りる")),
+      cell({ href: `#/new?kind=transfer&to=${a.id}` }, h("span", { class: "grow" }, "返す"))) : null,
     paying.length ? [h("span", { class: "section-head" }, "分割払い"), group(paying.map((x) => installmentCell(x, name, false)))] : null,
     CHECKABLE.includes(a.kind) || a.kind === "investment" ? checkForm(a, bal, history) : null,
     a.kind === "investment" ? h("p", { class: "footnote", style: "margin:0;padding:0 4px" }, "売買は、記録の振替で銀行口座との間を移します。") : null,
@@ -1814,7 +1862,8 @@ function accountSettings(a, list) {
   let openedOn = null;
   if (loan) api("GET", `/api/entries?account_id=${a.id}&limit=1000`).then((es) => {
     const o = es.find((e) => e.kind === "opening");
-    if (!o) return;
+    // 振替で借りた借入は、借りた額を記録のほうで直す
+    if (!o) { if (es.length) borrowed.closest("label").hidden = true; return; }
     openedOn = o.date;
     borrowed.value = num(Math.abs(o.lines.find((l) => l.account_id === a.id).amount));
   }).catch(() => {});

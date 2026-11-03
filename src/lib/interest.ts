@@ -61,6 +61,21 @@ export async function loanPayment(db: D1Database, a: Loan, month: string): Promi
   return { amount, interest: Math.min(interest, amount) };
 }
 
+/**
+ * 返済日を決めない借入を、日 date に返すときの額。利息は前の返済(なければ借りた日)の翌日から date までの日割り。
+ * 一部だけ返すときも利息から先に充てる。
+ */
+export async function payoffQuote(db: D1Database, a: Pick<Account, "id" | "annual_rate">, date: string) {
+  const last = await db.prepare(`SELECT MAX(e.date) AS d FROM lines l JOIN entries e ON e.id = l.entry_id
+    WHERE l.account_id = ? AND l.amount > 0 AND e.date <= ?`).bind(a.id, date).first<{ d: string | null }>();
+  const first = await db.prepare(`SELECT MIN(e.date) AS d FROM lines l JOIN entries e ON e.id = l.entry_id
+    WHERE l.account_id = ? AND l.amount < 0`).bind(a.id).first<{ d: string | null }>();
+  const from = last?.d ? addDays(last.d, 1) : first?.d ? addDays(first.d, 1) : date;
+  const interest = await accruedInterest(db, a, from, date);
+  const principal = Math.max(0, await owedAt(db, a.id, date));
+  return { date, from, interest, principal, total: principal + interest };
+}
+
 /** 借入の画面に出す利息。次の返済とその内訳、今の期間にたまった利息、これまでに払った利息 */
 export async function loanOverview(db: D1Database, a: Loan & Pick<Account, "kind">, today = todayJST()) {
   const month = monthOf(today);
@@ -68,11 +83,20 @@ export async function loanOverview(db: D1Database, a: Loan & Pick<Account, "kind
   let dueMonth = recorded || !a.payment_day ? addMonths(month, 1) : month;
   if (beforeFirstPayment(a, dueMonth)) dueMonth = monthOf(a.first_payment_date!);
   const next = a.payment_day ? { month: dueMonth, date: nextBankDay(dayInMonth(dueMonth, a.payment_day)), ...(await loanPayment(db, a, dueMonth)) } : null;
+  // 返済日のない借入は、前の返済からの利息
+  if (!a.payment_day) {
+    const q = await payoffQuote(db, a, today);
+    return { annual_rate: a.annual_rate, next: null, accrued: { from: q.from, to: today, amount: q.interest }, paid_total: await paidInterest(db, a.id), payoff: q };
+  }
   // 今たまっている利息は、まだどの返済にも入っていない期間の分
   const current = interestPeriod(a, addMonths(dueMonth, 1));
   const accrued = await accruedInterest(db, a, current.from, today < current.to ? today : current.to);
+  return { annual_rate: a.annual_rate, next, accrued: { from: current.from, to: today, amount: accrued }, paid_total: await paidInterest(db, a.id) };
+}
+
+async function paidInterest(db: D1Database, id: number): Promise<number> {
   const paid = await db.prepare(`SELECT COALESCE(SUM(l.amount), 0) AS s FROM lines l JOIN entries e ON e.id = l.entry_id
       JOIN accounts c ON c.id = l.account_id
-    WHERE c.seed_key = 'interest' AND e.id IN (SELECT entry_id FROM lines WHERE account_id = ?)`).bind(a.id).first<{ s: number }>();
-  return { annual_rate: a.annual_rate, next, accrued: { from: current.from, to: today, amount: accrued }, paid_total: paid?.s ?? 0 };
+    WHERE c.seed_key = 'interest' AND e.id IN (SELECT entry_id FROM lines WHERE account_id = ?)`).bind(id).first<{ s: number }>();
+  return paid?.s ?? 0;
 }
