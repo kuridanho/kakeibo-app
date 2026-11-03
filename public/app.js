@@ -471,13 +471,15 @@ async function home() {
           m.income.map((x) => flowItem(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
         flowPart("支払予定", minus(sum(m.expenses)), m.expenses.map((x) => flowItem(x.label, x.date, minus(x.amount), pendingNote(x)))),
         b.non_liquid_total ? h("div", { class: "cell sub" }, h("span", { class: "grow" }, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null)),
-    // 実質残高は、いま手元にあるお金から、払うと決まっているカードと返済を引いた額。月末の見込みの添えとして下に置く
+    // 実質残高は、いま手元にあるお金から、カードの未払い(分割の残りの回も)と借入をすべて引いた額。純資産はそこに別枠の資産を足す。月末の見込みの添えとして下に置く
     h("div", { class: "card", style: "padding-top:4px;padding-bottom:4px" }, h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
       h("div", { class: "cell" }, h("span", { class: "grow" }, "実質残高"),
         h("span", { class: `amount${b.available_cash < 0 ? " neg" : ""}` }, num(b.available_cash))),
       foldLegend("--tint-2", "カードの未払い", -b.card_unpaid,
         b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount, `#/account/${x.account_id}`))),
-      b.loan_due ? foldLegend("stripe", "次回の借入返済", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null)),
+      b.loan_due ? foldLegend("stripe", "借入の残高", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null,
+      b.non_liquid_total ? legend("--tint-3", "別枠の資産", b.non_liquid_total) : null,
+      h("div", { class: "cell" }, h("b", { class: "grow" }, "純資産"), h("b", { class: `amount${b.net_assets < 0 ? " neg" : ""}` }, num(b.net_assets))))),
     todos.length ? [
       h("span", { class: "section-head" }, "確かめること"),
       h("div", { class: "group" }, todos.map(([href, label, n, glyph, color]) =>
@@ -1666,9 +1668,9 @@ async function accountsView(params) {
     h("span", { class: "section-head" }, "合計"),
     h("div", { class: "group" },
       cell({}, h("span", { class: "grow" }, "資産"), h("span", { class: "value" }, num(b.assets))),
-      cell({}, h("span", { class: "grow" }, "カードの未払い"), h("span", { class: "value" }, num(sum(b.accounts.filter((a) => a.kind === "card"))))),
+      cell({}, h("span", { class: "grow" }, "カードの未払い"), h("span", { class: "value" }, num(b.card_unpaid))),
       cell({}, h("span", { class: "grow" }, "借入"), h("span", { class: "value" }, num(sum(b.accounts.filter((a) => a.kind === "loan"))))),
-      cell({}, h("b", { class: "grow" }, "純資産"), h("b", {}, num(b.net_worth)))),
+      cell({}, h("b", { class: "grow" }, "純資産"), h("b", {}, num(b.net_assets)))),
     h("span", { class: "section-head" }, "記録と設定"),
     h("div", { class: "group" },
       cell({ href: "#/import" }, badge(null, "doc", "#0A84FF"), h("span", { class: "grow" }, "カード明細を取り込む")),
