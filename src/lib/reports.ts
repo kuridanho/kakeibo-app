@@ -51,10 +51,18 @@ export async function balances(db: D1Database, today = todayJST()) {
   const liquid = accounts.filter((a) => a.type === "asset" && a.liquid);
   const liquidTotal = liquid.reduce((s, a) => s + a.balance, 0);
   const cards = accounts.filter((a) => a.kind === "card");
-  const cardUnpaid = cards.reduce((s, a) => s + a.balance, 0);
-  // 借入は残高全体ではなく、次の返済額だけを差し引く
+  // カードは、まだ記録していない分割の残りの回まで含めた全額を負債として差し引く
+  const future = await pendingPayments(db);
+  for (const p of future) {
+    const u = unpaid.find((x) => x.account_id === p.plan.card_id && x.billing_month === p.month);
+    if (u) u.amount += p.amount;
+    else unpaid.push({ account_id: p.plan.card_id, billing_month: p.month, amount: p.amount });
+  }
+  const futureTotal = future.reduce((s, p) => s + p.amount, 0);
+  const cardUnpaid = cards.reduce((s, a) => s + a.balance, 0) + futureTotal;
+  // 借入も、次の返済額ではなく残高全体を差し引く
   const loans = accounts.filter((a) => a.kind === "loan");
-  const loanDue = loans.reduce((s, a) => s + Math.min(a.payment_amount ?? 0, Math.max(a.balance, 0)), 0);
+  const loanDue = loans.reduce((s, a) => s + Math.max(a.balance, 0), 0);
   const nonLiquid = accounts.filter((a) => a.type === "asset" && !a.liquid);
 
   // ホームで内訳を開いたときに出す、カードの請求月ごとの未払いと、借入ごとの次回の返済
@@ -67,9 +75,10 @@ export async function balances(db: D1Database, today = todayJST()) {
     })
     .filter((x) => x !== null)
     .sort((x, y) => (x.date ?? "9999").localeCompare(y.date ?? "9999") || x.account_id - y.account_id);
+  // 借入ごとの残高と、次に返す日(返済日がなければ返済期限)
   const loanDues: { account_id: number; name: string; date: string | null; amount: number }[] = [];
   for (const a of loans) {
-    const amount = Math.min(a.payment_amount ?? 0, Math.max(a.balance, 0));
+    const amount = Math.max(a.balance, 0);
     if (amount <= 0) continue;
     let date: string | null = null;
     for (let m = addMonths(monthOf(today), -1), i = 0; a.payment_day && i < 24 && !date; m = addMonths(m, 1), i++) {
@@ -78,7 +87,7 @@ export async function balances(db: D1Database, today = todayJST()) {
       if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(`payment:${a.id}:${m}`).first()) continue;
       date = d;
     }
-    loanDues.push({ account_id: a.id, name: a.name, date, amount });
+    loanDues.push({ account_id: a.id, name: a.name, date: date ?? a.due_date ?? null, amount });
   }
 
   // 引き落とし口座の残高が、近いうちに落ちる額に足りるか。先の請求まで含めると毎日警告が出るので、
@@ -122,6 +131,8 @@ export async function balances(db: D1Database, today = todayJST()) {
     assets,
     liabilities,
     net_worth: assets - liabilities,
+    // 画面に出す純資産。帳簿の net_worth に、まだ記録していない分割の残りの回も負債として足す
+    net_assets: assets - cardUnpaid - loanDue,
     shortfalls,
     // 返済期限の1週間前から、借りている額が残る借入を知らせる
     loan_reminders: loans.filter((a) => a.due_date && a.balance > 0 && diffDays(a.due_date, today) <= SHORTFALL_DAYS)
