@@ -31,6 +31,7 @@ export interface Account {
   annual_rate: number | null;
   /** 借入の最初の返済日。この月より前の返済はない */
   first_payment_date: string | null;
+  due_date: string | null;
   check_interval_days: number | null;
   statement_card_name: string | null;
   statement_import: number;
