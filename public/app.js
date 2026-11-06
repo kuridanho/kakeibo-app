@@ -650,7 +650,7 @@ async function entryForm(existing, opts = {}) {
   const render = () => {
     const seg = h("div", { class: "seg", role: "group", "aria-label": "種類" },
       [["expense", "支出"], ["income", "収入"], ["transfer", "振替"]].map(([k, label]) =>
-        h("button", { type: "button", "aria-pressed": String(kind === k), onclick: () => { kind = k; items = []; render(); } }, label)));
+        h("button", { type: "button", "aria-pressed": String(kind === k), onclick: () => { init.amount = amount.value; kind = k; items = []; render(); } }, label)));
     const camera = h("input", { type: "file", accept: "image/*", capture: "environment", hidden: true });
     const itemsBox = h("div", { class: "stack", hidden: true });
     const amount = moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: init.amount, disabled: locked, "aria-label": "金額" });
@@ -2066,12 +2066,14 @@ async function recurringForm(id) {
   const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown");
   let kind = r?.kind ?? "expense";
   let every = r?.every ?? "month";
+  // 種類や繰り返しを切り替えても、入力した金額は残す
+  let amt = r?.amount;
   const box = h("div", { class: "stack" });
   const draw = () => {
     const seg = (pairs, cur, set, label) => h("div", { class: "seg", role: "group", "aria-label": label },
-      pairs.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(cur === k), onclick: () => { set(k); draw(); } }, l)));
+      pairs.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(cur === k), onclick: () => { amt = form.elements.amount.value; set(k); draw(); } }, l)));
     const form = h("form", { id: "recurring-form" },
-      amountField(moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: r?.amount, "aria-label": "金額" })),
+      amountField(moneyInput({ name: "amount", class: "amount", "data-num": "", required: true, value: amt, "aria-label": "金額" })),
       seg([["month", "毎月"], ["year", "毎年"]], every, (v) => { every = v; }, "繰り返し"),
       group(
         field("最初の日", h("input", { name: "first_date", type: "date", required: true, value: r?.first_date ?? today() })),
