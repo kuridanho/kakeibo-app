@@ -28,6 +28,9 @@
   },
   // 毎日 日本時間7時。引き落としの記録、月初の前月のまとめ、R2への控え
   "triggers": { "crons": ["0 22 * * *"] },
+  // D1 は APAC の別の場所にあり、東京で動くと問い合わせのたびに往復で数十ms かかる。
+  // 1回の API で数十回問い合わせるので、Worker を D1 の近くで動かす
+  "placement": { "mode": "smart" },
   "observability": { "enabled": true },
   "workers_dev": true,
   // プレビュー用のURLは使わないので閉じておく
