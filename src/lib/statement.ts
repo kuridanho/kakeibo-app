@@ -22,6 +22,11 @@ import { createEntry, getAccount, getEntry, LedgerError, resolveAccount, updateE
 import { merchantMemos, rememberName, rememberNote, suggestName } from "./merchant-names";
 import { parseSMBC, type StatementRow } from "./smbc";
 
+/** カードに戻るキャッシュバックやポイントの交換の行。返品とは分けて収入にする */
+export function isCashback(row: Pick<StatementRow, "merchant" | "paymentAmount">): boolean {
+  return row.paymentAmount < 0 && /キャッシュバック|ポイント|ﾎﾟｲﾝﾄ|還元|cash\s*back/i.test(row.merchant);
+}
+
 export interface Candidate {
   entry_id: number;
   date: string;
@@ -206,11 +211,19 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
         continue;
       }
     }
-    toClassify.push(row.merchant);
+    if (!isCashback(row)) toClassify.push(row.merchant);
   }
   const classified = await classifyMerchants(env, toClassify);
+  const otherIncome = await db.prepare("SELECT id FROM accounts WHERE seed_key = 'other_income'").first<{ id: number }>();
   for (const row of rows) {
     if (row.charge_account_id || row.status === "duplicate" || row.status === "matched") continue;
+    // キャッシュバックやポイントの交換は、支出のマイナスではなく収入にする
+    if (isCashback(row) && otherIncome) {
+      row.category_id = (await resolveAccount(db, otherIncome.id)).id;
+      row.category_source = "rule";
+      row.unclear = false;
+      continue;
+    }
     const c = classified.get(merchantKey(row.merchant));
     row.category_id = c?.account_id ?? null;
     row.category_source = c?.source ?? null;
@@ -317,7 +330,10 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
     const categoryId = choice.category_id ?? row.category_id;
     if (!categoryId) throw new LedgerError(`${row.merchant} のカテゴリが決まっていません`);
     const category = await resolveAccount(db, categoryId);
-    if (category.type !== "expense") throw new LedgerError("支出には支出のカテゴリを選んでください");
+    // 収入のカテゴリにできるのは、カードに戻るマイナスの行(キャッシュバックなど)だけ
+    if (category.type !== "expense" && !(category.type === "income" && row.paymentAmount < 0 && !isInstallment(row))) {
+      throw new LedgerError(row.paymentAmount < 0 ? "支出か収入のカテゴリを選んでください" : "支出には支出のカテゴリを選んでください");
+    }
     plans.push({ row, choice, link: "new", category_id: category.id });
   }
   return plans;
@@ -584,8 +600,9 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
           { account_id: cardId, amount: -row.paymentAmount },
         ]));
       } else {
+        const income = row.paymentAmount < 0 && (await getAccount(db, plan.category_id!)).type === "income";
         created.push(await createEntry(db, {
-          ...common, kind: "expense", memo: newMemo,
+          ...common, kind: income ? "income" : "expense", memo: newMemo,
           category_source: choice.category_id ? "user" : row.category_source,
           user_id: meta.user_id ?? null,
         }, [

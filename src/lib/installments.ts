@@ -4,7 +4,7 @@
 // 支払額のうち利用額を回数で割った分はカテゴリへ、残りは利息・手数料へ入れる。
 
 import type { Account, Entry, Line } from "../types";
-import { addMonths, billingMonth, dayInMonth, monthOf, todayJST } from "./dates";
+import { addMonths, billingMonth, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import { createEntry, deleteEntry, type EntryFields, getAccount, getEntry, LedgerError, resolveAccount, updateEntry } from "./ledger";
 
 export interface Installment {
@@ -257,6 +257,24 @@ export async function pendingPayments(db: D1Database, filter: { cardId?: number;
   return out;
 }
 
+/** 使い始めた日。最初に入れた開始残高の日で、これより前の引き落としはもう手元の残高から引かれている */
+export async function trackingStart(db: D1Database): Promise<string | null> {
+  const row = await db.prepare("SELECT MIN(date) AS d FROM entries WHERE kind = 'opening'").first<{ d: string | null }>();
+  return row?.d ?? null;
+}
+
+/**
+ * 使い始める前に引き落とされた回を飛ばした、最初に記録する回。
+ * 前の利用を分割で登録したとき、引き落とし済みの回をカードの未払いに残さないため
+ */
+export function firstUnpaidNumber(p: Pick<Installment, "count" | "first_month">, card: Pick<Account, "payment_day">, start: string | null): number {
+  if (!start || !card.payment_day) return 1;
+  for (let n = 1; n <= p.count; n++) {
+    if (nextBankDay(dayInMonth(addMonths(p.first_month, n - 1), card.payment_day)) >= start) return n;
+  }
+  return p.count;
+}
+
 /** 記録のときに分割にする。1回目の請求月は利用日から決める */
 export async function createInstallment(db: D1Database, input: {
   card_id: number; category_id: number; payee?: string; memo?: string; date: string; amount: number;
@@ -267,12 +285,13 @@ export async function createInstallment(db: D1Database, input: {
   if (!card.closing_day || !card.payment_day) throw new LedgerError(`${card.name}の締め日と引き落とし日を設定してください`);
   const fee = input.fee ?? 0;
   if (!Number.isInteger(fee) || fee < 0) throw new LedgerError("手数料は円単位で入れてください");
+  const first_month = billingMonth(input.date, card.closing_day, card.payment_day);
   const p = await insertInstallment(db, {
     card_id: card.id, category_id: input.category_id, payee: input.payee ?? "", memo: input.memo ?? "",
-    purchase_date: input.date, principal: input.amount, count: input.count,
-    first_month: billingMonth(input.date, card.closing_day, card.payment_day),
+    purchase_date: input.date, principal: input.amount, count: input.count, first_month,
     ...defaultPayments(input.amount, input.count, fee),
-    start_number: 1, origin: "manual", user_id: input.user_id ?? null,
+    start_number: firstUnpaidNumber({ count: input.count, first_month }, card, await trackingStart(db)),
+    origin: "manual", user_id: input.user_id ?? null,
   });
   await recordPlan(db, p, today);
   return p;

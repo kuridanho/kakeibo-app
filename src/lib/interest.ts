@@ -31,12 +31,16 @@ async function owedAt(db: D1Database, id: number, date: string): Promise<number>
   return row?.s ?? 0;
 }
 
-/** from から to までの日割りの利息。元金は仕訳の合計から日ごとに出す */
+/**
+ * from から to までの日割りの利息。元金は仕訳の合計から日ごとに出す。
+ * 開始残高は使い始める前から借りていた額なので、登録した日ではなく期間の初めからあったものとして数える
+ */
 export async function accruedInterest(db: D1Database, a: Pick<Account, "id" | "annual_rate">, from: string, to: string): Promise<number> {
   if (!a.annual_rate || from > to) return 0;
   const { results } = await db
-    .prepare(`SELECT e.date, -SUM(l.amount) AS amount FROM lines l JOIN entries e ON e.id = l.entry_id
-      WHERE l.account_id = ? AND e.date < ? GROUP BY e.date ORDER BY e.date`)
+    .prepare(`SELECT CASE WHEN e.kind = 'opening' THEN '0000-00-00' ELSE e.date END AS date, -SUM(l.amount) AS amount
+      FROM lines l JOIN entries e ON e.id = l.entry_id
+      WHERE l.account_id = ? AND (e.date < ? OR e.kind = 'opening') GROUP BY 1 ORDER BY 1`)
     .bind(a.id, to)
     .all<{ date: string; amount: number }>();
   let i = 0;

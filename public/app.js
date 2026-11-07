@@ -427,6 +427,10 @@ async function home() {
     counts.unsure && ["#/list?unsure=1", "AIが決めたカテゴリの確認", counts.unsure, "sparkle", "#BF5AF2"],
     counts.provisional && ["#/list?provisional=1", "明細と未照合のカード払い", counts.provisional, "card", "#5E5CE6"],
     counts.advances && ["#/advances", "回収待ちの立て替え", counts.advances, "hand", "#FF9F0A"],
+    counts.duplicates && ["#/duplicates", "二重に記録したかもしれない取引", counts.duplicates, "card", "#FF9F0A"],
+    // 引き落とし日を過ぎたのに引き落としの記録がない請求。使い始める前に払った分を記録したときなどに残る
+    ...(b.past_due_bills ?? []).map((x) => [`#/account/${x.account_id}`, `${x.name}の${Number(x.billing_month.slice(5))}月の請求に引き落としの記録がありません`,
+      num(x.amount), "card", "#FF453A"]),
     ...b.loan_reminders.map((x) => [`#/account/${x.id}`, `${x.name}の返済期限 ${dayLabel(x.due_date)}${x.days_left < 0 ? "（過ぎています）" : x.days_left === 0 ? "（今日）" : `（あと${x.days_left}日）`}`,
       num(x.balance), "percent", x.days_left < 0 ? "#FF453A" : "#FF9F0A"]),
     ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の棚卸し`, 1, "wallet", "#30D158"]),
@@ -640,7 +644,8 @@ async function entryForm(existing, opts = {}) {
   } : { date: opts.date ?? today(), from_account_id: opts.from ?? (opts.to ? list.find((a) => a.id === opts.to)?.payment_account_id : null) ?? store.get("lastPay", null), to_account_id: opts.to };
   // 支払方法は選べるようにしたものだけ。編集中の取引で使っているものは残す
   const payWith = live(list).filter((a) => (a.type === "asset" || a.type === "liability") && (a.pay_method || keep(a, init.from_account_id)));
-  const receiveTo = byType(list, "asset");
+  // カードに入った収入(明細のキャッシュバック)を開いたときだけ、そのカードを受け取り先に残す
+  const receiveTo = [...byType(list, "asset"), ...list.filter((a) => a.kind === "card" && a.id === init.to_account_id)];
   const movable = byType(list, "asset", "liability");
   // カテゴリが複数に分かれた支出は、カテゴリごとの品目として開く。名前は覚えさせない
   let items = kind === "expense" && expenseLines.length > 1 && !inst
@@ -707,6 +712,8 @@ async function entryForm(existing, opts = {}) {
     // 支払方法がカードで、カテゴリが1つの支出は、あとから分割にできる
     const canSplit = existing && kind === "expense" && !inst && !existing.advance && expenseLines.length === 1
       && list.find((a) => a.id === init.from_account_id)?.kind === "card";
+    // 二重に記録した取引は、あとから1件にまとめられる。分割払いの回はまとめない
+    const canMerge = existing && !inst && ["expense", "income", "transfer"].includes(existing.kind);
     const form = h("form", { id: "entry-form" },
       amountField(amount, kind === "expense" && !existing
         ? h("button", { type: "button", class: "icon", "aria-label": "レシートを撮る", onclick: () => camera.click() }, icon(CAMERA)) : null),
@@ -734,7 +741,9 @@ async function entryForm(existing, opts = {}) {
         group(
           inst ? null : toggle("立て替えあり", h("input", { type: "checkbox", name: "advance", checked: init.advance })),
           !existing && !src ? toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })) : null,
-          canSplit ? cell({ href: `#/entry/${existing.id}/split` }, h("span", { class: "grow" }, "あとから分割")) : null)) : null,
+          canSplit ? cell({ href: `#/entry/${existing.id}/split` }, h("span", { class: "grow" }, "あとから分割")) : null,
+          canMerge ? cell({ href: `#/entry/${existing.id}/merge` }, h("span", { class: "grow" }, "ほかの取引と統合")) : null)) : null,
+      kind !== "expense" && canMerge ? group(cell({ href: `#/entry/${existing.id}/merge` }, h("span", { class: "grow" }, "ほかの取引と統合"))) : null,
       kind !== "expense" && !existing && !src ? h("details", { class: "more" },
         h("summary", {}, "その他"),
         group(toggle("来月から毎月繰り返す", h("input", { type: "checkbox", name: "repeat" })))) : null,
@@ -1027,6 +1036,61 @@ async function editEntry(id) {
 
 const COUNT_OPTIONS = (selected) => Array.from({ length: 35 }, (_, i) => i + 2)
   .map((n) => h("option", { value: n, selected: n === selected }, `${n}回`));
+
+/** 二重に記録した取引を1件にまとめる。明細から取り込んだほうを残す */
+async function mergeView(id) {
+  const [e, candidates] = await Promise.all([api("GET", `/api/entries/${id}`), api("GET", `/api/entries/${id}/merge-candidates`)]);
+  const pick = async (other) => {
+    const keepOther = other.from_statement && !e.statement_key;
+    if (!confirm(`${keepOther ? "明細から取り込んだ取引を残し、この取引を" : "この取引を残し、選んだ取引を"}消します。メモや立て替えの回収は残すほうに移ります。`)) return;
+    try {
+      const { id: kept } = await api("POST", `/api/entries/${id}/merge`, { with: other.id });
+      toast("統合しました");
+      location.hash = `#/entry/${kept}`;
+    } catch (err) { toast(err.message); }
+  };
+  return [
+    sheetBar("ほかの取引と統合", { back: `#/entry/${id}` }),
+    h("span", { class: "section-head" }, `${dayLabel(e.date)}　${e.payee || "（内容なし）"}　${num(entryAmount(e))}円`),
+    candidates.length === 0 ? h("p", { class: "empty" }, `前後${45}日に同じ金額の取引はありません`)
+      : h("div", { class: "group" }, candidates.map((x) => cell({ class: "tall", role: "button", tabindex: "0", onclick: () => pick(x) },
+        h("div", { class: "grow" }, h("span", {}, x.payee || "（内容なし）"),
+          h("span", { class: "detail" }, [dayLabel(x.date), x.paid_with, x.from_statement ? "明細" : x.provisional ? "仮" : "手入力"].filter(Boolean).join("　"))),
+        h("span", { class: "value" }, num(x.amount))))),
+  ];
+}
+
+/** 明細の取引と同じカード、同じ金額の手入力が近い日にある組。統合するか、別の取引として残す */
+async function duplicatesView() {
+  const pairs = await api("GET", "/api/duplicates");
+  const merge = async (p) => {
+    if (!confirm(`明細の「${p.statement.payee}」を残し、手入力の「${p.manual.payee}」を消します。`)) return;
+    try {
+      await api("POST", `/api/entries/${p.manual.id}/merge`, { with: p.statement.id });
+      toast("統合しました");
+      route();
+    } catch (err) { toast(err.message); }
+  };
+  const keepBoth = async (p) => {
+    try {
+      await api("POST", "/api/duplicates/dismiss", { a: p.statement.id, b: p.manual.id });
+      toast("別の取引として残しました");
+      route();
+    } catch (err) { toast(err.message); }
+  };
+  return [
+    h("h1", {}, "二重に記録したかもしれない取引"),
+    pairs.length === 0 ? h("p", { class: "empty" }, "ありません") : pairs.map((p) => h("div", { class: "group" },
+      cell({ href: `#/entry/${p.statement.id}`, class: "tall" },
+        h("div", { class: "grow" }, h("span", {}, p.statement.payee || "（内容なし）"), h("span", { class: "detail" }, `${dayLabel(p.statement.date)}　${p.account_name}　明細`)),
+        h("span", { class: "value" }, num(p.amount))),
+      cell({ href: `#/entry/${p.manual.id}`, class: "tall" },
+        h("div", { class: "grow" }, h("span", {}, p.manual.payee || "（内容なし）"), h("span", { class: "detail" }, `${dayLabel(p.manual.date)}　${p.account_name}　${p.manual.provisional ? "仮" : "手入力"}`)),
+        h("span", { class: "value" }, num(p.amount))),
+      h("button", { type: "button", class: "cell", onclick: () => merge(p) }, "統合する"),
+      h("button", { type: "button", class: "cell", onclick: () => keepBoth(p) }, "別の取引として残す"))),
+  ];
+}
 
 /** あとから分割。カードで払った支出を分割払いにする */
 async function splitForm(id) {
@@ -2286,7 +2350,7 @@ async function importView() {
       const category = r.charge_account_id ? null : h("select", { "aria-label": "カテゴリ", onchange: (ev) => {
         if (ev.target.value) choice().category_id = Number(ev.target.value);
         else delete choice().category_id;
-      } }, options(expense, choices[r.index]?.category_id ?? (ask ? null : r.category_id), ask ? "答えから決める" : null));
+      } }, options(r.paymentAmount < 0 ? [...expense, ...byType(list, "income")] : expense, choices[r.index]?.category_id ?? (ask ? null : r.category_id), ask ? "答えから決める" : null));
       const charge = r.charge_account_id ? h("span", { class: "sub" }, `${list.find((a) => a.id === r.charge_account_id)?.name}へのチャージ(振替)`) : null;
 
       function update() {
@@ -2382,6 +2446,8 @@ const routes = [
   [/^\/list$/, list, "list"],
   [/^\/entry\/(\d+)$/, editEntry, "list", true],
   [/^\/entry\/(\d+)\/split$/, splitForm, "list", true],
+  [/^\/entry\/(\d+)\/merge$/, mergeView, "list", true],
+  [/^\/duplicates$/, duplicatesView, "home"],
   [/^\/installment\/(\d+)$/, installmentView, "plan", true],
   [/^\/summary$/, summary, "list"],
   [/^\/accounts$/, accountsView, "home"],

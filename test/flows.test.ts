@@ -509,3 +509,102 @@ describe("返済日のない借入(単発の借り入れ)", () => {
     await expect(api("PATCH", `/api/accounts/${loan}`, { due_date: "6月末" })).rejects.toThrow();
   });
 });
+
+// 2026-11-07 に本番のデータで見つけた食い違いと、その再発防止
+describe("使い始める前の分、キャッシュバック、二重の記録", () => {
+  it("開始残高の借入は、利息の期間の初めから借りていたものとして利息を数える", async () => {
+    const smart = await api("POST", "/api/accounts", {
+      name: "流れ前からの借入", type: "liability", kind: "loan", payment_day: 27, payment_account_id: bank,
+      payment_amount: 10000, annual_rate: 12.1, first_payment_date: "2030-02-27",
+    });
+    await api("POST", "/api/opening", { date: "2030-01-29", balances: [{ account_id: smart.id, amount: 100000 }] });
+    // 2月の返済には 1/1〜1/31 の31日分。100000 × 12.1% × 31 / 365 = 1027.6
+    expect((await loanOverview(db, smart, "2030-02-01")).next).toMatchObject({ month: "2030-02", interest: 1027 });
+    await balanced();
+  });
+
+  it("使い始める前に引き落とされた分割の回は記録せず、未払いに残さない", async () => {
+    const mer = (await api("POST", "/api/accounts", {
+      name: "流れ後から分割カード", type: "liability", kind: "card", closing_day: 31, payment_day: 27, payment_account_id: bank, statement_import: 0,
+    })).id;
+    // 使い始めたのは 2027-01-01。2026-11 の利用の1回目は 2026-12-28 に引き落とし済み
+    const r = await api("POST", "/api/entries", {
+      kind: "expense", date: "2026-11-12", amount: 2592, from_account_id: mer, category_id: await category("美容"),
+      payee: "日焼け止め", installment_count: 2,
+    });
+    const plan = await api("GET", `/api/installments/${r.installment_id}`);
+    expect(plan.start_number).toBe(2);
+    expect((await db.prepare("SELECT COUNT(*) AS n FROM entries WHERE auto_key = ?").bind(`installment:${r.installment_id}:1`).first<{ n: number }>())!.n).toBe(0);
+    const b = await balances(db, "2027-01-10");
+    expect(b.card_dues.filter((d: any) => d.account_id === mer).map((d: any) => [d.billing_month, d.amount])).toEqual([["2027-01", 1296]]);
+    expect(b.past_due_bills.filter((d: any) => d.account_id === mer)).toEqual([]);
+    await balanced();
+  });
+
+  it("引き落とし日を過ぎても引き落としの記録がない請求は、確かめることに出す", async () => {
+    const nopay = (await api("POST", "/api/accounts", {
+      name: "流れ記録のないカード", type: "liability", kind: "card", closing_day: 31, payment_day: 27, statement_import: 0,
+    })).id;
+    await api("POST", "/api/entries", { kind: "expense", date: "2030-11-05", amount: 1500, from_account_id: nopay, category_id: await category("その他") });
+    expect((await balances(db, "2030-12-20")).past_due_bills.filter((d: any) => d.account_id === nopay)).toEqual([]);
+    expect((await balances(db, "2031-01-05")).past_due_bills.filter((d: any) => d.account_id === nopay))
+      .toEqual([expect.objectContaining({ billing_month: "2030-12", amount: 1500 })]);
+    await balanced();
+  });
+
+  it("明細のキャッシュバックは収入として取り込み、編集してもカードのまま保つ", async () => {
+    const other = await category("その他の収入");
+    const csv = "様,1,流れカード\n2030/02/01,キャッシュバック(ポイント交換),-500,１,１,-500,\n,,,,,-500,\n";
+    const preview = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2030-03", text: csv });
+    expect(preview.rows[0].category_id).toBe(other);
+    const before = (await snapshot()).bal(card);
+    await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2030-03", text: csv, choices: {} });
+    const [e] = await api<any[]>("GET", "/api/entries?q=キャッシュバック");
+    expect(e.kind).toBe("income");
+    expect((await snapshot()).bal(card)).toBe(before - 500);
+    expect((await month("2030-02")).income).toBe(500);
+    await api("PUT", `/api/entries/${e.id}`, { kind: "income", date: e.date, amount: 500, to_account_id: card, category_id: other, payee: "ポイント" });
+    const edited = await api("GET", `/api/entries/${e.id}`);
+    expect(edited.lines).toEqual(expect.arrayContaining([expect.objectContaining({ account_id: card, amount: 500 })]));
+    expect(edited.billing_month).toBe("2030-03");
+    await balanced();
+  });
+
+  it("明細と手入力の二重の記録を知らせ、統合すると明細のほうに回収とメモを移す", async () => {
+    const daily = await category("その他");
+    const csv = "様,1,流れカード\n2030/04/01,ＡＭＡＺＯＮ．ＣＯ．ＪＰ,1018,１,１,1018,\n,,,,,1018,\n";
+    await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2030-05", text: csv, choices: { 0: { category_id: daily } } });
+    const manual = await api("POST", "/api/entries", {
+      kind: "expense", date: "2030-04-20", amount: 1018, from_account_id: card, category_id: daily, payee: "洗浄液", memo: "定期便", advance: true,
+    });
+    await api("POST", `/api/entries/${manual.id}/recoveries`, { date: "2030-04-25", account_id: wallet, amount: 500 });
+    const pairs = await api<any[]>("GET", "/api/duplicates");
+    const pair = pairs.find((p) => p.manual.id === manual.id);
+    expect(pair).toBeDefined();
+    expect((await api("GET", "/api/counts")).duplicates).toBeGreaterThan(0);
+    const before = await snapshot();
+    const { id: kept } = await api("POST", `/api/entries/${manual.id}/merge`, { with: pair.statement.id });
+    expect(kept).toBe(pair.statement.id);
+    const after = await snapshot();
+    expect(after.bal(card)).toBe(before.bal(card) - 1018);
+    const k = await api("GET", `/api/entries/${kept}`);
+    expect(k.memo).toContain("定期便");
+    expect(k.advance).toBe(1);
+    expect(k.recoveries).toHaveLength(1);
+    expect((await api<any[]>("GET", "/api/duplicates")).find((p) => p.manual.id === manual.id)).toBeUndefined();
+    await balanced();
+  });
+
+  it("別の取引だと答えた組は、もう知らせない", async () => {
+    const daily = await category("その他");
+    const csv = "様,1,流れカード\n2030/06/01,ローソン,300,１,１,300,\n,,,,,300,\n";
+    await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2030-07", text: csv, choices: { 0: { category_id: daily } } });
+    const manual = await api("POST", "/api/entries", { kind: "expense", date: "2030-06-20", amount: 300, from_account_id: card, category_id: daily, payee: "ローソン" });
+    const pair = (await api<any[]>("GET", "/api/duplicates")).find((p) => p.manual.id === manual.id);
+    await api("POST", "/api/duplicates/dismiss", { a: pair.statement.id, b: manual.id });
+    expect((await api<any[]>("GET", "/api/duplicates")).find((p) => p.manual.id === manual.id)).toBeUndefined();
+    const candidates = await api<any[]>("GET", `/api/entries/${manual.id}/merge-candidates`);
+    expect(candidates.map((c) => c.id)).toContain(pair.statement.id);
+    await balanced();
+  });
+});

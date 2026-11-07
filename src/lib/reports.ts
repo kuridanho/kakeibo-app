@@ -75,6 +75,12 @@ export async function balances(db: D1Database, today = todayJST()) {
     })
     .filter((x) => x !== null)
     .sort((x, y) => (x.date ?? "9999").localeCompare(y.date ?? "9999") || x.account_id - y.account_id);
+  // 引き落とし日を過ぎたのに引き落としの記録がない請求月。使い始める前に引き落とされた分を記録したときなどに残る
+  const { results: paidRows } = await db
+    .prepare("SELECT auto_key FROM entries WHERE auto_key LIKE 'payment:%'").all<{ auto_key: string }>();
+  const paid = new Set(paidRows.map((r) => r.auto_key));
+  const pastDueBills = cardDues.filter((d) => d.date && d.date < today && d.amount > 0
+    && !paid.has(`payment:${d.account_id}:${d.billing_month}`));
   // 借入ごとの残高と、次に返す日(返済日がなければ返済期限)
   const loanDues: { account_id: number; name: string; date: string | null; amount: number }[] = [];
   for (const a of loans) {
@@ -125,6 +131,7 @@ export async function balances(db: D1Database, today = todayJST()) {
     card_unpaid: cardUnpaid,
     loan_due: loanDue,
     card_dues: cardDues,
+    past_due_bills: pastDueBills,
     loan_dues: loanDues,
     available_cash: liquidTotal - cardUnpaid - loanDue,
     non_liquid_total: nonLiquid.reduce((s, a) => s + a.balance, 0),
