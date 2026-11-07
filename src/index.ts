@@ -4,8 +4,9 @@ import { classifyItems, classifyMerchants, classifyOne, learnItemRule, learnRule
 import { addMonths, billingMonth, dayInMonth, monthOf, nextBankDay, todayJST } from "./lib/dates";
 import {
   balanceOf, buildSimple, createEntry, deleteEntry, getAccount, getEntry, LedgerError, logChange,
-  resolveAccount, type SimpleInput, updateEntry,
+  mergeEntries, resolveAccount, type SimpleInput, updateEntry,
 } from "./lib/ledger";
+import { dismissDuplicate, findDuplicates, mergeCandidates } from "./lib/duplicates";
 import { calendarMonth } from "./lib/calendar";
 import { loanOverview, payoffQuote } from "./lib/interest";
 import { monthEndProjection, nextMonthBudget } from "./lib/budget";
@@ -470,12 +471,19 @@ app.put("/api/entries/:id", async (c) => {
   }
   if (entry.source === "statement") {
     // 明細から作った取引は、日付、金額、カードを明細のまま保つ
-    const card = oldLines.find((l) => l.amount < 0)!;
     input.date = entry.date;
-    input.amount = -card.amount;
-    input.from_account_id = card.account_id;
+    if (entry.kind === "income") {
+      // キャッシュバックはカードに入る収入。カードと額は明細のまま
+      const card = oldLines.find((l) => l.amount > 0)!;
+      input.amount = card.amount;
+      input.to_account_id = card.account_id;
+    } else {
+      const card = oldLines.find((l) => l.amount < 0)!;
+      input.amount = -card.amount;
+      input.from_account_id = card.account_id;
+    }
   }
-  const { fields, lines } = await buildSimple(db, input);
+  const { fields, lines } = await buildSimple(db, input, { cardIncome: entry.source === "statement" && entry.kind === "income" });
   if (entry.source === "statement") {
     fields.provisional = 0;
     fields.billing_month = entry.billing_month;
@@ -529,6 +537,28 @@ app.post("/api/entries/confirm-categories", async (c) => {
   }
   for (const [payee, accountId] of learned) await learnRule(db, payee, accountId);
   return c.json({ confirmed, changed });
+});
+
+// 二重に記録した取引を1件にまとめる。明細から取り込んだほうを残す
+app.get("/api/entries/:id/merge-candidates", async (c) => {
+  const id = int(c.req.param("id"), "id");
+  await getEntry(c.env.DB, id);
+  return c.json(await mergeCandidates(c.env.DB, id));
+});
+
+app.post("/api/entries/:id/merge", async (c) => {
+  const id = int(c.req.param("id"), "id");
+  const { with: other } = await c.req.json<{ with: number }>();
+  const kept = await mergeEntries(c.env.DB, id, int(other, "統合する取引"));
+  return c.json({ id: kept });
+});
+
+app.get("/api/duplicates", async (c) => c.json(await findDuplicates(c.env.DB)));
+
+app.post("/api/duplicates/dismiss", async (c) => {
+  const { a, b } = await c.req.json<{ a: number; b: number }>();
+  await dismissDuplicate(c.env.DB, int(a, "取引"), int(b, "取引"));
+  return c.json({ ok: true });
 });
 
 app.delete("/api/entries/:id", async (c) => {
@@ -901,7 +931,8 @@ app.get("/api/counts", async (c) => {
       AND report_date BETWEEN ? AND ? AND category_source IN ('ai', 'keyword', 'none')`).bind(`${month}-01`, `${month}-31`),
   ]);
   const count = (r: D1Result) => Number((r.results?.[0] as { n?: number } | undefined)?.n ?? 0);
-  return c.json({ provisional: count(results[0]), advances: count(results[1]), unsure: count(results[2]) });
+  return c.json({ provisional: count(results[0]), advances: count(results[1]), unsure: count(results[2]),
+    duplicates: (await findDuplicates(c.env.DB)).length });
 });
 
 app.get("/api/budget", async (c) => c.json(await nextMonthBudget(c.env.DB)));

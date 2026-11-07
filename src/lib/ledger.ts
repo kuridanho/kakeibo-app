@@ -190,7 +190,8 @@ export interface SimpleInput {
   items?: { category_id: number; amount: number }[];
 }
 
-export async function buildSimple(db: D1Database, input: SimpleInput): Promise<{ fields: EntryFields; lines: Line[] }> {
+/** cardIncome: カードに入る収入(明細のキャッシュバック)を受け付ける。新しい記録では選ばせない */
+export async function buildSimple(db: D1Database, input: SimpleInput, opts: { cardIncome?: boolean } = {}): Promise<{ fields: EntryFields; lines: Line[] }> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new LedgerError("日付は YYYY-MM-DD で入れてください");
   if (!Number.isInteger(input.amount) || input.amount === 0) throw new LedgerError("金額を円単位で入れてください");
   const fields: EntryFields = {
@@ -227,7 +228,8 @@ export async function buildSimple(db: D1Database, input: SimpleInput): Promise<{
     }
   } else if (input.kind === "income") {
     const to = await need(input.to_account_id, "受け取り先");
-    if (to.type !== "asset") throw new LedgerError("受け取り先には財布や銀行口座などを選んでください");
+    // カードに入る収入はキャッシュバック。新しい記録では選ばせないが、明細から作った取引はカードのまま保つ
+    if (to.type !== "asset" && !(opts.cardIncome && to.kind === "card")) throw new LedgerError("受け取り先には財布や銀行口座などを選んでください");
     const cat = await need(input.category_id, "カテゴリ");
     if (cat.type !== "income") throw new LedgerError("収入には収入のカテゴリを選んでください");
     lines = [{ account_id: to.id, amount: input.amount }, { account_id: cat.id, amount: -input.amount }];
@@ -249,9 +251,10 @@ export async function buildSimple(db: D1Database, input: SimpleInput): Promise<{
   } else {
     throw new LedgerError("種類は支出、収入、振替のどれかです");
   }
-  // カードで払った分は請求月を決めておき、明細を取り込むカードなら照合するまで仮にする
-  if (paidWith.kind === "card" && input.kind !== "income") {
-    fields.provisional = paidWith.statement_import ? 1 : 0;
+  // カードで払った分は請求月を決めておき、明細を取り込むカードなら照合するまで仮にする。
+  // カードに入る収入(キャッシュバック)も請求から差し引かれるので請求月を持つ
+  if (paidWith.kind === "card") {
+    fields.provisional = paidWith.statement_import && input.kind !== "income" ? 1 : 0;
     if (paidWith.closing_day && paidWith.payment_day) {
       fields.billing_month = billingMonth(input.date, paidWith.closing_day, paidWith.payment_day);
     }
@@ -260,4 +263,33 @@ export async function buildSimple(db: D1Database, input: SimpleInput): Promise<{
     fields.billing_month = null;
   }
   return { fields, lines };
+}
+
+/**
+ * 同じ支払いを二重に記録した2件を1件にまとめる。明細から取り込んだほうを残し、どちらも明細でなければ keepId を残す。
+ * 消すほうにしかないメモ、立て替えの印、回収、予定の結びつきは残すほうへ移してから消す
+ */
+export async function mergeEntries(db: D1Database, keepId: number, dropId: number): Promise<number> {
+  if (keepId === dropId) throw new LedgerError("同じ取引どうしは統合できません");
+  let [keep, drop] = await Promise.all([getEntry(db, keepId), getEntry(db, dropId)]);
+  if (!keep.entry.statement_key && drop.entry.statement_key) [keep, drop] = [drop, keep];
+  if (keep.entry.statement_key && drop.entry.statement_key) throw new LedgerError("どちらも明細から取り込んだ取引なので統合できません");
+  for (const e of [keep.entry, drop.entry]) {
+    if (!["expense", "income", "transfer"].includes(e.kind)) throw new LedgerError("支出、収入、振替だけ統合できます");
+    if (/^installment:/.test(e.auto_key ?? "")) throw new LedgerError("分割払いの回は統合できません");
+  }
+  if (keep.entry.kind !== drop.entry.kind) throw new LedgerError("種類の違う取引は統合できません");
+  const k = keep.entry, d = drop.entry;
+  const fields: Partial<EntryFields> = {};
+  if (d.memo && !k.memo.includes(d.memo)) fields.memo = [k.memo, d.memo].filter(Boolean).join(" / ");
+  if (d.advance && !k.advance) Object.assign(fields, { advance: 1, settled: d.settled });
+  if (!k.payee && d.payee) fields.payee = d.payee;
+  // 回収は消すほうに付いていると一緒に消えるので、先に残すほうへ付け替える。集計日も残すほうの日にそろえる
+  const { results: recoveries } = await db
+    .prepare("SELECT id FROM entries WHERE related_entry_id = ? AND kind = 'recovery'").bind(d.id).all<{ id: number }>();
+  for (const r of recoveries) await updateEntry(db, r.id, { related_entry_id: k.id, report_date: k.report_date }, undefined, "統合");
+  await db.prepare("UPDATE planned SET entry_id = ? WHERE entry_id = ?").bind(k.id, d.id).run();
+  if (Object.keys(fields).length > 0) await updateEntry(db, k.id, fields, undefined, "統合");
+  await deleteEntry(db, d.id);
+  return k.id;
 }
