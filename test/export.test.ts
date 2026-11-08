@@ -66,3 +66,14 @@ describe("MCP", () => {
     expect((await rpc("/api/mcp", body)).status).toBe(401);
   });
 });
+
+describe("トークンの表記ゆれ", () => {
+  it("秘密に改行や引用符が混じっていても通り、違えば理由を返す", async () => {
+    const e = { ...(env as unknown as Env), EXPORT_TOKEN: `"${token}"\n` };
+    const ping = (h: Record<string, string>) => app.request("/api/mcp", { method: "POST", headers: { "content-type": "application/json", ...h }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }) }, e);
+    expect((await ping({ authorization: `Bearer ${token}` })).status).toBe(200);
+    const bad = await ping({ authorization: "Bearer " + "x".repeat(64) });
+    expect(bad.status).toBe(401);
+    expect((await bad.json<any>()).error).toBe("トークンが一致しません");
+  });
+});

@@ -39,6 +39,12 @@ app.use("/api/*", async (c, next) => {
     c.set("user", null);
     return next();
   }
+  if (!user && external) {
+    // 外部の接続元には、Access ではなくトークンの問題だと分かるように返す
+    const sent = Boolean(pathToken ?? c.req.header("authorization"));
+    if (!normalizeToken(c.env.EXPORT_TOKEN)) return c.json({ error: "サーバーに EXPORT_TOKEN が設定されていません" }, 401);
+    return c.json({ error: sent ? "トークンが一致しません" : "Authorization: Bearer <トークン> がありません" }, 401);
+  }
   if (!user && c.env.ALLOW_LOCAL !== "1" && c.req.path !== "/api/health") {
     return c.json({ error: "Cloudflare Access の認証がありません" }, 401);
   }
@@ -47,12 +53,19 @@ app.use("/api/*", async (c, next) => {
 });
 
 /** Bearer のトークンを EXPORT_TOKEN と比べる。長さや中身の違いで時間が変わらないよう、ハッシュを定数時間で比べる */
+/** 貼り付けで混じりやすい前後の空白、改行、引用符を落とす。32文字に満たなければ使わない */
+function normalizeToken(v: string | undefined): string | null {
+  const t = (v ?? "").trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+  return t.length >= 32 ? t : null;
+}
+
 async function exportTokenOk(env: Env, header: string | undefined): Promise<boolean> {
-  const secret = env.EXPORT_TOKEN;
+  const secret = normalizeToken(env.EXPORT_TOKEN);
   const m = header?.match(/^Bearer\s+(.+)$/i);
-  if (!secret || secret.length < 32 || !m) return false;
+  const sent = normalizeToken(m?.[1]);
+  if (!secret || !sent) return false;
   const hash = async (v: string) => new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
-  const [a, b] = await Promise.all([hash(m[1].trim()), hash(secret)]);
+  const [a, b] = await Promise.all([hash(sent), hash(secret)]);
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
