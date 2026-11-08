@@ -9,6 +9,8 @@ export interface Env {
   ENABLE_RECEIPT_EVAL?: string;
   /** "1" のとき、Cloudflare Access のヘッダー無しでも API を通す。手元で動かすときだけ使う */
   ALLOW_LOCAL?: string;
+  /** /api/export を Access の外から読むための Bearer トークン。32文字以上。wrangler secret put EXPORT_TOKEN で置く */
+  EXPORT_TOKEN?: string;
   /** レシートの読み取りに使う視覚モデル */
   RECEIPT_MODEL?: string;
 }

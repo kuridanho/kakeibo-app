@@ -30,12 +30,29 @@ app.use("/api/*", async (c, next) => {
   // Access の外から直接叩かれても全データを読み書きできないよう、ヘッダーが無ければ通さない。
   // 手元で動かすときだけ .dev.vars に ALLOW_LOCAL=1 を置いて外す。
   const user = c.req.header("cf-access-authenticated-user-email") ?? null;
+  // 外部へのエクスポートだけは、Worker の秘密 EXPORT_TOKEN を Bearer で示せば通す(読み取り専用)
+  if (!user && c.req.path.startsWith("/api/export") && await exportTokenOk(c.env, c.req.header("authorization"))) {
+    c.set("user", null);
+    return next();
+  }
   if (!user && c.env.ALLOW_LOCAL !== "1" && c.req.path !== "/api/health") {
     return c.json({ error: "Cloudflare Access の認証がありません" }, 401);
   }
   c.set("user", user);
   await next();
 });
+
+/** Bearer のトークンを EXPORT_TOKEN と比べる。長さや中身の違いで時間が変わらないよう、ハッシュを定数時間で比べる */
+async function exportTokenOk(env: Env, header: string | undefined): Promise<boolean> {
+  const secret = env.EXPORT_TOKEN;
+  const m = header?.match(/^Bearer\s+(.+)$/i);
+  if (!secret || secret.length < 32 || !m) return false;
+  const hash = async (v: string) => new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
+  const [a, b] = await Promise.all([hash(m[1].trim()), hash(secret)]);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
 
 app.onError((err, c) => {
   if (err instanceof LedgerError) return c.json({ error: err.message }, err.status as 400);
@@ -998,6 +1015,38 @@ app.post("/api/dev/receipt-eval", async (c) => {
   if (file.size > 8_000_000) throw new LedgerError("写真が大きすぎます");
   const models = String(form.get("models") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 4);
   return c.json(await evaluateReceipt(c.env, new Uint8Array(await file.arrayBuffer()), file.type || "image/jpeg", models));
+});
+
+// ---- エクスポート ----
+
+/** 外に出す表。entry_changes は変更の履歴 */
+const EXPORT_TABLES = [
+  "accounts", "entries", "lines", "category_rules", "merchant_names", "recurring", "planned", "installments",
+  "statement_imports", "statement_links", "balance_checks", "month_reports", "entry_changes", "settings",
+] as const;
+
+/**
+ * すべてのデータを JSON で返す。tables は D1 の行そのまま、computed は画面と同じ計算の結果。
+ * ?tables=entries,lines で表を絞る。?computed=0 で計算を省く
+ */
+app.get("/api/export", async (c) => {
+  const want = c.req.query("tables")?.split(",").map((s) => s.trim()).filter(Boolean);
+  const unknown = want?.filter((t) => !(EXPORT_TABLES as readonly string[]).includes(t));
+  if (unknown?.length) throw new LedgerError(`知らない表です: ${unknown.join(", ")}`);
+  const names = want?.length ? want : [...EXPORT_TABLES];
+  const rows = await c.env.DB.batch(names.map((t) => c.env.DB.prepare(`SELECT * FROM ${t} ORDER BY 1`)));
+  const tables = Object.fromEntries(names.map((t, i) => [t, rows[i].results]));
+  const today = todayJST();
+  const out: Record<string, unknown> = { exported_at: new Date().toISOString(), today, tables };
+  if (c.req.query("computed") !== "0") {
+    const month = monthOf(today);
+    const [bal, summary, year, monthEnd, budget] = await Promise.all([
+      balances(c.env.DB), monthSummary(c.env.DB, month), yearSummary(c.env.DB), monthEndProjection(c.env.DB), nextMonthBudget(c.env.DB),
+    ]);
+    out.computed = { balances: bal, month_summary: summary, year_summary: year, month_end: monthEnd, next_month_budget: budget };
+  }
+  c.header("cache-control", "no-store");
+  return c.json(out);
 });
 
 app.get("/api/health", (c) => c.json({ ok: true, today: todayJST(), next_month: addMonths(monthOf(todayJST()), 1) }));
