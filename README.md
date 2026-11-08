@@ -45,6 +45,17 @@ AI の binding は手元でも Cloudflare に接続するため、`wrangler logi
 
 GitHub で PR をマージしただけでは、本番の Worker は更新されません。default branch を最新にしてから `npm run deploy` を実行してください。ホーム画面のアプリは Service Worker が古い画面を返すことがあるので、更新後は一度アプリを閉じて開き直してください。
 
+## データのエクスポート
+
+`GET /api/export` がすべてのデータを JSON で返します。読み取り専用です。`tables` に D1 の各表の行がそのまま入り、`computed` に残高、今月と今年の集計、今月末の見込み、来月の予算が画面と同じ計算で入ります。`?tables=entries,lines` で表を絞り、`?computed=0` で計算を省けます。
+
+Access の画面からはそのまま開けます。外部のプログラムから読むときは、Worker の秘密に32文字以上の `EXPORT_TOKEN` を置き、`Authorization: Bearer <トークン>` を付けます。このトークンで通るのは `/api/export` だけです。Cloudflare Access が workers.dev の前にある場合は、Access のサービストークンのヘッダー(`CF-Access-Client-Id` と `CF-Access-Client-Secret`)も付けるか、このパスを Access の対象から外してください。
+
+```sh
+openssl rand -hex 32 | npx wrangler secret put EXPORT_TOKEN
+curl -H "Authorization: Bearer $TOKEN" https://kakeibo.kuridanho.workers.dev/api/export
+```
+
 ## レシート読み取りモデルの比較
 
 レシート読み取りを作る前に、実物のレシートで Workers AI の視覚モデルを比べるための仕組みがあります。`ENABLE_RECEIPT_EVAL` は既定で `"0"` です。比べるときだけ `"1"` にしてデプロイし、画像と正解の `expected.csv` を置いたフォルダを指定して実行します。1回のリクエストで最大4モデル・8MB の画像まで受け付けます。
