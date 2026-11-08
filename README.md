@@ -56,6 +56,10 @@ openssl rand -hex 32 | npx wrangler secret put EXPORT_TOKEN
 curl -H "Authorization: Bearer $TOKEN" https://kakeibo.kuridanho.workers.dev/api/export
 ```
 
+## MCP サーバー
+
+`/api/mcp` が MCP サーバーです(Streamable HTTP、状態なし、読み取り専用)。残高、取引、月と年の集計、月末の見込み、来月の予算、カレンダー、予定、繰り返し、分割、立て替え、表のエクスポートを道具として出します。認証はエクスポートと同じ `EXPORT_TOKEN` で、`Authorization: Bearer <トークン>` を付けるか、ヘッダーを付けられない接続元では `/api/mcp/<トークン>` を URL にします。
+
 ## レシート読み取りモデルの比較
 
 レシート読み取りを作る前に、実物のレシートで Workers AI の視覚モデルを比べるための仕組みがあります。`ENABLE_RECEIPT_EVAL` は既定で `"0"` です。比べるときだけ `"1"` にしてデプロイし、画像と正解の `expected.csv` を置いたフォルダを指定して実行します。1回のリクエストで最大4モデル・8MB の画像まで受け付けます。

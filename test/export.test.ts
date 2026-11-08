@@ -41,3 +41,28 @@ describe("エクスポート", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("MCP", () => {
+  const rpc = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+    app.request(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }, testEnv);
+
+  it("パスのトークンで初期化し、道具を一覧して呼べる", async () => {
+    const init = await (await rpc(`/api/mcp/${token}`, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })).json<any>();
+    expect(init.result.protocolVersion).toBe("2025-06-18");
+    expect((await rpc(`/api/mcp/${token}`, { jsonrpc: "2.0", method: "notifications/initialized" })).status).toBe(202);
+    const list = await (await rpc(`/api/mcp/${token}`, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json<any>();
+    expect(list.result.tools.map((t: any) => t.name)).toContain("list_entries");
+    const call = await (await rpc(`/api/mcp/${token}`, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_accounts", arguments: {} } })).json<any>();
+    expect(call.result.isError).toBe(false);
+    expect(JSON.parse(call.result.content[0].text).some((a: any) => a.name === "財布")).toBe(true);
+    const entries = await (await rpc(`/api/mcp/${token}`, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "list_entries", arguments: { limit: 5 } } })).json<any>();
+    expect(JSON.parse(entries.result.content[0].text)).toHaveProperty("next_cursor");
+  });
+
+  it("Bearer でも通り、トークンが違えば通さない", async () => {
+    const body = { jsonrpc: "2.0", id: 1, method: "ping" };
+    expect((await rpc("/api/mcp", body, { authorization: `Bearer ${token}` })).status).toBe(200);
+    expect((await rpc("/api/mcp/wrong", body)).status).toBe(401);
+    expect((await rpc("/api/mcp", body)).status).toBe(401);
+  });
+});

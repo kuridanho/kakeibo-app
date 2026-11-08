@@ -18,6 +18,7 @@ import {
 } from "./lib/installments";
 import { openPlanned, type Planned, validatePlanned } from "./lib/planned";
 import { type Recurring, recordRecurring, validate } from "./lib/recurring";
+import { mcpResponse } from "./lib/mcp";
 import { StatementParseError } from "./lib/smbc";
 import { commitStatement, previewStatement } from "./lib/statement";
 
@@ -30,8 +31,11 @@ app.use("/api/*", async (c, next) => {
   // Access の外から直接叩かれても全データを読み書きできないよう、ヘッダーが無ければ通さない。
   // 手元で動かすときだけ .dev.vars に ALLOW_LOCAL=1 を置いて外す。
   const user = c.req.header("cf-access-authenticated-user-email") ?? null;
-  // 外部へのエクスポートだけは、Worker の秘密 EXPORT_TOKEN を Bearer で示せば通す(読み取り専用)
-  if (!user && c.req.path.startsWith("/api/export") && await exportTokenOk(c.env, c.req.header("authorization"))) {
+  // エクスポートと MCP だけは、Worker の秘密 EXPORT_TOKEN を示せば通す(読み取り専用)。
+  // MCP は Bearer を付けられない接続元もあるので、/api/mcp/<トークン> でも受ける
+  const external = c.req.path === "/api/export" || c.req.path === "/api/mcp" || c.req.path.startsWith("/api/mcp/");
+  const pathToken = c.req.path.startsWith("/api/mcp/") ? `Bearer ${decodeURIComponent(c.req.path.slice("/api/mcp/".length))}` : undefined;
+  if (!user && external && await exportTokenOk(c.env, pathToken ?? c.req.header("authorization"))) {
     c.set("user", null);
     return next();
   }
@@ -1048,6 +1052,16 @@ app.get("/api/export", async (c) => {
   c.header("cache-control", "no-store");
   return c.json(out);
 });
+
+// ---- MCP ----
+
+const mcp = (c: { req: { raw: Request }; env: Env }) => mcpResponse(c.req.raw, (path) =>
+  // 道具は既存の GET の API を中で呼ぶ。外から来た認証はここで済んでいる
+  Promise.resolve(app.fetch(new Request(new URL(path, c.req.raw.url), {
+    headers: { "cf-access-authenticated-user-email": "mcp@internal" },
+  }), c.env)));
+app.all("/api/mcp", (c) => mcp(c));
+app.all("/api/mcp/:token", (c) => mcp(c));
 
 app.get("/api/health", (c) => c.json({ ok: true, today: todayJST(), next_month: addMonths(monthOf(todayJST()), 1) }));
 
