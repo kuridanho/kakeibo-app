@@ -2,7 +2,7 @@
 // 来月末の手元資金から余裕を引いた額を確かめる。今日は固定して、時計に左右されないようにする。
 
 import { env } from "cloudflare:workers";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { app } from "../src/index";
 import { monthEndProjection, nextMonthBudget } from "../src/lib/budget";
 import { calendarMonth } from "../src/lib/calendar";
@@ -13,6 +13,13 @@ import type { Env } from "../src/types";
 const testEnv = env as unknown as Env;
 const db = testEnv.DB;
 const today = "2026-10-29";
+
+// 繰り返しの登録は実際の今日までを記録するので、時計をテストの今日に合わせる
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(`${today}T12:00:00+09:00`));
+});
+afterAll(() => vi.useRealTimers());
 
 async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await app.request(path, {
