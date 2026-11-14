@@ -11,8 +11,10 @@ export interface Env {
   ALLOW_LOCAL?: string;
   /** /api/export を Access の外から読むための Bearer トークン。32文字以上。wrangler secret put EXPORT_TOKEN で置く */
   EXPORT_TOKEN?: string;
-  /** レシートの読み取りに使う視覚モデル */
+  /** レシートの読み取りに使う視覚モデル。既定は gemini-3.5-flash-lite。@cf/... を入れると Workers AI のモデルで読む */
   RECEIPT_MODEL?: string;
+  /** Gemini API のキー。wrangler secret put GEMINI_API_KEY で登録する。ないときは Scout で読む */
+  GEMINI_API_KEY?: string;
 }
 
 export type AccountType = "asset" | "liability" | "equity" | "income" | "expense";

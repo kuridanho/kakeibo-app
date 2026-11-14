@@ -4,7 +4,10 @@
 import type { Env } from "../types";
 import { LedgerError } from "./ledger";
 
+export const GEMINI_MODEL = "gemini-3.5-flash-lite";
+
 export const RECEIPT_MODELS = [
+  GEMINI_MODEL,
   "@cf/meta/llama-4-scout-17b-16e-instruct",
   "@cf/mistralai/mistral-small-3.1-24b-instruct",
   "@cf/meta/llama-3.2-11b-vision-instruct",
@@ -51,8 +54,64 @@ export function extractJSON(text: string): unknown {
   }
 }
 
+// Gemini に返させる JSON の形。lines を先に書かせ、打ち切られても items より前の欄は残るようにする
+const RECEIPT_SCHEMA = {
+  type: "object",
+  properties: {
+    store: { type: ["string", "null"] },
+    date: { type: ["string", "null"], description: "YYYY-MM-DD" },
+    lines: { type: "array", items: { type: "string" } },
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          amount: { type: "integer" },
+          quantity: { type: ["integer", "null"] },
+        },
+        required: ["name", "amount"],
+      },
+    },
+    tax_mode: { type: ["string", "null"] },
+    tax: { type: ["integer", "null"] },
+    total: { type: ["integer", "null"] },
+    payment: { type: ["string", "null"] },
+    card_last4: { type: ["string", "null"] },
+  },
+  required: ["store", "date", "lines", "items", "total"],
+};
+
+export class GeminiError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
+/** Gemini API の generateContent に画像をそのまま付けて送り、スキーマどおりの JSON を受け取る */
+async function runGemini(env: Env, model: string, image: Uint8Array, mime: string): Promise<{ text: string; usage: unknown }> {
+  if (!env.GEMINI_API_KEY) throw new GeminiError("GEMINI_API_KEY がありません", 0);
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ inline_data: { mime_type: mime, data: toBase64(image) } }, { text: RECEIPT_PROMPT }] }],
+      generationConfig: { responseMimeType: "application/json", responseJsonSchema: RECEIPT_SCHEMA, maxOutputTokens: 8192 },
+    }),
+  });
+  if (!res.ok) throw new GeminiError(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`, res.status);
+  const out = (await res.json()) as {
+    candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[];
+    usageMetadata?: unknown;
+  };
+  const cand = out.candidates?.[0];
+  const text = (cand?.content?.parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? "").join("");
+  if (cand?.finishReason && cand.finishReason !== "STOP") throw new GeminiError(`Gemini が途中で止まりました: ${cand.finishReason}`, 200);
+  return { text, usage: out.usageMetadata ?? null };
+}
+
 export async function runModel(env: Env, model: string, image: Uint8Array, mime: string): Promise<{ text: string; usage: unknown }> {
-  const ai = env.AI!;
+  if (model.startsWith("gemini-")) return runGemini(env, model, image, mime);
+  if (!env.AI) throw new LedgerError("AIが使えないため、レシートを読めません", 503);
+  const ai = env.AI;
   let input: Record<string, unknown>;
   if (model.includes("llama-3.2-11b-vision")) {
     input = { messages: [{ role: "user", content: RECEIPT_PROMPT }], image: [...image], max_tokens: 1024, temperature: 0 };
@@ -86,7 +145,6 @@ export async function runModel(env: Env, model: string, image: Uint8Array, mime:
 }
 
 export async function evaluateReceipt(env: Env, image: Uint8Array, mime: string, models: string[]): Promise<{ results: ModelResult[] }> {
-  if (!env.AI) return { results: [] };
   const list = models.length > 0 ? models : RECEIPT_MODELS;
   const results: ModelResult[] = [];
   for (const model of list) {
@@ -101,7 +159,9 @@ export async function evaluateReceipt(env: Env, image: Uint8Array, mime: string,
   return { results };
 }
 
-export const DEFAULT_RECEIPT_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
+/** 本番の既定は Gemini。キーがない、上限を超えた、読めなかったときは Scout で読み直す */
+export const DEFAULT_RECEIPT_MODEL = GEMINI_MODEL;
+export const FALLBACK_RECEIPT_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 
 export interface Receipt {
   store: string | null;
@@ -117,9 +177,19 @@ const toInt = (v: unknown): number | null => {
 
 /** 本番のレシート読み取り。モデルは RECEIPT_MODEL で替えられる */
 export async function readReceipt(env: Env, image: Uint8Array, mime: string): Promise<Receipt> {
-  if (!env.AI) throw new LedgerError("AIが使えないため、レシートを読めません", 503);
-  const { text } = await runModel(env, env.RECEIPT_MODEL || DEFAULT_RECEIPT_MODEL, image, mime);
-  const p = extractJSON(text) as Record<string, unknown> | null;
+  const model = env.RECEIPT_MODEL || DEFAULT_RECEIPT_MODEL;
+  let p: Record<string, unknown> | null = null;
+  if (model.startsWith("gemini-")) {
+    try {
+      p = extractJSON((await runModel(env, model, image, mime)).text) as Record<string, unknown> | null;
+    } catch (e) {
+      if (env.GEMINI_API_KEY) console.warn("Gemini で読めず Scout に切り替え", String(e));
+    }
+  }
+  if (!p) {
+    const fallback = model.startsWith("gemini-") ? FALLBACK_RECEIPT_MODEL : model;
+    p = extractJSON((await runModel(env, fallback, image, mime)).text) as Record<string, unknown> | null;
+  }
   if (!p) throw new LedgerError("レシートを読み取れませんでした。明るい場所で、レシート全体が入るように撮ってください");
   const date = typeof p.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : null;
   const items = Array.isArray(p.items) ? p.items.map((i: Record<string, unknown>) => ({

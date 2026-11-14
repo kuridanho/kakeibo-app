@@ -69,3 +69,9 @@ node scripts/receipt-eval.mjs --url https://kakeibo.<you>.workers.dev --dir ./re
 ```
 
 モデルごとに合計と日付の一致率、品目の和が合計と合う割合、平均の時間とトークン数、1枚あたりの Neurons の見積もりを表に出します。検証が終わったら `ENABLE_RECEIPT_EVAL` は `"0"` に戻してください。
+
+Gemini と Scout を同じ写真で並べるときは `--models gemini-3.5-flash-lite,@cf/meta/llama-4-scout-17b-16e-instruct` を付けます。
+
+## レシート読み取りのモデル
+
+本番は Gemini API の `gemini-3.5-flash-lite` で読みます。キーは請求先を付けない Google Cloud プロジェクトで作り、`npx wrangler secret put GEMINI_API_KEY` で登録します。キーがない、無料枠の上限を超えた、エラーや打ち切りで読めなかったときは Workers AI の Llama 4 Scout で読み直します。`RECEIPT_MODEL` に `@cf/...` のモデル名を入れると、Gemini を使わずそのモデルで読みます。
