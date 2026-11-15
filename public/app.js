@@ -1267,10 +1267,10 @@ async function list(params) {
   draw();
 
   if (params.get("provisional")) {
-    return [h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い"),
+    return [h("h1", { style: "font-size:1.75rem;line-height:34px" }, "照合していないカード払い"),
       h("a", { class: "button", href: "#/import" }, "カード明細を取り込む"), search, body];
   }
-  const title = params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
+  const title = params.get("unsure") ? h("h1", { style: "font-size:1.75rem;line-height:34px" }, "AIが決めたカテゴリ")
     : listHead("list", month);
   return [title, search, body];
 }
@@ -1280,7 +1280,7 @@ async function reviewCategories() {
   const [entries, list] = await Promise.all([api("GET", `/api/entries?month=${thisMonth()}`), accounts()]);
   const expense = byType(list, "expense").filter((a) => a.origin !== "system" || a.seed_key === "unknown");
   const unsure = entries.filter((e) => e.kind === "expense" && ["ai", "keyword", "none"].includes(e.category_source));
-  const title = h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ");
+  const title = h("h1", { style: "font-size:1.75rem;line-height:34px" }, "AIが決めたカテゴリ");
   if (unsure.length === 0) return [title, h("p", { class: "empty" }, "確かめる取引はありません")];
 
   const categoryOf = (e) => e.lines.find((l) => l.type === "expense")?.account_id;
