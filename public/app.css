@@ -576,3 +576,40 @@ html:active-view-transition-type(tab)::view-transition-new(page) { animation-nam
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
+
+/* シートは <dialog> の showModal で開く。標準の枠と余白を消し、画面いっぱいの層にする。暗さは .sheet-dim で動かす */
+dialog.sheet-layer {
+  width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
+  background: transparent; color: inherit; overflow: hidden; overscroll-behavior: contain;
+}
+dialog.sheet-layer::backdrop { background: transparent; overflow: hidden; overscroll-behavior: contain; }
+/* 通知はポップオーバーにし、シートより上に出す */
+#toast { right: auto; bottom: auto; margin: 0; width: max-content; overflow: visible; }
+
+/* 確かめるダイアログ。iOS のアラートに合わせ、中央に小さく出して下にボタンを並べる */
+dialog.alert {
+  width: min(300px, calc(100% - 48px)); padding: 0; border: 0; border-radius: 22px;
+  background: var(--bar-bg); color: var(--label);
+  -webkit-backdrop-filter: blur(30px) saturate(1.8); backdrop-filter: blur(30px) saturate(1.8);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .18); overscroll-behavior: contain;
+}
+dialog.alert::backdrop { background: rgba(0, 0, 0, .32); overflow: hidden; overscroll-behavior: contain; }
+dialog.alert > p { margin: 0; padding: 20px 16px 16px; text-align: center; font-size: 0.9375rem; font-weight: 600; text-wrap: pretty; }
+dialog.alert > input { display: block; width: calc(100% - 32px); margin: 0 16px 16px; background: var(--card); border-radius: 10px; min-height: 40px; padding: 6px 12px; }
+.alert-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 0; flex-direction: row; border-top: 0.5px solid var(--separator); }
+.alert-buttons button { min-height: 44px; border-radius: 0; background: transparent; color: var(--tint); font-weight: 400; padding: 0 8px; }
+.alert-buttons button + button { border-left: 0.5px solid var(--separator); font-weight: 600; }
+.alert-buttons button.danger { color: var(--red); }
+dialog.alert[open] { animation: alert-in 260ms cubic-bezier(.22, 1.2, .36, 1); }
+dialog.alert[open]::backdrop { animation: alert-dim 200ms ease-out; }
+@keyframes alert-in { from { transform: scale(1.12); opacity: 0; } }
+@keyframes alert-dim { from { opacity: 0; } }
+
+/* 下へスクロールしている間は、タブバーと記録のボタンを縮めて内容を広く見せる */
+.tabbar, .dock .add { transition: transform 360ms cubic-bezier(.32, .72, 0, 1), opacity 360ms ease; }
+.tabbar { transform-origin: left bottom; }
+.dock .add { transform-origin: right bottom; }
+body.bar-min .tabbar { transform: scale(.78); }
+body.bar-min .dock .add { transform: scale(.78); }
+body.bar-min .tabbar a:not([aria-current="page"]) { opacity: .55; }
+.dock:focus-within .tabbar, .dock:focus-within .add { transform: none; }

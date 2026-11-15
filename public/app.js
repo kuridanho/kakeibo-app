@@ -54,9 +54,44 @@ const dayLabel = (d) => {
 function toast(msg) {
   const t = document.getElementById("toast");
   t.textContent = msg;
-  t.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove("show"), 2600);
+  clearTimeout(toast.hide);
+  // シートを開いていても上に出るよう、出すたびに最前面へ出し直す
+  try {
+    if (t.matches(":popover-open")) t.hidePopover();
+    t.showPopover();
+  } catch {}
+  void t.offsetWidth;
+  t.classList.add("show");
+  toast.timer = setTimeout(() => {
+    t.classList.remove("show");
+    toast.hide = setTimeout(() => { try { t.hidePopover(); } catch {} }, 450);
+  }, 2600);
+}
+
+/** 確かめるダイアログ。OK なら true、取り消したら false を返す。input を付けると入力した文字を返す(取り消しは null) */
+function ask(message, ok, { danger = true, input = false } = {}) {
+  return new Promise((resolve) => {
+    const id = `ask-${Date.now().toString(36)}`;
+    const field = input ? h("input", { "aria-labelledby": id, enterkeyhint: "done", autocomplete: "off" }) : null;
+    const d = h("dialog", { class: "alert", "aria-labelledby": id },
+      h("p", { id }, message),
+      field,
+      h("form", { method: "dialog", class: "alert-buttons" },
+        h("button", { value: "cancel", class: "text", autofocus: !input }, "キャンセル"),
+        h("button", { value: "ok", class: `text strong${danger ? " danger" : ""}` }, ok)));
+    field?.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); d.close("ok"); }
+    });
+    d.addEventListener("close", () => {
+      const yes = d.returnValue === "ok";
+      d.remove();
+      resolve(input ? (yes ? field.value.trim() : null) : yes);
+    });
+    document.body.append(d);
+    d.showModal();
+    field?.focus();
+  });
 }
 
 // 読んだ値の控え。画面を開くときは控えで先に描き、後ろで読み直して違えば描き直す。アプリを開き直しても使えるよう端末にも残す
@@ -302,7 +337,9 @@ const keypad = (() => {
     attach(target) {
       target.setAttribute("inputmode", "none");
       target.addEventListener("focus", () => {
-        if (!el.isConnected) document.body.append(el);
+        // シートの中の欄ならシートの中に出す。外に出すと、開いているシートの後ろに隠れて押せない
+        const host = target.closest("dialog") ?? document.body;
+        if (el.parentElement !== host) host.append(el);
         input = target;
         expr = String(parseNum(target.value) || "");
         exprEl.textContent = "";
@@ -579,7 +616,7 @@ function categorySelect(attrs, list, type, selected, blank) {
   let last = sel.value;
   sel.addEventListener("change", async () => {
     if (sel.value !== NEW_CATEGORY) { last = sel.value; return; }
-    const name = prompt("新しいカテゴリの名前")?.trim();
+    const name = await ask("新しいカテゴリの名前", "追加", { danger: false, input: true });
     if (!name) { sel.value = last; return; }
     try {
       const a = await api("POST", "/api/accounts", { name, type });
@@ -980,17 +1017,17 @@ async function entryForm(existing, opts = {}) {
   async function remove() {
     // 分割払いの回だけを消すと毎日の記録で作り直すので、分割払いごとやめる
     if (inst) {
-      if (!confirm("この分割払いをやめます。明細で確かめていない回の記録も消えます。")) return;
+      if (!(await ask("この分割払いをやめます。明細で確かめていない回の記録も消えます。", "やめる"))) return;
       toast("分割払いをやめました");
       saveAhead(() => api("DELETE", `/api/installments/${inst.id}`), () => { location.hash = "#/list"; });
       return;
     }
-    if (!confirm("この取引を削除しますか？")) return;
+    if (!(await ask("この取引を削除しますか？", "削除"))) return;
     toast("削除しました");
     saveAhead(() => api("DELETE", `/api/entries/${existing.id}`), () => { location.hash = "#/list"; });
   }
   async function dropPlan() {
-    if (!confirm("この予定をやめますか？")) return;
+    if (!(await ask("この予定をやめますか？", "やめる"))) return;
     toast("予定をやめました");
     saveAhead(() => api("DELETE", `/api/planned/${src.id}`), () => goBack(opts.plan ? "#/plan" : "#/"));
   }
@@ -1023,7 +1060,7 @@ async function editEntry(id) {
       h("span", { class: "section-head" }, `${dayLabel(e.date)}　${e.payee}`),
       group(e.lines.map((l) => cell({}, h("span", { class: "grow" }, l.name), h("span", { class: "value" }, num(l.amount))))),
       group(h("button", { type: "button", class: "cell danger", onclick: async () => {
-        if (!confirm("この取引を削除しますか？")) return;
+        if (!(await ask("この取引を削除しますか？", "削除"))) return;
         await api("DELETE", `/api/entries/${id}`);
         location.hash = "#/list";
       } }, "削除")));
@@ -1042,7 +1079,7 @@ async function mergeView(id) {
   const [e, candidates] = await Promise.all([api("GET", `/api/entries/${id}`), api("GET", `/api/entries/${id}/merge-candidates`)]);
   const pick = async (other) => {
     const keepOther = other.from_statement && !e.statement_key;
-    if (!confirm(`${keepOther ? "明細から取り込んだ取引を残し、この取引を" : "この取引を残し、選んだ取引を"}消します。メモや立て替えの回収は残すほうに移ります。`)) return;
+    if (!(await ask(`${keepOther ? "明細から取り込んだ取引を残し、この取引を" : "この取引を残し、選んだ取引を"}消します。メモや立て替えの回収は残すほうに移ります。`, "消す"))) return;
     try {
       const { id: kept } = await api("POST", `/api/entries/${id}/merge`, { with: other.id });
       toast("統合しました");
@@ -1064,7 +1101,7 @@ async function mergeView(id) {
 async function duplicatesView() {
   const pairs = await api("GET", "/api/duplicates");
   const merge = async (p) => {
-    if (!confirm(`明細の「${p.statement.payee}」を残し、手入力の「${p.manual.payee}」を消します。`)) return;
+    if (!(await ask(`明細の「${p.statement.payee}」を残し、手入力の「${p.manual.payee}」を消します。`, "消す"))) return;
     try {
       await api("POST", `/api/entries/${p.manual.id}/merge`, { with: p.statement.id });
       toast("統合しました");
@@ -1133,7 +1170,7 @@ async function installmentView(id) {
         h("span", { class: "detail" }, x.confirmed ? "明細で確認" : x.entry_id ? "記録済み" : "")),
       h("span", { class: "amount" }, minus(x.amount))))),
     group(h("button", { type: "button", class: "cell danger", onclick: async () => {
-      if (!confirm("分割をやめます。明細で確かめていない回の記録も消えます。")) return;
+      if (!(await ask("分割をやめます。明細で確かめていない回の記録も消えます。", "やめる"))) return;
       try {
         await api("DELETE", `/api/installments/${p.id}`);
         toast("分割をやめました");
@@ -1945,7 +1982,7 @@ function accountSettings(a, list) {
       kindFields(a.kind, a, banks, wallets), toggles(a.kind, a)),
     group(h("button", { type: "button", class: "cell danger", onclick: async () => {
       const hide = !a.archived;
-      if (hide && !confirm(`${a.name}を非表示にします。記録は残り、あとで戻せます。`)) return;
+      if (hide && !(await ask(`${a.name}を非表示にします。記録は残り、あとで戻せます。`, "非表示にする", { danger: false }))) return;
       await api("PATCH", `/api/accounts/${a.id}`, { archived: hide ? 1 : 0 });
       accountsCache = null;
       toast(hide ? "非表示にしました" : "表示に戻しました");
@@ -2043,7 +2080,7 @@ async function categoriesView(params) {
         h("div", { class: "row" }, merge, h("button", { class: "plain", onclick: async () => {
           if (!merge.value) return;
           const to = same.find((x) => x.id === Number(merge.value));
-          if (!confirm(`${c.name} を ${to.name} に統合します。過去の取引も ${to.name} に移ります。`)) return;
+          if (!(await ask(`${c.name} を ${to.name} に統合します。過去の取引も ${to.name} に移ります。`, "統合する", { danger: false }))) return;
           try {
             await api("POST", `/api/categories/${c.id}/merge`, { into: to.id });
             accountsCache = null;
@@ -2157,7 +2194,7 @@ async function recurringForm(id) {
           field("終わる日", h("input", { name: "end_date", type: "date", value: r?.end_date })),
           r ? toggle("止める", h("input", { type: "checkbox", name: "paused", checked: !r.active })) : null)),
       r ? group(h("button", { type: "button", class: "cell danger", onclick: async () => {
-        if (!confirm("この繰り返しを削除します。これまでに記録した取引は残ります。")) return;
+        if (!(await ask("この繰り返しを削除します。これまでに記録した取引は残ります。", "削除"))) return;
         await api("DELETE", `/api/recurring/${r.id}`);
         toast("削除しました");
         goBack("#/plan");
@@ -2475,10 +2512,10 @@ function placeTabGlider(animate = true) {
   if (!tabbar || !tabGlider) return;
   const active = tabbar.querySelector('a[data-tab][aria-current="page"]');
   if (!active) return;
-  const bar = tabbar.getBoundingClientRect();
-  const tab = active.getBoundingClientRect();
-  const x = tab.left - bar.left - tabbar.clientLeft;
-  const y = tab.top - bar.top - tabbar.clientTop;
+  // タブバーが縮んでいる間も正しく測れるよう、変形の影響を受けない offset で測る
+  const tab = { width: active.offsetWidth, height: active.offsetHeight };
+  const x = active.offsetLeft;
+  const y = active.offsetTop;
   // 動いている途中に切り替えられたら、いま見えている位置からつなぐ
   let from = gliderX;
   const running = typeof tabGlider.getAnimations === "function" ? tabGlider.getAnimations() : [];
@@ -2691,14 +2728,29 @@ let sheetTimer = 0;
 
 function showSheet(on) {
   clearTimeout(sheetTimer);
-  document.body.classList.toggle("sheet", on);
-  sheetLayer.setAttribute("aria-hidden", on ? "false" : "true");
-  page.inert = on;
-  document.querySelector(".dock").inert = on;
-  // 閉じる動きが終わってから中身を消す
-  if (!on) sheetTimer = setTimeout(() => sheet.replaceChildren(), 400);
+  if (on) {
+    // <dialog> の showModal で、後ろの画面を操作できなくし、フォーカスもシートの中に閉じ込める
+    if (!sheetLayer.open) {
+      sheetLayer.showModal();
+      void sheetLayer.offsetWidth;
+    }
+    document.body.classList.add("sheet");
+    return;
+  }
+  document.body.classList.remove("sheet");
+  // 閉じる動きが終わってから閉じて中身を消す
+  sheetTimer = setTimeout(() => {
+    sheetLayer.close();
+    sheet.replaceChildren();
+  }, 400);
 }
-
+// Esc や閉じる操作は、キャンセルを押したのと同じにする
+sheetLayer.addEventListener("cancel", (ev) => {
+  ev.preventDefault();
+  const cancel = sheet.querySelector(".sheetbar > button");
+  if (cancel) cancel.click();
+  else history.back();
+});
 async function render(found, path, params, fresh, served, run) {
   const match = path.match(found[0]) ?? [];
   fromReads = found[3] || fresh ? null : served;
@@ -2732,6 +2784,7 @@ async function route(opts) {
     else a.removeAttribute("aria-current");
   }
   const tabChanged = !isSheet && found[2] !== document.body.dataset.tab;
+  if (!quiet) document.body.classList.remove("bar-min");
   if (!quiet) placeTabGlider();
   if (tabChanged && document.body.dataset.tab) bounceTab();
   if (!isSheet) document.body.dataset.tab = found[2];
@@ -2787,6 +2840,16 @@ async function route(opts) {
 }
 
 window.addEventListener("resize", () => placeTabGlider(false));
+// 下へスクロールしている間はタブバーを縮め、上へ戻すか端に着いたら戻す(iOS 26 のタブバーと同じ)
+let lastTop = 0;
+page.addEventListener("scroll", () => {
+  const max = page.scrollHeight - page.clientHeight;
+  const y = Math.max(0, Math.min(page.scrollTop, max));
+  if (Math.abs(y - lastTop) < 4) return;
+  document.body.classList.toggle("bar-min", y > lastTop && y > 48 && y < max - 4);
+  lastTop = y;
+}, { passive: true });
+
 if (document.fonts) document.fonts.ready.then(() => placeTabGlider(false));
 
 // 保存したら前の画面に戻る。アプリを開いてすぐの画面なら、戻る先がないので決まった画面へ移る
