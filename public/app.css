@@ -552,3 +552,27 @@ body.sheet main { transform: scale(.94); border-radius: 16px; }
 .keypad-keys .ok { grid-column: 5; grid-row: 3 / span 2; color: var(--tint); font-weight: 600; }
 .keypad-keys .wide { grid-column: span 2; }
 body.keypad-open .sheet-panel { padding-bottom: calc(320px + env(safe-area-inset-bottom)); }
+
+/* 画面の切り替え(View Transitions)。動くのは main だけで、地とタブバーはそのまま */
+main { view-transition-name: page; }
+main [tabindex="-1"]:focus, main:focus { outline: none; }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-group(page) { animation-duration: 420ms; animation-timing-function: cubic-bezier(.32, .72, 0, 1); }
+::view-transition-old(page), ::view-transition-new(page) { animation-duration: inherit; animation-timing-function: inherit; }
+html:active-view-transition-type(forward)::view-transition-old(page) { animation-name: vt-out-left; }
+html:active-view-transition-type(forward)::view-transition-new(page) { animation-name: vt-in-right; }
+html:active-view-transition-type(backward)::view-transition-old(page) { animation-name: vt-out-right; z-index: 1; }
+html:active-view-transition-type(backward)::view-transition-new(page) { animation-name: vt-in-left; }
+html:active-view-transition-type(tab)::view-transition-group(page) { animation-duration: 280ms; }
+html:active-view-transition-type(tab)::view-transition-old(page) { animation: vt-fade-out 140ms ease-out both; }
+html:active-view-transition-type(tab)::view-transition-new(page) { animation-name: vt-rise; }
+/* 奥へ進むと新しい画面が右から重なり、前の画面は少し左へ引いて薄れる。戻るときは逆 */
+@keyframes vt-in-right { from { transform: translateX(100%); } }
+@keyframes vt-out-left { to { transform: translateX(-30%); opacity: 0; } }
+@keyframes vt-in-left { from { transform: translateX(-30%); opacity: 0; } }
+@keyframes vt-out-right { to { transform: translateX(100%); } }
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-rise { from { transform: translateY(10px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}

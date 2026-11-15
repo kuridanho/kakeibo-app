@@ -2585,24 +2585,41 @@ function keepHero(hash) {
 const depth = (path) => (/^\/(list|plan|budget|summary|recurring)?$/.test(path) ? 0 : 1);
 let shownPath = null;
 let shownTab = null;
-function enterPage(path, tab) {
+// 動きの種類を決める。forward、backward、tab のどれか。動かさないなら null
+function pageMotion(path, tab) {
   const before = shownPath;
   const beforeTab = shownTab;
   shownPath = path;
   shownTab = tab;
-  page.classList.remove("entering");
-  void page.offsetWidth;
-  page.classList.add("entering");
-  clearTimeout(enterPage.timer);
-  enterPage.timer = setTimeout(() => page.classList.remove("entering"), 800);
-  if (!before || before === path || !moving()) return;
+  if (!before || before === path || !moving()) return null;
   const dir = tab !== beforeTab ? 0 : Math.sign(depth(path) - depth(before));
-  const frames = dir
-    ? { transform: [`translate3d(${dir * 28}%, 0, 0)`, "none"], opacity: [0.4, 1] }
-    : { transform: ["translate3d(0, 10px, 0)", "none"], opacity: [0, 1] };
-  page.animate(frames, { duration: dir ? 420 : 280, easing: SPRING });
+  return dir > 0 ? "forward" : dir < 0 ? "backward" : "tab";
 }
-
+// 種類つきの View Transitions が使えるか(Safari 18.2 から)
+const typedTransitions = typeof document.startViewTransition === "function"
+  && typeof ViewTransition !== "undefined" && "types" in ViewTransition.prototype;
+// 中身の差し替えを、決めた動きで包む。View Transitions がなければ差し替えてから新しい画面だけを動かす
+async function swapPage(update, motion) {
+  if (motion && typedTransitions) {
+    const vt = document.startViewTransition({ update, types: [motion] });
+    vt.ready.catch(() => {});
+    vt.finished.catch(() => {});
+    await vt.updateCallbackDone.catch(update);
+    return;
+  }
+  update();
+  if (!motion) return;
+  const frames = motion === "tab"
+    ? { transform: ["translate3d(0, 10px, 0)", "none"], opacity: [0, 1] }
+    : { transform: [`translate3d(${motion === "forward" ? 28 : -28}%, 0, 0)`, "none"], opacity: [0.4, 1] };
+  page.animate(frames, { duration: motion === "tab" ? 280 : 420, easing: SPRING });
+}
+// 画面を替えたら見出しにフォーカスを移し、読み上げで今どこにいるか分かるようにする
+function focusPage() {
+  const target = page.querySelector("h1") ?? page;
+  if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  target.focus({ preventScroll: true });
+}
 // 押したタブの絵を軽く弾ませる
 function bounceTab() {
   const svg = tabbar?.querySelector('a[aria-current="page"] svg');
@@ -2735,12 +2752,17 @@ async function route(opts) {
   const top = saved ?? (back ? pageTop : view.scrollTop);
   const content = await render(found, path, params, fresh && !quiet, served, run);
   if (run !== routeRun) return;
-  view.replaceChildren(...[content].flat(Infinity).filter(Boolean));
-  view.scrollTo(0, keep ? top : 0);
+  const entering = !isSheet && (!keep || saved !== undefined);
+  const motion = entering ? pageMotion(path, found[2]) : null;
+  await swapPage(() => {
+    view.replaceChildren(...[content].flat(Infinity).filter(Boolean));
+    view.scrollTo(0, keep ? top : 0);
+  }, motion);
+  if (run !== routeRun) return;
   // 描き直した直後は高さが決まりきらず位置が詰められることがあるので、次の描画でもう一度合わせる
   if (keep && back) requestAnimationFrame(() => { if (run === routeRun) page.scrollTo(0, top); });
   if (!isSheet) {
-    if (!keep || saved !== undefined) enterPage(path, found[2]);
+    if (entering && !quiet) focusPage();
     pageEntry = entry;
     keepHero(hash);
     pageHash = hash;
