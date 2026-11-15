@@ -2512,10 +2512,10 @@ function placeTabGlider(animate = true) {
   if (!tabbar || !tabGlider) return;
   const active = tabbar.querySelector('a[data-tab][aria-current="page"]');
   if (!active) return;
-  const bar = tabbar.getBoundingClientRect();
-  const tab = active.getBoundingClientRect();
-  const x = tab.left - bar.left - tabbar.clientLeft;
-  const y = tab.top - bar.top - tabbar.clientTop;
+  // タブバーが縮んでいる間も正しく測れるよう、変形の影響を受けない offset で測る
+  const tab = { width: active.offsetWidth, height: active.offsetHeight };
+  const x = active.offsetLeft;
+  const y = active.offsetTop;
   // 動いている途中に切り替えられたら、いま見えている位置からつなぐ
   let from = gliderX;
   const running = typeof tabGlider.getAnimations === "function" ? tabGlider.getAnimations() : [];
@@ -2784,6 +2784,7 @@ async function route(opts) {
     else a.removeAttribute("aria-current");
   }
   const tabChanged = !isSheet && found[2] !== document.body.dataset.tab;
+  if (!quiet) document.body.classList.remove("bar-min");
   if (!quiet) placeTabGlider();
   if (tabChanged && document.body.dataset.tab) bounceTab();
   if (!isSheet) document.body.dataset.tab = found[2];
@@ -2839,6 +2840,16 @@ async function route(opts) {
 }
 
 window.addEventListener("resize", () => placeTabGlider(false));
+// 下へスクロールしている間はタブバーを縮め、上へ戻すか端に着いたら戻す(iOS 26 のタブバーと同じ)
+let lastTop = 0;
+page.addEventListener("scroll", () => {
+  const max = page.scrollHeight - page.clientHeight;
+  const y = Math.max(0, Math.min(page.scrollTop, max));
+  if (Math.abs(y - lastTop) < 4) return;
+  document.body.classList.toggle("bar-min", y > lastTop && y > 48 && y < max - 4);
+  lastTop = y;
+}, { passive: true });
+
 if (document.fonts) document.fonts.ready.then(() => placeTabGlider(false));
 
 // 保存したら前の画面に戻る。アプリを開いてすぐの画面なら、戻る先がないので決まった画面へ移る
