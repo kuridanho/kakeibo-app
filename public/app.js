@@ -1251,13 +1251,15 @@ function entryAmount(e) {
 async function list(params) {
   if (params.get("unsure")) return reviewCategories();
   // 一覧のタブはカレンダーで開く。検索や確かめる項目から来たときはリストにする
-  const asList = params.get("view") === "list" || params.get("q") || params.get("provisional") || params.get("unsure");
+  const asList = params.get("view") === "list" || params.get("q") || params.get("provisional") || params.get("unsure") || params.get("category");
   if (!asList) return calendarView(params);
   const month = params.get("month") ?? thisMonth();
   const qs = new URLSearchParams();
   if (params.get("provisional")) qs.set("provisional", "1");
   else qs.set("month", month);
   if (params.get("q")) qs.set("q", params.get("q"));
+  // 集計から来たときは、その月のそのカテゴリの取引だけを出す
+  if (params.get("category")) qs.set("account_id", params.get("category"));
   qs.set("paged", "1");
   qs.set("limit", "50");
   const first = await api("GET", `/api/entries?${qs}`);
@@ -1308,6 +1310,11 @@ async function list(params) {
   if (params.get("provisional")) {
     return [h("h1", { style: "font-size:28px;line-height:34px" }, "照合していないカード払い"),
       h("a", { class: "button", href: "#/import" }, "カード明細を取り込む"), search, body];
+  }
+  if (params.get("category")) {
+    return [h("section", { class: "hero-block" },
+      h("span", { class: "hero-label" }, `${monthTitle(month)}の${params.get("name") ?? ""}`),
+      params.get("amount") ? h("span", { class: "title1" }, params.get("amount")) : null), body];
   }
   const title = params.get("unsure") ? h("h1", { style: "font-size:28px;line-height:34px" }, "AIが決めたカテゴリ")
     : listHead("list", month);
@@ -1625,6 +1632,8 @@ async function summary(params) {
   const changedTotal = s.report ? s.expense - s.report.expense : 0;
   const positive = expenses.reduce((t, c) => t + Math.max(0, c.amount), 0) || 1;
   const share = (n) => Math.round(Math.max(0, n) / positive * 100);
+  // 行を押すと、その月のそのカテゴリの取引の一覧へ進む
+  const catHref = (c, amount) => `#/summary/category?month=${month}&category=${c.id}&name=${encodeURIComponent(c.name)}&amount=${encodeURIComponent(amount)}`;
 
   // まとめは月初に自動で作る。作り直しは変わった額の知らせの中に、作られていない過ぎた月だけ下にボタンを出す
   const makeReport = async () => {
@@ -1652,7 +1661,7 @@ async function summary(params) {
     expenses.length === 0 ? h("p", { class: "empty" }, "支出はありません") : h("div", { class: "card cat-card" },
       h("div", { class: "cat-band", role: "img", "aria-label": expenses.map((c) => `${c.name} ${share(c.amount)}%`).join("、") },
         expenses.filter((c) => c.amount > 0).map((c) => h("span", { style: `flex:${c.amount};background:${badgeColor(c.name)}` }))),
-      h("div", { class: "cat-rows" }, expenses.map((c) => h("div", { class: "cat-row" },
+      h("div", { class: "cat-rows" }, expenses.map((c) => h("a", { class: "cat-row", href: catHref(c, minus(c.amount)) },
         badge(c.name),
         h("div", { class: "cat-main" },
           h("div", { class: "cat-line" }, h("span", { class: "cat-name" }, c.name),
@@ -1662,7 +1671,7 @@ async function summary(params) {
             h("div", { class: "bar" }, h("div", { style: `width:${Math.max(0, (c.amount / max) * 100)}%;background:${badgeColor(c.name)}` })),
             h("span", { class: "cat-share" }, `${share(c.amount)}%`))))))),
     incomes.length ? [h("h2", { class: "block-head" }, "収入"), h("div", { class: "group" },
-      incomes.map((c) => cell({}, badge(c.name), h("span", { class: "grow" }, c.name), h("span", { class: "value inc" }, plus(c.amount)))))] : null,
+      incomes.map((c) => cell({ href: catHref(c, plus(c.amount)) }, badge(c.name), h("span", { class: "grow" }, c.name), h("span", { class: "value inc" }, plus(c.amount)))))] : null,
     !s.report && month < thisMonth() ? h("button", { class: "plain", onclick: makeReport }, "この月のまとめを作る") : null,
     h("div", { class: "group" }, cell({ href: `#/summary?view=year&month=${month}` }, h("span", { class: "grow" }, "年の集計")))),
   ];
@@ -2528,6 +2537,7 @@ const routes = [
   [/^\/duplicates$/, duplicatesView, "home"],
   [/^\/installment\/(\d+)$/, installmentView, "plan", true],
   [/^\/summary$/, summary, "summary"],
+  [/^\/summary\/category$/, list, "summary"],
   [/^\/accounts$/, accountsView, "home"],
   [/^\/accounts\/new$/, newAccountView, "home", true],
   [/^\/account\/(\d+)\/edit$/, accountEditView, "home", true],

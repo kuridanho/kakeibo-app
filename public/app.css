@@ -719,3 +719,11 @@ body.can-add main { padding-bottom: calc(160px + env(safe-area-inset-bottom)); }
 div.wf-row .wf-line { padding-right: 21px; }
 .net-card .budget > .cell { padding-right: 21px; }
 .net-card .budget > .cell:first-child { border-top: 0.5px solid var(--separator); }
+
+/* 集計の行は押すと内訳へ進む。行の右に矢印を付ける */
+a.cat-row { color: inherit; text-decoration: none; transition: background-color 360ms ease; }
+a.cat-row::after {
+  content: ""; width: 7px; height: 7px; margin: 0 2px 0 0; flex-shrink: 0;
+  border-right: 2px solid var(--chevron); border-top: 2px solid var(--chevron); transform: rotate(45deg);
+}
+a.cat-row:active { background-color: var(--fill); transition: none; }
