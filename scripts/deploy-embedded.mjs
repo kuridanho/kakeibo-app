@@ -80,8 +80,9 @@ if (args.includes("--preview")) {
   if (config.r2_buckets) config.r2_buckets = [{ binding: "BUCKET", bucket_name: "kakeibo-preview" }];
   delete config.triggers;
   config.vars = { ...config.vars, PREVIEW: "1" };
-  // workers.dev の URL は Cloudflare Access で守られてから開く
-  config.workers_dev = false;
+  // workers.dev の URL は Cloudflare Access で守っている(2026-11-16、ダッシュボードで本人が設定)。
+  // Access を外したまま開くと本番の写しが誰にでも読めるので、外すときはここを false にする
+  config.workers_dev = true;
 }
 const configPath = join(outDir, "wrangler.json");
 writeFileSync(configPath, JSON.stringify(config, null, 2));
