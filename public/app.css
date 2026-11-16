@@ -1,58 +1,72 @@
-/* Apple の Human Interface Guidelines に沿った iPhone の Safari 向けの見た目。
-   色は水色を基調にした iOS のシステムカラー、文字の大きさは Dynamic Type の標準の段階に揃える。 */
+/* iPhone の Safari 向けの見た目。Apple の Human Interface Guidelines の作法に沿い、
+   地は色味を抜いた明るい灰色、面は白、差し色は水色1つ。数字の大きさの差で読む順番を決める。 */
 :root {
-  --bg: #EAF3F8;            /* systemGroupedBackground を水色に寄せたもの */
-  --card: #FFFFFF;          /* secondarySystemGroupedBackground */
-  --label: #000000;
-  --secondary: #4F6470;     /* secondaryLabel より濃くし、小さな文字でも 4.5:1 を保つ */
-  --separator: #C6C6C8;
-  --fill: rgba(118, 118, 128, 0.12);
-  --track: #DDEBF2;
-  --tint: #006AA3;          /* 文字やボタンに使う濃い水色。白地、水色の地、薄い水色の上で 4.5:1 以上 */
-  --meter: #1E9FDB;         /* systemCyan に近い、帯と棒の水色 */
+  --bg: #F2F4F6;
+  --card: #FFFFFF;
+  --label: #0B1014;
+  --secondary: #5B6670;     /* 地と白の上で 4.5:1 以上 */
+  --separator: rgba(16, 24, 32, 0.13);
+  --hairline: rgba(16, 24, 32, 0.07);  /* 面の縁。影の代わりに細い線で面を分ける */
+  --fill: rgba(120, 130, 140, 0.14);
+  --track: #E4E9ED;
+  --tint: #006AA3;          /* 文字やボタンに使う濃い水色。白と地の上で 4.5:1 以上 */
+  --meter: #1E9FDB;         /* 帯と棒の水色 */
   --tint-2: #7FCDEE;
   --tint-3: #C9EBF8;
-  --tint-soft: rgba(50, 173, 230, 0.16);
+  --tint-soft: rgba(30, 159, 219, 0.13);
   --on-tint: #FFFFFF;
   --red: #D70015;
-  --chevron: #C4C4C7;
-  --bar-bg: rgba(255, 255, 255, 0.78);
+  --chevron: #B8BEC4;
+  --bar-bg: rgba(255, 255, 255, 0.8);
   --bar-border: rgba(0, 0, 0, 0.08);
   --seg-on: #FFFFFF;
-  --field: #EEF4F8;         /* カードの中の入力欄 */
-  --glass-hi: rgba(255, 255, 255, 0.9);  /* ガラスの上端の光 */
-  --keypad: #D5DDE3;        /* テンキーの地と鍵 */
+  --field: #F2F4F6;         /* カードの中の入力欄 */
+  --glass-hi: rgba(255, 255, 255, 0.9);
+  --keypad: #D5DCE1;
   --key: #FFFFFF;
-  --key-op: #E6ECF0;
+  --key-op: #E7ECEF;
+  --badge-mix: 15%;         /* 行の頭の印に敷く色の濃さ */
+  --badge-ink: 78%;         /* 印の線の色。明るい色を沈めて白地の上でも読めるようにする */
+  --rounded: ui-rounded, "SF Pro Rounded", -apple-system, "Hiragino Sans", system-ui, sans-serif;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #000000;
-    --card: #1C1C1E;
-    --label: #FFFFFF;
-    --secondary: #AEAEB2;
-    --separator: #38383A;
-    --fill: rgba(118, 118, 128, 0.24);
-    --track: #2C2C2E;
-    --tint: #64D2FF;        /* systemCyan のダーク */
-    --meter: #64D2FF;
+    --card: #16171A;
+    --label: #F4F6F8;
+    --secondary: #9BA4AC;
+    --separator: rgba(255, 255, 255, 0.12);
+    --hairline: rgba(255, 255, 255, 0.07);
+    --fill: rgba(140, 150, 160, 0.2);
+    --track: #26292D;
+    --tint: #64D2FF;
+    --meter: #3BB8F0;
     --tint-2: #2F7FA6;
     --tint-3: #1B4459;
-    --tint-soft: rgba(100, 210, 255, 0.18);
+    --tint-soft: rgba(100, 210, 255, 0.16);
     --on-tint: #002233;
     --red: #FF6961;
-    --chevron: #5A5A5E;
-    --bar-bg: rgba(30, 30, 32, 0.72);
-    --bar-border: rgba(255, 255, 255, 0.10);
-    --seg-on: #636366;      /* iOS のダークのセグメントで選ばれた色 */
-    --field: #2C2C2E;
-    --glass-hi: rgba(255, 255, 255, 0.16);
-    --keypad: #1C1C1E;
-    --key: #3A3A3C;
-    --key-op: #2C2C2E;
+    --chevron: #54595E;
+    --bar-bg: rgba(28, 29, 32, 0.74);
+    --bar-border: rgba(255, 255, 255, 0.1);
+    --seg-on: #5B5F65;
+    --field: #24262A;
+    --glass-hi: rgba(255, 255, 255, 0.14);
+    --keypad: #16171A;
+    --key: #36393D;
+    --key-op: #26292D;
+    --badge-mix: 24%;
+    --badge-ink: 100%;
     color-scheme: dark;
   }
+}
+/* コントラストを上げる設定では、薄い線と灰色の文字を濃くする */
+@media (prefers-contrast: more) {
+  :root { --separator: rgba(16, 24, 32, 0.4); --hairline: rgba(16, 24, 32, 0.35); --secondary: #3D464E; }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root { --separator: rgba(255, 255, 255, 0.4); --hairline: rgba(255, 255, 255, 0.35); --secondary: #C4CBD1; }
 }
 
 * { box-sizing: border-box; }
@@ -83,20 +97,22 @@ main > * { flex-shrink: 0; }
 /* Safari のタブで開いたときはぼかしの帯がないので、上の余白はふつうに戻す */
 @media not all and (display-mode: standalone) {
   main { top: env(safe-area-inset-top); padding-top: 16px; }
-  main > .cal-top { top: 16px; }
+  main > .cal-top { padding-top: 12px; }
 }
 a { color: var(--tint); }
 
 /* 文字の段階 */
-.overline { font-size: 15px; color: var(--secondary); padding: 0 4px; }
-h1, .large-title { margin: 0; padding: 0 4px 6px; font-size: 34px; font-weight: 700; line-height: 41px; letter-spacing: 0.01em; }
-h2 { margin: 0; font-size: 17px; font-weight: 600; }
-.section-head { padding: 16px 16px 0; font-size: 13px; color: var(--secondary); }
+.overline { font-size: 15px; font-weight: 600; color: var(--secondary); padding: 0 4px; }
+h1, .large-title { margin: 0; padding: 0 4px 6px; font-size: 34px; font-weight: 700; line-height: 41px; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { margin: 0; font-size: 17px; font-weight: 600; text-wrap: balance; }
+/* まとまりの見出しは本文と同じ黒で太くし、灰色の小さな注記に見えないようにする */
+.section-head { padding: 18px 4px 2px; font-size: 15px; font-weight: 600; color: var(--label); }
+p, .footnote { text-wrap: pretty; }
 .sub { color: var(--secondary); font-size: 15px; }
 .footnote { color: var(--secondary); font-size: 13px; }
 /* 大きな額は Wallet や ヘルスケアと同じく丸みのある SF Pro Rounded にし、円は小さく添える */
-.hero, .title1, .title2, input.amount, .amount-card .yen { font-family: ui-rounded, "SF Pro Rounded", -apple-system, "Hiragino Sans", system-ui, sans-serif; }
-.hero { font-size: 48px; font-weight: 700; letter-spacing: -0.02em; line-height: 56px; }
+.hero, .title1, .title2, input.amount, .amount-card .yen { font-family: var(--rounded); }
+.hero { font-size: 52px; font-weight: 700; letter-spacing: -0.03em; line-height: 58px; }
 .unit { font-size: 0.5em; font-weight: 600; color: var(--secondary); margin-left: 2px; letter-spacing: 0; }
 .title1 { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
 .title2 { font-size: 22px; font-weight: 700; line-height: 28px; }
@@ -104,19 +120,21 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .inc { color: var(--tint); }
 
 /* インセットのグループ */
-.card { background: var(--card); border-radius: 26px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.group { background: var(--card); border-radius: 26px; padding-left: 16px; display: flex; flex-direction: column; overflow: hidden; }
+/* 面は影を付けず、細い縁で地と分ける。縁は強制カラーのモードでも残る */
+.card { background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.group { background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px; padding-left: 16px; display: flex; flex-direction: column; overflow: hidden; }
+.card .group { border: none; }
 
 /* 一覧のページ。画面外の日付グループはブラウザに描画を省かせる。
    高さは最初 160px と見積もり、一度描いたあとは実際の高さを覚える */
 .list-group { content-visibility: auto; contain-intrinsic-size: auto 160px; }
 .cell {
-  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 0;
+  display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 16px 8px 0;
   border-bottom: 0.5px solid var(--separator); color: var(--label); text-decoration: none;
 }
 .cell:last-child { border-bottom: none; }
 .card .cell { padding-right: 0; }
-.cell.tall { min-height: 60px; }
+.cell.tall { min-height: 62px; }
 .cell .grow { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 .cell .detail { font-size: 13px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell .value { color: var(--secondary); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
@@ -136,7 +154,7 @@ a.cell.plain::after { display: none; }
 .stack { display: flex; flex-direction: column; gap: 8px; }
 
 /* 帯と棒 */
-.meter { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; background: var(--track); }
+.meter { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; background: var(--track); }
 .meter > div:nth-child(1) { background: var(--meter); }
 .meter > div:nth-child(2) { background: var(--tint-2); }
 /* 3つ目は地の色と近いので、斜めの縞にして見分ける */
@@ -345,7 +363,7 @@ body.sheet .sheet-panel { transform: none; }
 .navrow.compact h1 { font-size: 22px; line-height: 28px; padding: 0 0 0 4px; }
 .navrow.compact > div { margin: 0 auto 0 0; padding: 0; }
 .navrow.compact button.icon { width: 40px; }
-.navrow.compact > .seg { display: grid; flex: none; width: 204px; margin: 0; padding: 2px; }
+.navrow.compact > .seg { display: grid; flex: none; width: 168px; margin: 0; padding: 2px; }
 .navrow.compact .seg button { min-height: 28px; padding: 0 4px; white-space: nowrap; letter-spacing: -0.02em; }
 .navrow.compact h1 { white-space: nowrap; }
 .navrow a.text, .navrow button.text { background: transparent; color: var(--tint); font-size: 17px; font-weight: 400; min-height: 44px; padding: 0 8px; text-decoration: none; display: inline-flex; align-items: center; }
@@ -373,32 +391,43 @@ details.more > summary + * { margin-top: 4px; }
 
 /* カレンダー。iOS のカレンダーにならい、縦線と枠はなくして週の区切りの横線だけにする。
    マスは日付の丸と金額2行が線に詰まらず入る 48px に固定し、どの週も同じ間隔にする */
-.cal-card { margin: 0 -4px; }
-/* 日を押しても月の表は動かさず、下の一覧だけをスクロールさせる。
-   止まる位置は main の上の余白と同じにし、余白の帯は影で地の色に塗って一覧を隠す */
-.cal-top { position: sticky; top: 4px; z-index: 4; padding-bottom: 4px; background: var(--bg); box-shadow: 0 -16px 0 var(--bg); display: flex; flex-direction: column; gap: 6px; }
-.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--label); padding: 0 0 3px; }
-.cal-d {
-  height: 48px; min-height: 0; overflow: hidden; padding: 3px 1px 0; border-radius: 0; background: none; color: var(--label);
-  border-top: 0.5px solid var(--separator);
-  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0; font-weight: 400; text-align: center;
+/* カレンダーは白い面に収め、マスは角の丸い四角にする。使った額の多い日ほど水色が濃くなる。
+   日を押しても月の表は動かさず、下の一覧だけをスクロールさせる */
+.cal-card {
+  background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px;
+  padding: 6px 6px 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden;
 }
-.cal-d .n { flex: none; font-size: 15px; line-height: 24px; width: 24px; height: 24px; border-radius: 12px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
-.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10px; line-height: 10px; letter-spacing: -0.04em; white-space: nowrap; overflow-x: clip; overflow-y: visible; color: var(--secondary); }
+/* 表は main の上端に貼り付ける。上の余白は表自身の地で埋め、後ろの一覧が上にはみ出して見えないようにする */
+/* カレンダーの画面では main をスクロールさせず、表の下の一覧(.cal-scroll)だけをスクロールさせる */
+html body main:has(> .cal-top) { overflow: hidden; padding: 0; gap: 0; }
+main:has(> .cal-top) > * { padding-left: max(16px, calc(50% - 284px)); padding-right: max(16px, calc(50% - 284px)); }
+.cal-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 8px; padding-bottom: calc(160px + env(safe-area-inset-bottom));
+}
+.cal-scroll > * { flex-shrink: 0; }
+.cal-top { position: relative; z-index: 4; padding: 4px 0 6px; background: var(--bg); display: flex; flex-direction: column; gap: 6px; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--secondary); padding: 0 0 2px; }
+.cal-d {
+  position: relative; height: 44px; min-height: 0; overflow: hidden; padding: 2px 1px 0; border-radius: 8px; background: none; color: var(--label);
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1px; font-weight: 400; text-align: center;
+}
+.cal-d.spent { background: color-mix(in oklab, var(--meter) var(--heat), transparent); }
+.cal-d .n { position: relative; flex: none; font-size: 14px; font-weight: 500; line-height: 20px; min-width: 20px; height: 20px; border-radius: 10px; font-variant-numeric: tabular-nums; }
+.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10px; line-height: 10.5px; letter-spacing: -0.04em; white-space: nowrap; overflow-x: clip; overflow-y: visible; color: var(--label); font-weight: 500; }
 .cal-d .i, .cal-d .p.inc { color: var(--tint); }
-/* 行の高さを詰めているので、予定の点線が切れないよう縦ははみ出させる */
-.cal-d .p { text-decoration: underline dashed; text-underline-offset: 1px; }
+.cal-d .p { color: var(--secondary); text-decoration: underline dashed; text-underline-offset: 1px; }
 .cal-w.sun, .cal-w.sat, .cal-d.sun .n, .cal-d.sat .n { color: var(--secondary); }
-.cal-d.on .n { background: var(--label); color: var(--bg); font-weight: 600; }
-.cal-d.today .n { background: var(--tint); color: var(--on-tint); font-weight: 600; }
-.cal-sum { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 0; border-top: 0.5px solid var(--separator); font-variant-numeric: tabular-nums; }
-.cal-sum div { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
-.cal-sum span { font-size: 13px; color: var(--secondary); }
-.cal-sum b { font-size: 15px; font-weight: 600; }
-.cal-sum .inc { color: var(--tint); }
-.cal-plan { display: flex; justify-content: space-between; padding: 2px 4px 0; font-size: 13px; color: var(--secondary); }
-.day-head { display: flex; justify-content: space-between; padding-right: 20px; scroll-margin-top: 12px; }
+.cal-d.today .n { background: var(--tint); color: var(--on-tint); font-weight: 700; }
+/* 選んだ日は枠で囲む。色だけに頼らず形でも分かるようにする */
+.cal-d.on { box-shadow: inset 0 0 0 2px var(--label); }
+.cal-d.out { pointer-events: none; }
+.cal-sum { display: flex; justify-content: space-between; gap: 8px; margin: 4px -6px 0; padding: 7px 12px 8px; border-top: 0.5px solid var(--separator); font-variant-numeric: tabular-nums; }
+.cal-sum div { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.cal-sum span { font-size: 12px; font-weight: 600; color: var(--secondary); }
+.cal-sum b { font-family: var(--rounded); font-size: 15px; font-weight: 700; }
+.cal-plan { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 0; font-size: 13px; color: var(--secondary); }
 .item .row button.icon { width: 36px; min-height: 36px; margin-right: -6px; color: var(--secondary); }
 
 /* 並べ替え。右の取っ手をドラッグする */
@@ -459,20 +488,22 @@ button.pick { width: 100%; min-height: 44px; padding: 8px 0; border-radius: 0; b
 
 /* 行の頭の印。設定アプリと同じ 29pt の角丸の正方形に白い線の絵を置き、区切り線は文字の頭から引く */
 .badge {
-  flex: none; width: 29px; height: 29px; border-radius: 8px; margin-right: 2px;
+  flex: none; width: 32px; height: 32px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
-  color: #FFFFFF; font-size: 14px; font-weight: 600;
+  background: color-mix(in oklab, var(--c, #8E8E93) var(--badge-mix), var(--card));
+  color: color-mix(in oklab, var(--c, #8E8E93) var(--badge-ink), #000);
+  font-size: 14px; font-weight: 700;
 }
 .badge svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.bars .badge { width: 22px; height: 22px; border-radius: 6px; margin: 0; font-size: 11px; }
+.bars .badge { width: 24px; height: 24px; font-size: 11px; }
 .bars .badge svg { width: 14px; height: 14px; }
 .cell:has(> .badge) { border-bottom: none; position: relative; }
 .cell:has(> .badge):not(:last-child)::before {
-  content: ""; position: absolute; left: 41px; right: 0; bottom: 0; height: 0.5px; background: var(--separator);
+  content: ""; position: absolute; left: 44px; right: 0; bottom: 0; height: 0.5px; background: var(--separator);
 }
-.cell.tall:has(> .badge) .badge { width: 36px; height: 36px; border-radius: 10px; }
+.cell.tall:has(> .badge) .badge { width: 38px; height: 38px; }
 .cell.tall:has(> .badge) .badge svg { width: 20px; height: 20px; }
-.cell.tall:has(> .badge):not(:last-child)::before { left: 48px; }
+.cell.tall:has(> .badge):not(:last-child)::before { left: 50px; }
 
 /* ホームの上端。日付の右に設定の歯車を置く */
 .home-top { padding-right: 0; }
@@ -545,3 +576,146 @@ body.sheet main { transform: scale(.94); border-radius: 16px; }
 .keypad-keys .ok { grid-column: 5; grid-row: 3 / span 2; color: var(--tint); font-weight: 600; }
 .keypad-keys .wide { grid-column: span 2; }
 body.keypad-open .sheet-panel { padding-bottom: calc(320px + env(safe-area-inset-bottom)); }
+
+/* ---- ホーム ---- */
+/* 主役の数字は面に入れず地の上に大きく出し、その下に式の3つの項を横に並べる */
+.hero-block { display: flex; flex-direction: column; padding: 6px 0 4px; }
+.hero-label { padding: 0 4px; font-size: 15px; font-weight: 600; color: var(--secondary); }
+.hero-block .hero { padding: 0 4px; }
+.stats {
+  margin-top: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px; overflow: hidden;
+}
+.stats .stat {
+  min-height: 68px; padding: 12px 12px 12px 14px; border-radius: 0; background: none; color: var(--label);
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; text-align: start; font-weight: 400;
+}
+.stats .stat + .stat { border-left: 0.5px solid var(--separator); }
+.stat-label { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--secondary); white-space: nowrap; }
+.stat-value { font-family: var(--rounded); font-size: 19px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
+/* 開ける項には下向きの印を付け、開いている間は面を水色に染める */
+.stat[aria-expanded] .stat-label::after {
+  content: ""; width: 5px; height: 5px; margin: -2px 0 0 2px;
+  border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: rotate(45deg); transition: transform 0.2s;
+}
+.stat[aria-expanded="true"] { background: var(--tint-soft); }
+.stat[aria-expanded="true"] .stat-label::after { transform: rotate(225deg); margin-top: 3px; }
+.stats .stat:active { transform: none; opacity: 1; background: var(--fill); }
+.flow-panel { margin-top: 8px; background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px; padding-left: 16px; }
+.flow-panel[hidden] { display: none; }
+.flow-panel .cell.sub { padding-left: 0; }
+.hero-note { display: flex; justify-content: space-between; padding: 10px 4px 0; font-size: 15px; color: var(--secondary); }
+
+/* 実質残高の段々の棒。行ごとに項目と額、その下に同じ横軸の棒を出す。縦の線が 0 */
+.net-card { gap: 0; padding: 0 16px; }
+.card-title { font-size: 17px; font-weight: 600; }
+:root { --owed: #8A949C; --owed-2: #C3CAD0; }
+@media (prefers-color-scheme: dark) { :root { --owed: #8E979F; --owed-2: #4A5056; } }
+.waterfall { display: flex; flex-direction: column; }
+.wf-row { border-bottom: 0.5px solid var(--separator); }
+.wf-head { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; list-style: none; cursor: default; }
+details.wf-row > summary.wf-head { cursor: pointer; }
+details.wf-row > summary::-webkit-details-marker { display: none; }
+details.wf-row > summary::after { display: none; }
+.wf-line { display: flex; align-items: center; gap: 8px; }
+.wf-line .grow { flex: 1; min-width: 0; }
+.wf-line .amount { font-variant-numeric: tabular-nums; }
+details.wf-row > summary .wf-line::after {
+  content: ""; width: 7px; height: 7px; margin: 0 2px 0 4px; flex-shrink: 0;
+  border-right: 2px solid var(--chevron); border-top: 2px solid var(--chevron); transform: rotate(45deg); transition: transform 0.2s;
+}
+details.wf-row[open] > summary .wf-line::after { transform: rotate(135deg); }
+.wf-track { position: relative; height: 12px; }
+.wf-zero { position: absolute; top: -3px; bottom: -3px; width: 1.5px; margin-left: -0.75px; background: var(--label); opacity: .55; }
+.wf-bar { position: absolute; top: 0; bottom: 0; border-radius: 3px; min-width: 2px; }
+.wf-liquid { background: var(--meter); }
+.wf-card { background: var(--owed); }
+.wf-loan { background: repeating-linear-gradient(135deg, var(--owed) 0 2px, var(--owed-2) 2px 4px); }
+.wf-net { background: var(--meter); }
+.wf-net.neg { background: var(--red); }
+.wf-detail { padding-bottom: 6px; }
+.wf-detail .cell.sub { padding-left: 12px; min-height: 40px; }
+.wf-row:last-child { border-bottom: none; }
+
+/* まとまりの見出し。大きめの太字で、右に合計や件数を添える */
+.block { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+.block-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.block-head .sum { font-family: var(--rounded); font-size: 17px; font-weight: 600; color: var(--secondary); }
+.block-head .count { font-size: 15px; font-weight: 600; color: var(--secondary); }
+
+/* 確かめることは2列の札にする。件数を大きく、何をするかを下に2行まで */
+.todo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.todo {
+  display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px 8px;
+  min-height: 84px; padding: 12px 14px; border-radius: 18px;
+  background: var(--card); border: 0.5px solid var(--hairline); color: var(--label); text-decoration: none;
+  transition: background-color 360ms ease, transform 260ms cubic-bezier(.3, .7, .4, 1.5);
+}
+.todo:active { background: var(--fill); transform: scale(.97); transition-duration: 80ms; }
+.todo .badge { grid-row: 1; grid-column: 1; }
+.todo-n { grid-row: 1; grid-column: 2; justify-self: end; font-family: var(--rounded); font-size: 22px; font-weight: 700; line-height: 1; }
+.todo-label {
+  grid-row: 2; grid-column: 1 / -1; font-size: 14px; word-break: auto-phrase; font-weight: 500; line-height: 1.3;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+/* 一覧の日の見出しは、日付を黒で、日の合計を灰色で右に出す */
+
+/* 一覧の日の見出し。日の数字を大きく出し、月と曜日を小さく添える */
+.day-head { display: flex; justify-content: space-between; align-items: flex-end; padding: 14px 4px 2px; scroll-margin-top: 12px; }
+.day-title { display: flex; align-items: baseline; gap: 4px; }
+.day-title b { font-size: 17px; font-weight: 700; line-height: 1.2; }
+.day-title span { font-size: 15px; font-weight: 600; color: var(--secondary); }
+.day-head > span:last-child { font-size: 15px; font-weight: 600; color: var(--secondary); font-family: var(--rounded); }
+
+/* ---- 集計 ---- */
+.stats.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+main > .block-head, .swipe-pane > .block-head { margin-top: 18px; }
+.cat-card { gap: 14px; }
+/* 支出の割合の帯。カテゴリの色を並べ、境目に細い隙間を空ける */
+.cat-band { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; }
+.cat-band > span { min-width: 3px; }
+.cat-rows { display: flex; flex-direction: column; }
+.cat-row { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.cat-row + .cat-row::before { content: ""; position: absolute; left: 44px; right: 0; top: 0; height: 0.5px; background: var(--separator); }
+.cat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.cat-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cat-line .bar { flex: 1; }
+.cat-name { font-size: 16px; font-weight: 500; }
+.cat-amount { font-family: var(--rounded); font-size: 16px; font-weight: 600; white-space: nowrap; }
+.cat-share { width: 3em; text-align: right; font-size: 13px; font-weight: 600; color: var(--secondary); }
+
+/* ---- 予定 ---- */
+/* 見込みの内訳の行は、左に日を縦に組む */
+.cell.sub.dated { gap: 12px; }
+.date-chip { flex: none; width: 34px; display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
+.date-chip b { font-family: var(--rounded); font-size: 19px; font-weight: 700; }
+.date-chip span { font-size: 11px; font-weight: 600; color: var(--secondary); }
+details.fold > .cell.sub.dated { padding-left: 4px; }
+/* 繰り返しの行の頭。何日かを丸の中に出し、入るものは水色にする */
+.day-badge {
+  flex: none; width: 38px; height: 38px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--fill); color: var(--label); font-family: var(--rounded); font-size: 15px; font-weight: 700; letter-spacing: -0.02em;
+}
+.day-badge.inc { background: var(--tint-soft); color: var(--tint); }
+.cell:has(> .day-badge) { border-bottom: none; position: relative; }
+.cell:has(> .day-badge):not(:last-child)::before { content: ""; position: absolute; left: 50px; right: 0; bottom: 0; height: 0.5px; background: var(--separator); }
+/* 分割払いは払い終えた回の割合を細い棒で出す */
+.inst-bar { height: 4px; margin-top: 7px; max-width: 220px; }
+.inst-bar > div { background: var(--meter); }
+
+/* ---- タブバーと記録ボタン ---- */
+/* タブバーは低くし、下端の余白も詰める */
+.dock { padding-bottom: max(6px, calc(env(safe-area-inset-bottom) - 18px)); }
+.tabbar { height: 52px; border-radius: 26px; padding: 0 4px; }
+.tabbar a { height: 44px; border-radius: 22px; gap: 0; }
+.tab-glider { border-radius: 22px; }
+.tabbar svg { width: 20px; height: 20px; }
+.dock .add { width: 54px; height: 54px; border-radius: 27px; bottom: calc(100% + 12px); }
+body:not(.can-add) .dock .add { display: none; }
+main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+body.can-add main { padding-bottom: calc(160px + env(safe-area-inset-bottom)); }
+/* 開ける行の矢印の幅だけ、開けない行の額を左に寄せて右端をそろえる */
+div.wf-row .wf-line { padding-right: 21px; }
+.net-card .budget > .cell { padding-right: 21px; }
+.net-card .budget > .cell:first-child { border-top: 0.5px solid var(--separator); }
