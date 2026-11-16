@@ -1,58 +1,72 @@
-/* Apple の Human Interface Guidelines に沿った iPhone の Safari 向けの見た目。
-   色は水色を基調にした iOS のシステムカラー、文字の大きさは Dynamic Type の標準の段階に揃える。 */
+/* iPhone の Safari 向けの見た目。Apple の Human Interface Guidelines の作法に沿い、
+   地は色味を抜いた明るい灰色、面は白、差し色は水色1つ。数字の大きさの差で読む順番を決める。 */
 :root {
-  --bg: #EAF3F8;            /* systemGroupedBackground を水色に寄せたもの */
-  --card: #FFFFFF;          /* secondarySystemGroupedBackground */
-  --label: #000000;
-  --secondary: #4F6470;     /* secondaryLabel より濃くし、小さな文字でも 4.5:1 を保つ */
-  --separator: #C6C6C8;
-  --fill: rgba(118, 118, 128, 0.12);
-  --track: #DDEBF2;
-  --tint: #006AA3;          /* 文字やボタンに使う濃い水色。白地、水色の地、薄い水色の上で 4.5:1 以上 */
-  --meter: #1E9FDB;         /* systemCyan に近い、帯と棒の水色 */
+  --bg: #F2F4F6;
+  --card: #FFFFFF;
+  --label: #0B1014;
+  --secondary: #5B6670;     /* 地と白の上で 4.5:1 以上 */
+  --separator: rgba(16, 24, 32, 0.13);
+  --hairline: rgba(16, 24, 32, 0.07);  /* 面の縁。影の代わりに細い線で面を分ける */
+  --fill: rgba(120, 130, 140, 0.14);
+  --track: #E4E9ED;
+  --tint: #006AA3;          /* 文字やボタンに使う濃い水色。白と地の上で 4.5:1 以上 */
+  --meter: #1E9FDB;         /* 帯と棒の水色 */
   --tint-2: #7FCDEE;
   --tint-3: #C9EBF8;
-  --tint-soft: rgba(50, 173, 230, 0.16);
+  --tint-soft: rgba(30, 159, 219, 0.13);
   --on-tint: #FFFFFF;
   --red: #D70015;
-  --chevron: #C4C4C7;
-  --bar-bg: rgba(255, 255, 255, 0.78);
+  --chevron: #B8BEC4;
+  --bar-bg: rgba(255, 255, 255, 0.8);
   --bar-border: rgba(0, 0, 0, 0.08);
   --seg-on: #FFFFFF;
-  --field: #EEF4F8;         /* カードの中の入力欄 */
-  --glass-hi: rgba(255, 255, 255, 0.9);  /* ガラスの上端の光 */
-  --keypad: #D5DDE3;        /* テンキーの地と鍵 */
+  --field: #F2F4F6;         /* カードの中の入力欄 */
+  --glass-hi: rgba(255, 255, 255, 0.9);
+  --keypad: #D5DCE1;
   --key: #FFFFFF;
-  --key-op: #E6ECF0;
+  --key-op: #E7ECEF;
+  --badge-mix: 15%;         /* 行の頭の印に敷く色の濃さ */
+  --badge-ink: 78%;         /* 印の線の色。明るい色を沈めて白地の上でも読めるようにする */
+  --rounded: ui-rounded, "SF Pro Rounded", -apple-system, "Hiragino Sans", system-ui, sans-serif;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #000000;
-    --card: #1C1C1E;
-    --label: #FFFFFF;
-    --secondary: #AEAEB2;
-    --separator: #38383A;
-    --fill: rgba(118, 118, 128, 0.24);
-    --track: #2C2C2E;
-    --tint: #64D2FF;        /* systemCyan のダーク */
-    --meter: #64D2FF;
+    --card: #16171A;
+    --label: #F4F6F8;
+    --secondary: #9BA4AC;
+    --separator: rgba(255, 255, 255, 0.12);
+    --hairline: rgba(255, 255, 255, 0.07);
+    --fill: rgba(140, 150, 160, 0.2);
+    --track: #26292D;
+    --tint: #64D2FF;
+    --meter: #3BB8F0;
     --tint-2: #2F7FA6;
     --tint-3: #1B4459;
-    --tint-soft: rgba(100, 210, 255, 0.18);
+    --tint-soft: rgba(100, 210, 255, 0.16);
     --on-tint: #002233;
     --red: #FF6961;
-    --chevron: #5A5A5E;
-    --bar-bg: rgba(30, 30, 32, 0.72);
-    --bar-border: rgba(255, 255, 255, 0.10);
-    --seg-on: #636366;      /* iOS のダークのセグメントで選ばれた色 */
-    --field: #2C2C2E;
-    --glass-hi: rgba(255, 255, 255, 0.16);
-    --keypad: #1C1C1E;
-    --key: #3A3A3C;
-    --key-op: #2C2C2E;
+    --chevron: #54595E;
+    --bar-bg: rgba(28, 29, 32, 0.74);
+    --bar-border: rgba(255, 255, 255, 0.1);
+    --seg-on: #5B5F65;
+    --field: #24262A;
+    --glass-hi: rgba(255, 255, 255, 0.14);
+    --keypad: #16171A;
+    --key: #36393D;
+    --key-op: #26292D;
+    --badge-mix: 24%;
+    --badge-ink: 100%;
     color-scheme: dark;
   }
+}
+/* コントラストを上げる設定では、薄い線と灰色の文字を濃くする */
+@media (prefers-contrast: more) {
+  :root { --separator: rgba(16, 24, 32, 0.4); --hairline: rgba(16, 24, 32, 0.35); --secondary: #3D464E; }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root { --separator: rgba(255, 255, 255, 0.4); --hairline: rgba(255, 255, 255, 0.35); --secondary: #C4CBD1; }
 }
 
 * { box-sizing: border-box; }
@@ -88,15 +102,17 @@ main > * { flex-shrink: 0; }
 a { color: var(--tint); }
 
 /* 文字の段階 */
-.overline { font-size: 15px; color: var(--secondary); padding: 0 4px; }
-h1, .large-title { margin: 0; padding: 0 4px 6px; font-size: 34px; font-weight: 700; line-height: 41px; letter-spacing: 0.01em; }
-h2 { margin: 0; font-size: 17px; font-weight: 600; }
-.section-head { padding: 16px 16px 0; font-size: 13px; color: var(--secondary); }
+.overline { font-size: 15px; font-weight: 600; color: var(--secondary); padding: 0 4px; }
+h1, .large-title { margin: 0; padding: 0 4px 6px; font-size: 34px; font-weight: 700; line-height: 41px; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { margin: 0; font-size: 17px; font-weight: 600; text-wrap: balance; }
+/* まとまりの見出しは本文と同じ黒で太くし、灰色の小さな注記に見えないようにする */
+.section-head { padding: 18px 4px 2px; font-size: 15px; font-weight: 600; color: var(--label); }
+p, .footnote { text-wrap: pretty; }
 .sub { color: var(--secondary); font-size: 15px; }
 .footnote { color: var(--secondary); font-size: 13px; }
 /* 大きな額は Wallet や ヘルスケアと同じく丸みのある SF Pro Rounded にし、円は小さく添える */
-.hero, .title1, .title2, input.amount, .amount-card .yen { font-family: ui-rounded, "SF Pro Rounded", -apple-system, "Hiragino Sans", system-ui, sans-serif; }
-.hero { font-size: 48px; font-weight: 700; letter-spacing: -0.02em; line-height: 56px; }
+.hero, .title1, .title2, input.amount, .amount-card .yen { font-family: var(--rounded); }
+.hero { font-size: 52px; font-weight: 700; letter-spacing: -0.03em; line-height: 58px; }
 .unit { font-size: 0.5em; font-weight: 600; color: var(--secondary); margin-left: 2px; letter-spacing: 0; }
 .title1 { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
 .title2 { font-size: 22px; font-weight: 700; line-height: 28px; }
@@ -104,19 +120,21 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .inc { color: var(--tint); }
 
 /* インセットのグループ */
-.card { background: var(--card); border-radius: 26px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.group { background: var(--card); border-radius: 26px; padding-left: 16px; display: flex; flex-direction: column; overflow: hidden; }
+/* 面は影を付けず、細い縁で地と分ける。縁は強制カラーのモードでも残る */
+.card { background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.group { background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px; padding-left: 16px; display: flex; flex-direction: column; overflow: hidden; }
+.card .group { border: none; }
 
 /* 一覧のページ。画面外の日付グループはブラウザに描画を省かせる。
    高さは最初 160px と見積もり、一度描いたあとは実際の高さを覚える */
 .list-group { content-visibility: auto; contain-intrinsic-size: auto 160px; }
 .cell {
-  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 16px 8px 0;
+  display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 16px 8px 0;
   border-bottom: 0.5px solid var(--separator); color: var(--label); text-decoration: none;
 }
 .cell:last-child { border-bottom: none; }
 .card .cell { padding-right: 0; }
-.cell.tall { min-height: 60px; }
+.cell.tall { min-height: 62px; }
 .cell .grow { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 .cell .detail { font-size: 13px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell .value { color: var(--secondary); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
@@ -136,7 +154,7 @@ a.cell.plain::after { display: none; }
 .stack { display: flex; flex-direction: column; gap: 8px; }
 
 /* 帯と棒 */
-.meter { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; background: var(--track); }
+.meter { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; background: var(--track); }
 .meter > div:nth-child(1) { background: var(--meter); }
 .meter > div:nth-child(2) { background: var(--tint-2); }
 /* 3つ目は地の色と近いので、斜めの縞にして見分ける */
@@ -459,20 +477,22 @@ button.pick { width: 100%; min-height: 44px; padding: 8px 0; border-radius: 0; b
 
 /* 行の頭の印。設定アプリと同じ 29pt の角丸の正方形に白い線の絵を置き、区切り線は文字の頭から引く */
 .badge {
-  flex: none; width: 29px; height: 29px; border-radius: 8px; margin-right: 2px;
+  flex: none; width: 32px; height: 32px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
-  color: #FFFFFF; font-size: 14px; font-weight: 600;
+  background: color-mix(in oklab, var(--c, #8E8E93) var(--badge-mix), var(--card));
+  color: color-mix(in oklab, var(--c, #8E8E93) var(--badge-ink), #000);
+  font-size: 14px; font-weight: 700;
 }
 .badge svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.bars .badge { width: 22px; height: 22px; border-radius: 6px; margin: 0; font-size: 11px; }
+.bars .badge { width: 24px; height: 24px; font-size: 11px; }
 .bars .badge svg { width: 14px; height: 14px; }
 .cell:has(> .badge) { border-bottom: none; position: relative; }
 .cell:has(> .badge):not(:last-child)::before {
-  content: ""; position: absolute; left: 41px; right: 0; bottom: 0; height: 0.5px; background: var(--separator);
+  content: ""; position: absolute; left: 44px; right: 0; bottom: 0; height: 0.5px; background: var(--separator);
 }
-.cell.tall:has(> .badge) .badge { width: 36px; height: 36px; border-radius: 10px; }
+.cell.tall:has(> .badge) .badge { width: 38px; height: 38px; }
 .cell.tall:has(> .badge) .badge svg { width: 20px; height: 20px; }
-.cell.tall:has(> .badge):not(:last-child)::before { left: 48px; }
+.cell.tall:has(> .badge):not(:last-child)::before { left: 50px; }
 
 /* ホームの上端。日付の右に設定の歯車を置く */
 .home-top { padding-right: 0; }
@@ -545,3 +565,68 @@ body.sheet main { transform: scale(.94); border-radius: 16px; }
 .keypad-keys .ok { grid-column: 5; grid-row: 3 / span 2; color: var(--tint); font-weight: 600; }
 .keypad-keys .wide { grid-column: span 2; }
 body.keypad-open .sheet-panel { padding-bottom: calc(320px + env(safe-area-inset-bottom)); }
+
+/* ---- ホーム ---- */
+/* 主役の数字は面に入れず地の上に大きく出し、その下に式の3つの項を横に並べる */
+.hero-block { display: flex; flex-direction: column; padding: 6px 0 4px; }
+.hero-label { padding: 0 4px; font-size: 15px; font-weight: 600; color: var(--secondary); }
+.hero-block .hero { padding: 0 4px; }
+.stats {
+  margin-top: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px; overflow: hidden;
+}
+.stats .stat {
+  min-height: 68px; padding: 12px 12px 12px 14px; border-radius: 0; background: none; color: var(--label);
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; text-align: start; font-weight: 400;
+}
+.stats .stat + .stat { border-left: 0.5px solid var(--separator); }
+.stat-label { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--secondary); white-space: nowrap; }
+.stat-value { font-family: var(--rounded); font-size: 19px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
+/* 開ける項には下向きの印を付け、開いている間は面を水色に染める */
+.stat[aria-expanded] .stat-label::after {
+  content: ""; width: 5px; height: 5px; margin: -2px 0 0 2px;
+  border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: rotate(45deg); transition: transform 0.2s;
+}
+.stat[aria-expanded="true"] { background: var(--tint-soft); }
+.stat[aria-expanded="true"] .stat-label::after { transform: rotate(225deg); margin-top: 3px; }
+.stats .stat:active { transform: none; opacity: 1; background: var(--fill); }
+.flow-panel { margin-top: 8px; background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px; padding-left: 16px; }
+.flow-panel[hidden] { display: none; }
+.flow-panel .cell.sub { padding-left: 0; }
+.hero-note { display: flex; justify-content: space-between; padding: 10px 4px 0; font-size: 15px; color: var(--secondary); }
+
+/* 実質残高。題と額を1行にし、下の帯で手元資金が負債をどこまで払えるかを見せる */
+.net-card { gap: 14px; padding-bottom: 4px; }
+.card-title { font-size: 17px; font-weight: 600; }
+.net-card .meter > div:nth-child(1) { background: var(--tint-2); }
+.net-card .meter > div:nth-child(2) { background: repeating-linear-gradient(135deg, var(--tint-2) 0 2px, var(--tint-3) 2px 4px); }
+.net-card .meter > .rest { background: var(--meter); }
+/* 手元資金が届くところに縦の線を引く。負債が上回るときは、線より右が払いきれない分になる */
+.net-card .band { position: relative; }
+.net-card .reach { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--label); }
+.swatch.reach-mark { width: 2px; height: 14px; border-radius: 1px; background: var(--label); margin: 0 4px; }
+
+/* まとまりの見出し。大きめの太字で、右に合計や件数を添える */
+.block { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+.block-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.block-head .sum { font-family: var(--rounded); font-size: 17px; font-weight: 600; color: var(--secondary); }
+.block-head .count { font-size: 15px; font-weight: 600; color: var(--secondary); }
+
+/* 確かめることは2列の札にする。件数を大きく、何をするかを下に2行まで */
+.todo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.todo {
+  display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px 8px;
+  min-height: 84px; padding: 12px 14px; border-radius: 18px;
+  background: var(--card); border: 0.5px solid var(--hairline); color: var(--label); text-decoration: none;
+  transition: background-color 360ms ease, transform 260ms cubic-bezier(.3, .7, .4, 1.5);
+}
+.todo:active { background: var(--fill); transform: scale(.97); transition-duration: 80ms; }
+.todo .badge { grid-row: 1; grid-column: 1; }
+.todo-n { grid-row: 1; grid-column: 2; justify-self: end; font-family: var(--rounded); font-size: 22px; font-weight: 700; line-height: 1; }
+.todo-label {
+  grid-row: 2; grid-column: 1 / -1; font-size: 14px; word-break: auto-phrase; font-weight: 500; line-height: 1.3;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+/* 一覧の日の見出しは、日付を黒で、日の合計を灰色で右に出す */
+.day-head { color: var(--label); }
+.day-head > span + span { color: var(--secondary); font-weight: 500; font-family: var(--rounded); }

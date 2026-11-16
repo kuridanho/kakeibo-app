@@ -6,6 +6,8 @@
 //
 // 使い方: node scripts/deploy-embedded.mjs [--without-r2] [wrangler deploy に渡す引数...]
 // --without-r2 は R2 をまだ有効にしていないとき用。明細CSVの保存と毎日の控えが止まる
+// --preview は本番とは別の Worker(kakeibo-preview)に出す。D1 と R2 はプレビュー用の別物を使い、
+// Cron は外す。D1 の中身は scripts/preview-copy-db.mjs で本番から写す
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -72,7 +74,16 @@ config.main = "entry.ts";
 for (const db of config.d1_databases ?? []) db.migrations_dir = join(root, db.migrations_dir ?? "migrations");
 const args = process.argv.slice(2);
 if (args.includes("--without-r2")) delete config.r2_buckets;
+if (args.includes("--preview")) {
+  config.name = "kakeibo-preview";
+  config.d1_databases = [{ ...config.d1_databases[0], database_name: "kakeibo-preview", database_id: "560145de-3051-4454-9eed-533a2e4f7a8e" }];
+  if (config.r2_buckets) config.r2_buckets = [{ binding: "BUCKET", bucket_name: "kakeibo-preview" }];
+  delete config.triggers;
+  config.vars = { ...config.vars, PREVIEW: "1" };
+  // workers.dev の URL は Cloudflare Access で守られてから開く
+  config.workers_dev = false;
+}
 const configPath = join(outDir, "wrangler.json");
 writeFileSync(configPath, JSON.stringify(config, null, 2));
 
-execFileSync("npx", ["wrangler", "deploy", "-c", configPath, ...args.filter((a) => a !== "--without-r2")], { stdio: "inherit", cwd: root });
+execFileSync("npx", ["wrangler", "deploy", "-c", configPath, ...args.filter((a) => a !== "--without-r2" && a !== "--preview")], { stdio: "inherit", cwd: root });
