@@ -49,7 +49,8 @@ function serve(path: string): Response {
     body = Uint8Array.from(atob(file.body), (c) => c.charCodeAt(0));
     decoded.set(key, body);
   }
-  const cache = key === "/index.html" || key === "/sw.js" ? "no-cache" : "public, max-age=300";
+  // 画面の html と js と css は毎回確かめさせる。html だけ新しく js が古いまま、という食い違いを起こさないため
+  const cache = /\.(html|js|css)$/.test(key) ? "no-cache" : "public, max-age=300";
   return new Response(body, { headers: { "content-type": file.type, "cache-control": cache } });
 }
 
