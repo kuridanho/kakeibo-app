@@ -1463,12 +1463,12 @@ function entryCell(e) {
       : h("span", { class: `amount${transfer ? " muted" : ""}` }, transfer ? num(entryAmount(e)) : minus(entryAmount(e))));
 }
 
-/** 一覧の日の見出し。日付の数字を大きく、月と曜日を小さく添え、右にその日の合計を出す */
+/** 一覧の日の見出し。「11月30日」を太く、曜日を小さく添え、右にその日の合計を出す */
 function dayHead(d, right, id) {
   const w = "日月火水木金土"[new Date(`${d}T00:00:00Z`).getUTCDay()];
   return h("div", { class: "section-head day-head", id },
-    h("span", { class: "day-title" }, h("b", {}, Number(d.slice(8, 10))),
-      h("span", {}, d === today() ? `${Number(d.slice(5, 7))}月 今日` : `${Number(d.slice(5, 7))}月 ${w}曜日`)),
+    h("span", { class: "day-title" }, h("b", {}, `${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日`),
+      h("span", {}, d === today() ? `(${w}) 今日` : `(${w})`)),
     right ?? h("span"));
 }
 

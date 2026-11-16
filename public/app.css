@@ -638,9 +638,9 @@ body.keypad-open .sheet-panel { padding-bottom: calc(320px + env(safe-area-inset
 
 /* 一覧の日の見出し。日の数字を大きく出し、月と曜日を小さく添える */
 .day-head { display: flex; justify-content: space-between; align-items: flex-end; padding: 14px 4px 2px; scroll-margin-top: 12px; }
-.day-title { display: flex; align-items: baseline; gap: 6px; }
-.day-title b { font-family: var(--rounded); font-size: 24px; font-weight: 700; line-height: 1; }
-.day-title span { font-size: 13px; font-weight: 600; color: var(--secondary); }
+.day-title { display: flex; align-items: baseline; gap: 4px; }
+.day-title b { font-size: 17px; font-weight: 700; line-height: 1.2; }
+.day-title span { font-size: 15px; font-weight: 600; color: var(--secondary); }
 .day-head > span:last-child { font-size: 15px; font-weight: 600; color: var(--secondary); font-family: var(--rounded); }
 
 /* ---- 集計 ---- */
