@@ -673,3 +673,15 @@ details.fold > .cell.sub.dated { padding-left: 4px; }
 /* 分割払いは払い終えた回の割合を細い棒で出す */
 .inst-bar { height: 4px; margin-top: 7px; max-width: 220px; }
 .inst-bar > div { background: var(--meter); }
+
+/* ---- タブバーと記録ボタン ---- */
+/* タブバーは低くし、下端の余白も詰める */
+.dock { padding-bottom: max(6px, calc(env(safe-area-inset-bottom) - 18px)); }
+.tabbar { height: 52px; border-radius: 26px; padding: 0 4px; }
+.tabbar a { height: 44px; border-radius: 22px; gap: 0; }
+.tab-glider { border-radius: 22px; }
+.tabbar svg { width: 20px; height: 20px; }
+.dock .add { width: 54px; height: 54px; border-radius: 27px; bottom: calc(100% + 12px); }
+body:not(.can-add) .dock .add { display: none; }
+main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+body.can-add main { padding-bottom: calc(160px + env(safe-area-inset-bottom)); }

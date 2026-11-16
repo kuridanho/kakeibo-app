@@ -2794,6 +2794,8 @@ async function route(opts) {
   if (!quiet) placeTabGlider();
   if (tabChanged && document.body.dataset.tab) bounceTab();
   if (!isSheet) document.body.dataset.tab = found[2];
+  // 記録ボタンは、その場で記録したくなる画面(ホームと記録)だけに出す
+  if (!isSheet) document.body.classList.toggle("can-add", path === "/" || path === "/list" || path === "/summary");
   if (isSheet && !wasSheet) pageTop = page.scrollTop;
   if (isSheet !== wasSheet) showSheet(isSheet);
   // 閉じる動きの間も、元の位置の画面が見えるようにする
