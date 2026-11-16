@@ -186,7 +186,7 @@ app.post("/api/accounts", async (c) => {
   checkAccountFields(body as Record<string, unknown>);
   await checkPaymentAccount(c.env.DB, body.payment_account_id);
   await checkPaymentAccount(c.env.DB, body.prepay_account_id);
-  // 財布、普通預金、電子マネーは手元の現金に数える。定期預金や投資は別枠
+  // 財布、普通預金、電子マネーは手元資金に数える。定期預金や投資は別枠
   const liquid = body.liquid ?? (["cash", "bank", "emoney"].includes(kind) ? 1 : 0);
   const payMethod = body.pay_method ?? (["cash", "bank", "emoney", "card"].includes(kind) ? 1 : 0);
   const row = await c.env.DB

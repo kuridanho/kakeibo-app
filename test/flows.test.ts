@@ -112,7 +112,7 @@ describe("カレンダーの符号と集計", () => {
 });
 
 describe("振替", () => {
-  it("口座の間で動かしても、収入と支出と手元の現金は変わらない", async () => {
+  it("口座の間で動かしても、収入と支出と手元資金は変わらない", async () => {
     const before = await snapshot();
     const s0 = await month("2027-02");
     await api("POST", "/api/entries", { kind: "transfer", date: "2027-02-01", amount: 3000, from_account_id: bank, to_account_id: paypay });
