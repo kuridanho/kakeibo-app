@@ -480,15 +480,28 @@ async function home() {
   // 実質残高の比べ図。上に手元資金、下に負債(カードの未払いと借入)を同じ尺度の棒で並べ、長さの差で足りるかを見せる
   const owed = b.card_unpaid + b.loan_due;
   const liquid = b.liquid_total ?? b.available_cash + owed;
-  const whole = Math.max(liquid, owed, 1);
-  const pct = (n) => `${Math.max(0, n) / whole * 100}%`;
-  const band = h("div", { class: "compare", role: "img", "aria-label": `手元資金 ${num(liquid)}、負債 ${num(owed)}（カードの未払い ${num(b.card_unpaid)}、借入 ${num(b.loan_due)}）` },
-    h("span", { class: "compare-label" }, "手元"),
-    h("div", { class: "compare-track" }, h("div", { class: "seg-liquid", style: `width:${pct(liquid)}` })),
-    h("span", { class: "compare-label" }, "負債"),
-    h("div", { class: "compare-track" },
-      h("div", { class: "seg-card", style: `width:${pct(b.card_unpaid)}` }),
-      h("div", { class: "seg-loan", style: `width:${pct(b.loan_due)}` })));
+  // 実質残高の段々の棒。手元資金から、カードの未払い、借入の順に引いていき、最後の棒が実質残高になる。
+  // 横軸は金額で、0 の位置に縦の線を引く。0 より左に出た分が足りない額
+  const net = b.available_cash;
+  const lo = Math.min(0, net, liquid - b.card_unpaid);
+  const hi = Math.max(0, liquid);
+  const x = (v) => (v - lo) / ((hi - lo) || 1) * 100;
+  const step = (cls, from, to) => h("div", { class: "wf-track" },
+    h("span", { class: "wf-zero", style: `left:${x(0)}%` }),
+    h("span", { class: `wf-bar ${cls}`, style: `left:${x(Math.min(from, to))}%;width:${Math.abs(x(to) - x(from))}%` }));
+  const wfRow = (label, amount, bar, rows, amountClass = "") => {
+    const head = [h("div", { class: "wf-line" }, h("span", { class: "grow" }, label), h("span", { class: `amount ${amountClass}` }, amount)), bar];
+    return rows?.length
+      ? h("details", { class: "fold wf-row" }, h("summary", { class: "wf-head" }, head), h("div", { class: "wf-detail" }, rows))
+      : h("div", { class: "wf-row" }, h("div", { class: "wf-head" }, head));
+  };
+  const afterCard = liquid - b.card_unpaid;
+  const waterfall = h("div", { class: "waterfall" },
+    wfRow("手元資金", num(liquid), step("wf-liquid", 0, liquid)),
+    wfRow("カードの未払い", minus(b.card_unpaid), step("wf-card", liquid, afterCard),
+      b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount, `#/account/${x.account_id}`))),
+    b.loan_due ? wfRow("借入の残高", minus(b.loan_due), step("wf-loan", afterCard, net), b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null,
+    wfRow(h("b", {}, "実質残高"), h("b", {}, num(net)), step(net < 0 ? "wf-net neg" : "wf-net", 0, net), null, net < 0 ? "neg" : ""));
 
   const groupSum = (as) => as.reduce((s, a) => s + a.balance, 0);
 
@@ -511,17 +524,9 @@ async function home() {
       b.non_liquid_total ? h("div", { class: "hero-note" }, h("span", {}, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null),
     // 実質残高は、いま手元にあるお金から、カードの未払い(分割の残りの回も)と借入をすべて引いた額。純資産はそこに別枠の資産を足す
     h("section", { class: "card net-card" },
-      h("div", { class: "row" },
-        h("span", { class: "card-title" }, "実質残高"),
-        h("span", { class: `title2${b.available_cash < 0 ? " neg" : ""}` }, num(b.available_cash))),
-      band,
+      // 実質残高の額は段々の棒の最後の行に出すので、題は名前だけにする
+      waterfall,
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0;background:none" },
-        h("div", { class: "cell" }, h("span", { class: "legend grow" },
-          h("span", { class: "swatch sw-liquid" }), "手元資金"),
-          h("span", { class: "amount" }, num(liquid))),
-        foldLegend("--owed", "カードの未払い", -b.card_unpaid,
-          b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount, `#/account/${x.account_id}`))),
-        b.loan_due ? foldLegend("stripe owed", "借入の残高", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null,
         b.non_liquid_total ? legend("--tint-3", "別枠の資産", b.non_liquid_total) : null,
         h("div", { class: "cell" }, h("span", { class: "grow" }, "純資産"), h("b", { class: `amount${b.net_assets < 0 ? " neg" : ""}` }, num(b.net_assets))))),
     todos.length ? h("section", { class: "block" },
