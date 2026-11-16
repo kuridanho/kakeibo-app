@@ -607,13 +607,13 @@ body.keypad-open .sheet-panel { padding-bottom: calc(320px + env(safe-area-inset
 .hero-note { display: flex; justify-content: space-between; padding: 10px 4px 0; font-size: 15px; color: var(--secondary); }
 
 /* 実質残高の段々の棒。行ごとに項目と額、その下に同じ横軸の棒を出す。縦の線が 0 */
-.net-card { gap: 10px; padding-bottom: 4px; }
+.net-card { gap: 0; padding: 0 16px; }
 .card-title { font-size: 17px; font-weight: 600; }
 :root { --owed: #8A949C; --owed-2: #C3CAD0; }
 @media (prefers-color-scheme: dark) { :root { --owed: #8E979F; --owed-2: #4A5056; } }
 .waterfall { display: flex; flex-direction: column; }
 .wf-row { border-bottom: 0.5px solid var(--separator); }
-.wf-head { display: flex; flex-direction: column; gap: 6px; padding: 13px 0; list-style: none; cursor: default; }
+.wf-head { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; list-style: none; cursor: default; }
 details.wf-row > summary.wf-head { cursor: pointer; }
 details.wf-row > summary::-webkit-details-marker { display: none; }
 details.wf-row > summary::after { display: none; }
