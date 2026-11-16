@@ -27,7 +27,7 @@ interface AccountBalance extends Account {
   check_overdue: boolean;
 }
 
-/** 口座ごとの残高と、手元にあるはずの現金 */
+/** 口座ごとの残高と、手元資金 */
 export async function balances(db: D1Database, today = todayJST()) {
   const { results } = await db
     .prepare(`SELECT a.*, COALESCE((SELECT SUM(l.amount) FROM lines l WHERE l.account_id = a.id), 0) AS raw,
@@ -41,7 +41,7 @@ export async function balances(db: D1Database, today = todayJST()) {
       (!a.last_checked || diffDays(today, a.last_checked) > a.check_interval_days),
   }));
 
-  // カードの未払いを請求月ごとに。引き落とし前のものはすべて保留として手元の現金から差し引く
+  // カードの未払いを請求月ごとに。引き落とし前のものはすべて保留として手元資金から差し引く
   const { results: unpaid } = await db
     .prepare(`SELECT l.account_id, e.billing_month, -SUM(l.amount) AS amount
       FROM lines l JOIN entries e ON e.id = l.entry_id JOIN accounts a ON a.id = l.account_id
