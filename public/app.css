@@ -97,7 +97,7 @@ main > * { flex-shrink: 0; }
 /* Safari のタブで開いたときはぼかしの帯がないので、上の余白はふつうに戻す */
 @media not all and (display-mode: standalone) {
   main { top: env(safe-area-inset-top); padding-top: 16px; }
-  main > .cal-top { top: 16px; }
+  main > .cal-top { padding-top: 16px; }
 }
 a { color: var(--tint); }
 
@@ -395,17 +395,20 @@ details.more > summary + * { margin-top: 4px; }
    日を押しても月の表は動かさず、下の一覧だけをスクロールさせる */
 .cal-card {
   background: var(--card); border: 0.5px solid var(--hairline); border-radius: 20px;
-  padding: 10px 8px 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden;
+  padding: 6px 6px 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden;
 }
-.cal-top { position: sticky; top: 4px; z-index: 4; padding-bottom: 6px; background: var(--bg); box-shadow: 0 -16px 0 var(--bg); display: flex; flex-direction: column; gap: 8px; }
-.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
-.cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--secondary); padding: 0 0 4px; }
+/* 表は main の上端に貼り付ける。上の余白は表自身の地で埋め、後ろの一覧が上にはみ出して見えないようにする */
+main:has(> .cal-top) { padding-top: 0; }
+.cal-top { position: sticky; top: 0; z-index: 4; padding: 4px 0 6px; background: var(--bg); display: flex; flex-direction: column; gap: 6px; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--secondary); padding: 0 0 2px; }
 .cal-d {
-  position: relative; height: 50px; min-height: 0; overflow: hidden; padding: 4px 1px 0; border-radius: 10px; background: none; color: var(--label);
+  position: relative; height: 38px; min-height: 0; overflow: hidden; padding: 2px 1px 0; border-radius: 8px; background: none; color: var(--label);
   display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1px; font-weight: 400; text-align: center;
 }
 .cal-d.spent { background: color-mix(in oklab, var(--meter) var(--heat), transparent); }
-.cal-d .n { flex: none; font-size: 15px; font-weight: 500; line-height: 22px; min-width: 22px; height: 22px; border-radius: 11px; font-variant-numeric: tabular-nums; }
+.cal-d .n { position: relative; flex: none; font-size: 14px; font-weight: 500; line-height: 20px; min-width: 20px; height: 20px; border-radius: 10px; font-variant-numeric: tabular-nums; }
+.cal-d .n.has-in::after { content: ""; position: absolute; top: 2px; right: -6px; width: 5px; height: 5px; border-radius: 50%; background: var(--tint); }
 .cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10px; line-height: 11px; letter-spacing: -0.04em; white-space: nowrap; overflow-x: clip; overflow-y: visible; color: var(--label); font-weight: 500; }
 .cal-d .i, .cal-d .p.inc { color: var(--tint); }
 .cal-d .p { color: var(--secondary); text-decoration: underline dashed; text-underline-offset: 1px; }
@@ -414,10 +417,11 @@ details.more > summary + * { margin-top: 4px; }
 /* 選んだ日は枠で囲む。色だけに頼らず形でも分かるようにする */
 .cal-d.on { box-shadow: inset 0 0 0 2px var(--label); }
 .cal-d.out { pointer-events: none; }
-.stats.cal-stats { margin: 8px -8px 0; border: none; border-top: 0.5px solid var(--separator); border-radius: 0; }
-.stats.cal-stats .stat { min-height: 56px; padding: 8px 12px 8px 14px; }
-.cal-stats .stat-value { font-size: 17px; }
-.cal-plan { display: flex; justify-content: space-between; gap: 8px; margin: 0 -8px; padding: 8px 14px 10px; border-top: 0.5px solid var(--separator); font-size: 13px; color: var(--secondary); }
+.cal-sum { display: flex; justify-content: space-between; gap: 8px; margin: 4px -6px 0; padding: 7px 12px 8px; border-top: 0.5px solid var(--separator); font-variant-numeric: tabular-nums; }
+.cal-sum div { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.cal-sum span { font-size: 12px; font-weight: 600; color: var(--secondary); }
+.cal-sum b { font-family: var(--rounded); font-size: 15px; font-weight: 700; }
+.cal-plan { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 0; font-size: 13px; color: var(--secondary); }
 .item .row button.icon { width: 36px; min-height: 36px; margin-right: -6px; color: var(--secondary); }
 
 /* 並べ替え。右の取っ手をドラッグする */
@@ -631,7 +635,7 @@ body.keypad-open .sheet-panel { padding-bottom: calc(320px + env(safe-area-inset
 /* 一覧の日の見出しは、日付を黒で、日の合計を灰色で右に出す */
 
 /* 一覧の日の見出し。日の数字を大きく出し、月と曜日を小さく添える */
-.day-head { display: flex; justify-content: space-between; align-items: flex-end; padding: 20px 4px 4px; scroll-margin-top: 12px; }
+.day-head { display: flex; justify-content: space-between; align-items: flex-end; padding: 14px 4px 2px; scroll-margin-top: 12px; }
 .day-title { display: flex; align-items: baseline; gap: 6px; }
 .day-title b { font-family: var(--rounded); font-size: 24px; font-weight: 700; line-height: 1; }
 .day-title span { font-size: 13px; font-weight: 600; color: var(--secondary); }

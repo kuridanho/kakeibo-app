@@ -1549,20 +1549,24 @@ async function calendarView(params) {
         "aria-label": `${dayLabel(d)}${t?.income ? ` 収入 ${t.income}円` : ""}${t?.expense ? ` 支出 ${t.expense}円` : ""}${pin ? ` 入る予定 ${pin}円` : ""}${pout ? ` 出る予定 ${pout}円` : ""}`,
         onclick: () => tap(d),
       },
-        h("span", { class: "n" }, i),
-        // 入る額と出る額を差し引かずに1行ずつ出す。記録がなければ予定を点線で出す。入るほうは水色
-        t?.income ? h("span", { class: "i" }, plus(t.income)) : pin ? h("span", { class: "p inc" }, plus(pin)) : null,
-        t?.expense ? h("span", { class: "e" }, minus(t.expense)) : pout ? h("span", { class: "p" }, minus(pout)) : null);
+        // マスは日付と1行だけにして低く保つ。出た額を優先し、なければ入った額、記録がなければ予定を点線で出す。
+        // 出た額と並んで入った額もある日は、日付の横に水色の点を付ける
+        h("span", { class: `n${t?.income && t?.expense ? " has-in" : ""}` }, i),
+        t?.expense ? h("span", { class: "e" }, minus(t.expense))
+          : t?.income ? h("span", { class: "i" }, plus(t.income))
+          : pout ? h("span", { class: "p" }, minus(pout))
+          : pin ? h("span", { class: "p inc" }, plus(pin)) : null);
     }));
 
   const income = Object.values(cal.days).reduce((s, d) => s + d.income, 0);
   const spent = Object.values(cal.days).reduce((s, d) => s + d.expense, 0);
   const comingIn = cal.planned.filter((p) => p.kind === "income").reduce((s, p) => s + p.amount, 0);
   const comingOut = cal.planned.filter((p) => flowsOut(p)).reduce((s, p) => s + p.amount, 0);
-  const totals = h("div", { class: "stats cal-stats" },
-    h("div", { class: "stat" }, h("span", { class: "stat-label" }, "収入"), h("span", { class: "stat-value inc" }, plus(income))),
-    h("div", { class: "stat" }, h("span", { class: "stat-label" }, "支出"), h("span", { class: "stat-value" }, minus(spent))),
-    h("div", { class: "stat" }, h("span", { class: "stat-label" }, "収支"), h("span", { class: `stat-value${income - spent < 0 ? " neg" : ""}` }, `${income - spent > 0 ? "+" : ""}${num(income - spent)}`)));
+  // 月の合計はカレンダーの下端に1行で出す
+  const totals = h("div", { class: "cal-sum" },
+    h("div", {}, h("span", {}, "収入"), h("b", { class: "inc" }, plus(income))),
+    h("div", {}, h("span", {}, "支出"), h("b", {}, minus(spent))),
+    h("div", {}, h("span", {}, "収支"), h("b", { class: income - spent < 0 ? "neg" : "" }, `${income - spent > 0 ? "+" : ""}${num(income - spent)}`)));
 
   // 月の取引と予定を日ごとに、新しい日から並べる
   const days = [...new Set([...byDay.keys(), ...plannedBy.keys()])].sort().reverse();
@@ -1589,12 +1593,13 @@ async function calendarView(params) {
   // 戻るや描き直しで位置を戻したときは、当日へは送らない
   if (start) setTimeout(() => { if (selected || !document.querySelector(".cal-top")?.closest("main")?.scrollTop) toDay(start, "instant"); }, 0);
   const go = (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; };
-  const card = h("div", { class: "cal-card" }, head, grid, totals,
-    comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
-      h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${minus(comingOut)}` : ""].filter(Boolean).join("　"))) : null);
+  const card = h("div", { class: "cal-card" }, head, grid, totals);
+  // これからの予定は固定した表に入れず、一覧の頭に出す
+  const coming = comingIn || comingOut ? h("div", { class: "cal-plan" }, h("span", {}, "これからの予定"),
+    h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${minus(comingOut)}` : ""].filter(Boolean).join("　"))) : null;
   swipe(card, go);
   if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.classList.add(from > 0 ? "in-right" : "in-left");
-  return [h("div", { class: "cal-top" }, listHead("cal", month), card), listBody];
+  return [h("div", { class: "cal-top" }, listHead("cal", month), card), coming, listBody];
 }
 
 // ---- 集計 ----
