@@ -1550,13 +1550,10 @@ async function calendarView(params) {
         "aria-label": `${dayLabel(d)}${t?.income ? ` 収入 ${t.income}円` : ""}${t?.expense ? ` 支出 ${t.expense}円` : ""}${pin ? ` 入る予定 ${pin}円` : ""}${pout ? ` 出る予定 ${pout}円` : ""}`,
         onclick: () => tap(d),
       },
-        // マスは日付と1行だけにして低く保つ。出た額を優先し、なければ入った額、記録がなければ予定を点線で出す。
-        // 出た額と並んで入った額もある日は、日付の横に水色の点を付ける
-        h("span", { class: `n${t?.income && t?.expense ? " has-in" : ""}` }, i),
-        t?.expense ? h("span", { class: "e" }, minus(t.expense))
-          : t?.income ? h("span", { class: "i" }, plus(t.income))
-          : pout ? h("span", { class: "p" }, minus(pout))
-          : pin ? h("span", { class: "p inc" }, plus(pin)) : null);
+        h("span", { class: "n" }, i),
+        // 入る額と出る額を差し引かずに1行ずつ出す。記録がなければ予定を点線で出す。入るほうは水色
+        t?.income ? h("span", { class: "i" }, plus(t.income)) : pin ? h("span", { class: "p inc" }, plus(pin)) : null,
+        t?.expense ? h("span", { class: "e" }, minus(t.expense)) : pout ? h("span", { class: "p" }, minus(pout)) : null);
     }));
 
   const income = Object.values(cal.days).reduce((s, d) => s + d.income, 0);

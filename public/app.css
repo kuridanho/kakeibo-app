@@ -403,13 +403,12 @@ main:has(> .cal-top) { padding-top: 0; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
 .cal-w { text-align: center; font-size: 11px; font-weight: 600; color: var(--secondary); padding: 0 0 2px; }
 .cal-d {
-  position: relative; height: 38px; min-height: 0; overflow: hidden; padding: 2px 1px 0; border-radius: 8px; background: none; color: var(--label);
+  position: relative; height: 44px; min-height: 0; overflow: hidden; padding: 2px 1px 0; border-radius: 8px; background: none; color: var(--label);
   display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1px; font-weight: 400; text-align: center;
 }
 .cal-d.spent { background: color-mix(in oklab, var(--meter) var(--heat), transparent); }
 .cal-d .n { position: relative; flex: none; font-size: 14px; font-weight: 500; line-height: 20px; min-width: 20px; height: 20px; border-radius: 10px; font-variant-numeric: tabular-nums; }
-.cal-d .n.has-in::after { content: ""; position: absolute; top: 2px; right: -6px; width: 5px; height: 5px; border-radius: 50%; background: var(--tint); }
-.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10px; line-height: 11px; letter-spacing: -0.04em; white-space: nowrap; overflow-x: clip; overflow-y: visible; color: var(--label); font-weight: 500; }
+.cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10px; line-height: 10.5px; letter-spacing: -0.04em; white-space: nowrap; overflow-x: clip; overflow-y: visible; color: var(--label); font-weight: 500; }
 .cal-d .i, .cal-d .p.inc { color: var(--tint); }
 .cal-d .p { color: var(--secondary); text-decoration: underline dashed; text-underline-offset: 1px; }
 .cal-w.sun, .cal-w.sat, .cal-d.sun .n, .cal-d.sat .n { color: var(--secondary); }
