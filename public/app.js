@@ -131,7 +131,7 @@ const live = (list) => list.filter((a) => !a.archived);
 const byType = (list, ...types) => live(list).filter((a) => types.includes(a.type));
 const KIND_LABEL = {
   cash: "現金", bank: "銀行口座", emoney: "電子マネー", savings: "定期預金など", investment: "投資",
-  receivable: "貸したお金", card: "カード", loan: "借入",
+  receivable: "貸付金", card: "カード", loan: "借入",
 };
 
 function options(list, selected, blank) {
@@ -433,7 +433,7 @@ async function home() {
       num(x.amount), "card", "#FF453A"]),
     ...b.loan_reminders.map((x) => [`#/account/${x.id}`, `${x.name}の返済期限 ${dayLabel(x.due_date)}${x.days_left < 0 ? "（過ぎています）" : x.days_left === 0 ? "（今日）" : `（あと${x.days_left}日）`}`,
       num(x.balance), "percent", x.days_left < 0 ? "#FF453A" : "#FF9F0A"]),
-    ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の棚卸し`, 1, "wallet", "#30D158"]),
+    ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の残高照合`, 1, "wallet", "#30D158"]),
     ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りません`, 1, "bolt", "#FF453A"]),
   ].filter(Boolean);
 
@@ -1692,7 +1692,7 @@ const assetGroups = (b) => [
 const assetCell = (a) => cell({ href: `#/account/${a.id}` },
   badge(a.kind),
   h("span", { class: "grow" }, a.name),
-  a.check_overdue ? h("span", { class: "pill" }, "棚卸し") : null,
+  a.check_overdue ? h("span", { class: "pill" }, "残高照合") : null,
   h("span", { class: "value" }, num(a.balance)));
 
 async function accountsView(params) {
@@ -1769,7 +1769,7 @@ function kindFields(kind, a, banks, wallets = []) {
     n("closing_day", "利息の締め日", a?.closing_day, "月末"),
     field("最初の返済日", h("input", { name: "first_payment_date", type: "date", value: a?.first_payment_date ?? "" })),
     field("返済期限", h("input", { name: "due_date", type: "date", value: a?.due_date ?? "" }))];
-  if (CHECKABLE.includes(kind)) return [n("check_interval_days", "棚卸しの間隔", a?.check_interval_days, "日数")];
+  if (CHECKABLE.includes(kind)) return [n("check_interval_days", "残高照合の間隔", a?.check_interval_days, "日数")];
   return [];
 }
 
@@ -1919,7 +1919,7 @@ function checkForm(a, bal, history) {
         h("a", { class: "button plain", href: "#/new" }, "記録漏れを足す"))));
   });
   return [
-    h("span", { class: "section-head" }, investment ? "評価額" : "棚卸し"),
+    h("span", { class: "section-head" }, investment ? "評価額" : "残高照合"),
     form, result,
     history.length ? h("div", { class: "group" }, history.slice(0, 5).map((c) => cell({},
       h("span", { class: "grow" }, dayLabel(c.date)), h("span", { class: "value" }, c.actual === c.book ? num(c.actual) : `${num(c.actual)}　差 ${plus(c.actual - c.book)}`)))) : null,
@@ -1994,7 +1994,7 @@ async function openingView() {
     } catch (e) { toast(e.message); }
   });
   return [sheetBar("開始残高", { form: "opening-form", back: "#/accounts" }),
-    h("p", { class: "sub", style: "margin:0;padding:0 4px" }, "分かるものだけ入れてください。後の棚卸しや明細の取り込みで埋まります。"), form];
+    h("p", { class: "sub", style: "margin:0;padding:0 4px" }, "分かるものだけ入れてください。後の残高照合や明細の取り込みで埋まります。"), form];
 }
 
 async function categoriesView(params) {

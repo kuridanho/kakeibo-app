@@ -105,7 +105,7 @@ const ACCOUNT_NUMBER_FIELDS: Record<string, { label: string; min: number; max: n
   payment_account_id: { label: "引き落とし口座", min: 1, max: Number.MAX_SAFE_INTEGER },
   prepay_account_id: { label: "先に引く口座", min: 1, max: Number.MAX_SAFE_INTEGER },
   payment_amount: { label: "毎月の返済額", min: 0, max: Number.MAX_SAFE_INTEGER },
-  check_interval_days: { label: "棚卸しの間隔", min: 1, max: 3650 },
+  check_interval_days: { label: "残高照合の間隔", min: 1, max: 3650 },
   sort_order: { label: "並び順", min: 0, max: Number.MAX_SAFE_INTEGER },
 };
 const ACCOUNT_FLAG_FIELDS = ["liquid", "pay_method", "statement_import", "archived"] as const;
@@ -924,7 +924,7 @@ app.post("/api/balance-checks", async (c) => {
       : await db.prepare("SELECT * FROM accounts WHERE kind = 'valuation'").first<Account>();
     const signed = a.type === "asset" ? diff : -diff;
     adjustmentId = await createEntry(db, {
-      date, kind: "adjustment", payee: `${a.name} 棚卸しの差額`, source: "balance_check", user_id: c.get("user"),
+      date, kind: "adjustment", payee: `${a.name} 残高照合の差額`, source: "balance_check", user_id: c.get("user"),
     }, [{ account_id: a.id, amount: signed }, { account_id: (await resolveAccount(db, counter!.id)).id, amount: -signed }]);
   }
   const row = await db
