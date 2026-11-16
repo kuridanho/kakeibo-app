@@ -447,7 +447,7 @@ async function home() {
     : h("details", { class: "fold" }, h("summary", { class: "cell" }, h("span", { class: "grow" }, label), h("span", { class: "amount" }, total)), rows);
   const weekday = "日月火水木金土"[new Date(`${today()}T00:00:00Z`).getUTCDay()];
   const legend = (n, label, amount) => h("div", { class: "cell" },
-    h("span", { class: "legend grow" }, n === "stripe" ? h("span", { class: "swatch stripe" }) : h("span", { class: "swatch", style: `background:var(${n})` }), label),
+    h("span", { class: "legend grow" }, n.startsWith("stripe") ? h("span", { class: `swatch ${n}` }) : h("span", { class: "swatch", style: `background:var(${n})` }), label),
     h("span", { class: "amount" }, num(amount)));
   // 未払いと返済は、押すとどのカードや借入のいくらが、いつ落ちるかを開く
   const foldLegend = (n, label, amount, rows) => {
@@ -477,17 +477,18 @@ async function home() {
     return el;
   };
 
-  // 実質残高の帯。手元資金でカードの未払いと借入をどこまで払えるかを、1本の帯の長さで見せる
+  // 実質残高の比べ図。上に手元資金、下に負債(カードの未払いと借入)を同じ尺度の棒で並べ、長さの差で足りるかを見せる
   const owed = b.card_unpaid + b.loan_due;
-  const whole = Math.max(b.liquid_total ?? b.available_cash + owed, owed, 1);
-  const pct = (n) => `${Math.max(0, n) / whole * 100}%`;
   const liquid = b.liquid_total ?? b.available_cash + owed;
-  const band = h("div", { class: "band" },
-    h("div", { class: "meter", role: "img", "aria-label": `手元資金 ${num(liquid)}、カードの未払い ${num(b.card_unpaid)}、借入 ${num(b.loan_due)}` },
-      h("div", { style: `width:${pct(b.card_unpaid)}` }),
-      h("div", { style: `width:${pct(b.loan_due)}` }),
-      h("div", { class: "rest", style: `width:${pct(liquid - owed)}` })),
-    owed > liquid ? h("span", { class: "reach", style: `left:${pct(liquid)}` }) : null);
+  const whole = Math.max(liquid, owed, 1);
+  const pct = (n) => `${Math.max(0, n) / whole * 100}%`;
+  const band = h("div", { class: "compare", role: "img", "aria-label": `手元資金 ${num(liquid)}、負債 ${num(owed)}（カードの未払い ${num(b.card_unpaid)}、借入 ${num(b.loan_due)}）` },
+    h("span", { class: "compare-label" }, "手元"),
+    h("div", { class: "compare-track" }, h("div", { class: "seg-liquid", style: `width:${pct(liquid)}` })),
+    h("span", { class: "compare-label" }, "負債"),
+    h("div", { class: "compare-track" },
+      h("div", { class: "seg-card", style: `width:${pct(b.card_unpaid)}` }),
+      h("div", { class: "seg-loan", style: `width:${pct(b.loan_due)}` })));
 
   const groupSum = (as) => as.reduce((s, a) => s + a.balance, 0);
 
@@ -511,16 +512,16 @@ async function home() {
     // 実質残高は、いま手元にあるお金から、カードの未払い(分割の残りの回も)と借入をすべて引いた額。純資産はそこに別枠の資産を足す
     h("section", { class: "card net-card" },
       h("div", { class: "row" },
-        h("span", { class: "card-title legend" }, owed > liquid ? null : h("span", { class: "swatch", style: "background:var(--meter)" }), "実質残高"),
+        h("span", { class: "card-title" }, "実質残高"),
         h("span", { class: `title2${b.available_cash < 0 ? " neg" : ""}` }, num(b.available_cash))),
       band,
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0;background:none" },
         h("div", { class: "cell" }, h("span", { class: "legend grow" },
-          owed > liquid ? h("span", { class: "swatch reach-mark" }) : h("span", { class: "swatch", style: "background:none" }), "手元資金"),
+          h("span", { class: "swatch sw-liquid" }), "手元資金"),
           h("span", { class: "amount" }, num(liquid))),
-        foldLegend("--tint-2", "カードの未払い", -b.card_unpaid,
+        foldLegend("--owed", "カードの未払い", -b.card_unpaid,
           b.card_dues.map((x) => dueRow(x.name, x.date, x.date ? null : x.billing_month ? `${Number(x.billing_month.slice(5))}月請求` : "請求月未定", x.amount, `#/account/${x.account_id}`))),
-        b.loan_due ? foldLegend("stripe", "借入の残高", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null,
+        b.loan_due ? foldLegend("stripe owed", "借入の残高", -b.loan_due, b.loan_dues.map((x) => dueRow(x.name, x.date, null, x.amount))) : null,
         b.non_liquid_total ? legend("--tint-3", "別枠の資産", b.non_liquid_total) : null,
         h("div", { class: "cell" }, h("span", { class: "grow" }, "純資産"), h("b", { class: `amount${b.net_assets < 0 ? " neg" : ""}` }, num(b.net_assets))))),
     todos.length ? h("section", { class: "block" },
