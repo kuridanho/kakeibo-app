@@ -1527,7 +1527,7 @@ async function calendarView(params) {
     const el = document.getElementById(`day-${d}`);
     const top = document.querySelector(".cal-top");
     if (!el || !top) return;
-    el.closest("main")?.scrollBy({ top: el.getBoundingClientRect().top - top.getBoundingClientRect().bottom - 8, behavior });
+    el.closest(".cal-scroll")?.scrollBy({ top: el.getBoundingClientRect().top - el.closest(".cal-scroll").getBoundingClientRect().top - 4, behavior });
   };
 
   const head = h("div", { class: "cal" },
@@ -1589,7 +1589,7 @@ async function calendarView(params) {
   // 日を選んでいなければ、今月は当日(なければその前で一番近い日)の位置で開く
   const start = selected ?? (month === cal.today.slice(0, 7) ? days.find((d) => d <= cal.today) : null);
   // 戻るや描き直しで位置を戻したときは、当日へは送らない
-  if (start) setTimeout(() => { if (selected || !document.querySelector(".cal-top")?.closest("main")?.scrollTop) toDay(start, "instant"); }, 0);
+  if (start) setTimeout(() => { if (selected || !document.querySelector(".cal-scroll")?.scrollTop) toDay(start, "instant"); }, 0);
   const go = (n) => { location.hash = `#/list?view=cal&month=${addMonths(month, n)}`; };
   const card = h("div", { class: "cal-card" }, head, grid, totals);
   // これからの予定は固定した表に入れず、一覧の頭に出す
@@ -1597,7 +1597,8 @@ async function calendarView(params) {
     h("span", {}, [comingIn ? `入金 ${plus(comingIn)}` : "", comingOut ? `出金 ${minus(comingOut)}` : ""].filter(Boolean).join("　"))) : null;
   swipe(card, go);
   if (from && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.classList.add(from > 0 ? "in-right" : "in-left");
-  return [h("div", { class: "cal-top" }, listHead("cal", month), card), coming, listBody];
+  // カレンダーは動かさず、下の一覧だけをその中でスクロールさせる。スクロールバーも一覧の横にだけ出る
+  return [h("div", { class: "cal-top" }, listHead("cal", month), card), h("div", { class: "cal-scroll" }, coming, listBody)];
 }
 
 // ---- 集計 ----
