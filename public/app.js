@@ -1470,7 +1470,7 @@ function dayHead(d, right, id) {
     right ?? h("span"));
 }
 
-// 予定のうち手元のお金が減るもの。支出の繰り返しと、カードの引き落としと借入の返済。口座間の振替は数えない
+// 予定のうち手元資金が減るもの。支出の繰り返しと、カードの引き落としと借入の返済。口座間の振替は数えない
 const flowsOut = (p) => p.kind === "expense" || p.kind === "payment";
 /** 予定の入る額と出る額。差し引かずに別々に出す */
 const planIn = (ps) => ps.filter((p) => p.kind === "income").reduce((s, p) => s + p.amount, 0);
@@ -1749,7 +1749,7 @@ function reorderGroup(items, label) {
 
 /** 資産の見出しごとのまとまり。ホームと設定で同じ並びにする */
 const assetGroups = (b) => [
-  ["手元のお金", b.accounts.filter((a) => a.type === "asset" && a.liquid)],
+  ["手元資金", b.accounts.filter((a) => a.type === "asset" && a.liquid)],
   ["別枠の資産", b.accounts.filter((a) => a.type === "asset" && !a.liquid)],
   ["カード", b.accounts.filter((a) => a.kind === "card")],
   ["借入", b.accounts.filter((a) => a.kind === "loan")],
@@ -1843,7 +1843,7 @@ function toggles(kind, a) {
   const isAsset = !["card", "loan"].includes(kind);
   const defPay = ["cash", "bank", "emoney", "card"].includes(kind);
   return [
-    isAsset ? toggle("手元のお金に数える", h("input", { type: "checkbox", name: "liquid", checked: a ? !!a.liquid : ["cash", "bank", "emoney"].includes(kind) })) : null,
+    isAsset ? toggle("手元資金に数える", h("input", { type: "checkbox", name: "liquid", checked: a ? !!a.liquid : ["cash", "bank", "emoney"].includes(kind) })) : null,
     toggle("支払方法に出す", h("input", { type: "checkbox", name: "pay_method", checked: a ? !!a.pay_method : defPay })),
   ];
 }
