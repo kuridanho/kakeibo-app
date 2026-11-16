@@ -480,15 +480,9 @@ async function home() {
   // 実質残高の比べ図。上に手元資金、下に負債(カードの未払いと借入)を同じ尺度の棒で並べ、長さの差で足りるかを見せる
   const owed = b.card_unpaid + b.loan_due;
   const liquid = b.liquid_total ?? b.available_cash + owed;
-  // 実質残高の段々の棒。手元資金から、カードの未払い、借入の順に引いていき、最後の棒が実質残高になる。
-  // 横軸は金額で、0 の位置に縦の線を引く。0 より左に出た分が足りない額
+  // 実質残高は、手元資金からカードの未払いと借入を引いた額。図は付けず、引き算の行だけを並べる
   const net = b.available_cash;
-  const lo = Math.min(0, net, liquid - b.card_unpaid);
-  const hi = Math.max(0, liquid);
-  const x = (v) => (v - lo) / ((hi - lo) || 1) * 100;
-  const step = (cls, from, to) => h("div", { class: "wf-track" },
-    h("span", { class: "wf-zero", style: `left:${x(0)}%` }),
-    h("span", { class: `wf-bar ${cls}`, style: `left:${x(Math.min(from, to))}%;width:${Math.abs(x(to) - x(from))}%` }));
+  const step = () => null;
   const wfRow = (label, amount, bar, rows, amountClass = "") => {
     const head = [h("div", { class: "wf-line" }, h("span", { class: "grow" }, label), h("span", { class: `amount ${amountClass}` }, amount)), bar];
     return rows?.length
@@ -524,7 +518,7 @@ async function home() {
       b.non_liquid_total ? h("div", { class: "hero-note" }, h("span", {}, "別枠の資産"), h("span", {}, num(b.non_liquid_total))) : null),
     // 実質残高は、いま手元にあるお金から、カードの未払い(分割の残りの回も)と借入をすべて引いた額。純資産はそこに別枠の資産を足す
     h("section", { class: "card net-card" },
-      // 実質残高の額は段々の棒の最後の行に出すので、題は名前だけにする
+      // 手元資金、カードの未払い、借入、実質残高の順に引き算の形で並べる
       waterfall,
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0;background:none" },
         b.non_liquid_total ? legend("--tint-3", "別枠の資産", b.non_liquid_total) : null,
@@ -1449,8 +1443,7 @@ function listHead(current, month) {
 function listTabs(current, month) {
   return h("div", { class: "seg", role: "group", "aria-label": "表示" },
     h("button", { "aria-pressed": String(current === "cal"), onclick: () => { location.hash = `#/list?view=cal&month=${month}`; } }, "カレンダー"),
-    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?view=list&month=${month}`; } }, "リスト"),
-    h("button", { "aria-pressed": String(current === "sum"), onclick: () => { location.hash = `#/summary?month=${month}`; } }, "集計"));
+    h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?view=list&month=${month}`; } }, "リスト"));
 }
 
 function entryCell(e) {
@@ -1614,11 +1607,11 @@ async function summary(params) {
   const toggle = h("div", { class: "seg", role: "group", "aria-label": "期間" },
     h("button", { "aria-pressed": String(mode === "month"), onclick: () => { location.hash = `#/summary?month=${month}`; } }, "月"),
     h("button", { "aria-pressed": String(mode === "year"), onclick: () => { location.hash = `#/summary?view=year&month=${month}`; } }, "年"));
+  toggle.style.width = "128px";
   const from = swipe.from;
   swipe.from = 0;
   if (mode === "year") {
     const [nav, go, ...rest] = await yearView(params, from);
-    toggle.style.width = "128px";
     return [compactHead(nav, toggle), swipePane(from, go, rest)];
   }
 
@@ -1640,7 +1633,7 @@ async function summary(params) {
     route();
   };
   return [
-    compactHead(monthNav(month, go), listTabs("sum", month)),
+    compactHead(monthNav(month, go), toggle),
     swipePane(from, go,
     // 主役は月の支出。収入と収支は下に並べる
     h("section", { class: "hero-block" },
@@ -2534,7 +2527,7 @@ const routes = [
   [/^\/entry\/(\d+)\/merge$/, mergeView, "list", true],
   [/^\/duplicates$/, duplicatesView, "home"],
   [/^\/installment\/(\d+)$/, installmentView, "plan", true],
-  [/^\/summary$/, summary, "list"],
+  [/^\/summary$/, summary, "summary"],
   [/^\/accounts$/, accountsView, "home"],
   [/^\/accounts\/new$/, newAccountView, "home", true],
   [/^\/account\/(\d+)\/edit$/, accountEditView, "home", true],
@@ -2804,7 +2797,7 @@ async function route(opts) {
   if (tabChanged && document.body.dataset.tab) bounceTab();
   if (!isSheet) document.body.dataset.tab = found[2];
   // 記録ボタンは、その場で記録したくなる画面(ホームと記録)だけに出す
-  if (!isSheet) document.body.classList.toggle("can-add", path === "/" || path === "/list" || path === "/summary");
+  if (!isSheet) document.body.classList.toggle("can-add", path === "/" || path === "/list");
   if (isSheet && !wasSheet) pageTop = page.scrollTop;
   if (isSheet !== wasSheet) showSheet(isSheet);
   // 閉じる動きの間も、元の位置の画面が見えるようにする
