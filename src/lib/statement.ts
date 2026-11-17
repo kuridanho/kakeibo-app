@@ -131,6 +131,51 @@ async function learnedLinks(db: D1Database, merchants: string[]): Promise<Map<st
   return links;
 }
 
+interface StoredKey { date: string; merchant: string; amount: number; installment: string | null }
+
+/** rowKeys が作った鍵を読み戻す。`カード|日付|利用先|金額[|請求月#回]|順番` */
+export function parseStatementKey(key: string): StoredKey | null {
+  const parts = key.split("|");
+  if (parts.length < 5) return null;
+  const tagged = /^\d{4}-\d{2}#\d*$/.test(parts[parts.length - 2]);
+  const amountAt = parts.length - (tagged ? 3 : 2);
+  if (amountAt < 3) return null;
+  const amount = Number(parts[amountAt]);
+  if (!Number.isFinite(amount)) return null;
+  return { date: parts[1], merchant: parts.slice(2, amountAt).join("|"), amount, installment: tagged ? parts[parts.length - 2] : null };
+}
+
+const compact = (s: string) => merchantKey(s).replace(/\s/g, "");
+
+/** 鍵が一致しなかった行のうち、前に取り込んだ行と同じ利用とみなせるものの番号 */
+export function matchLooseKeys(storedKeys: string[], billingMonth: string, rows: StatementRow[], keys: string[], existing: Set<string>): Set<number> {
+  const pool = storedKeys.filter((k) => !existing.has(k)).map(parseStatementKey).filter((k): k is StoredKey => !!k);
+  const hits = new Set<number>();
+  rows.forEach((r, i) => {
+    if (existing.has(keys[i])) return;
+    const tag = (r.installmentCount ?? 1) > 1 ? `${billingMonth}#${r.installmentNumber ?? ""}` : null;
+    const m = compact(r.merchant);
+    const at = pool.findIndex((k) => k.date === r.usageDate && k.installment === tag
+      && (k.amount === r.usageAmount || k.amount === r.paymentAmount)
+      && !!m && !!compact(k.merchant) && (m.includes(compact(k.merchant)) || compact(k.merchant).includes(m)));
+    if (at < 0) return;
+    hits.add(i);
+    pool.splice(at, 1);
+  });
+  return hits;
+}
+
+async function looseDuplicates(db: D1Database, cardId: number, billingMonth: string, rows: StatementRow[],
+  keys: string[], existing: Set<string>): Promise<Set<number>> {
+  if (keys.every((k) => existing.has(k))) return new Set();
+  // 分割の取引は日付が利用日と違うことがあるので、日付では絞らない
+  const { results } = await db
+    .prepare("SELECT statement_key FROM entries WHERE statement_key LIKE ?")
+    .bind(`${cardId}|%`)
+    .all<{ statement_key: string }>();
+  return matchLooseKeys(results.map((r) => r.statement_key), billingMonth, rows, keys, existing);
+}
+
 export async function previewStatement(env: Env, cardId: number, billingMonth: string, text: string): Promise<Preview> {
   const db = env.DB;
   const card = await getAccount(db, cardId);
@@ -152,6 +197,10 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
     for (const r of results) existing.add(r.statement_key);
   }
 
+  // 確定前と確定後の明細で利用先の書き方(空白の数、末尾の省略)や分割の利用金額が違うので、
+  // 鍵が一致しない行も、前に取り込んだ同じ日の行と照らして重複とみなす
+  const loose = await looseDuplicates(db, cardId, billingMonth, parsed.rows, keys, existing);
+
   const provisional = await provisionalEntries(db, cardId);
   const learned = await learnedLinks(db, parsed.rows.map((r) => r.merchant));
   const taken = new Set<number>();
@@ -166,7 +215,7 @@ export async function previewStatement(env: Env, cardId: number, billingMonth: s
       ...r, index, key, status: "new", candidates: [], match_entry_id: null,
       category_id: null, category_source: null, charge_account_id: null, suggested_payee: null, unclear: false, installment_id: null,
     };
-    if (existing.has(key)) return { ...base, status: "duplicate" };
+    if (existing.has(key) || loose.has(index)) return { ...base, status: "duplicate" };
     if (isInstallment(r)) {
       const plan = findPlan(plans, r, plansTaken);
       if (plan) {

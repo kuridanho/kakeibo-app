@@ -164,6 +164,25 @@ describe("カード明細の取り込み", () => {
     expect(r.linked).toBe(1);
   });
 
+  it("確定前の明細を取り込んだあとの確定後の明細は、書き方が違っても重複にする", async () => {
+    const before = [
+      "2027/01/05,ミニストップ  仙台薬師堂駅前店,ご本人,1回払い,,'27/03,589,589,,,,,",
+      "2027/01/05,ミニストップ  仙台薬師堂駅前店,ご本人,1回払い,,'27/03,589,589,,,,,",
+      "2027/01/15,ＵＢＥＲ  ＊ＥＡＴＳ  ＨＥＬＰ．ＵＢＥＲ,ご本人,1回払い,,'27/03,1996,,,1996.00,JPY,1.0000,01/16",
+    ].join("\n");
+    await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2027-03", text: before });
+    const after = [
+      "本田　理空　様,4980-03**-****-****,三井住友カード",
+      "2027/01/05,ミニストップ　仙台薬師堂駅前店,589,１,１,589,",
+      "2027/01/05,ミニストップ　仙台薬師堂駅前店,589,１,１,589,",
+      "2027/01/15,UBER *EATS HELP.UBER.COM (AMSTERDAM ),1996,１,１,1996,1996.00　JPY　1.0000　01 16",
+      "2027/01/20,ローソン,203,１,１,203,",
+      ",,,,,3377,",
+    ].join("\n");
+    const p = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2027-03", text: after });
+    expect(p.rows.map((r: any) => r.status)).toEqual(["duplicate", "duplicate", "duplicate", "new"]);
+  });
+
   it("手入力した分割払いは利用額で照合し、その月の支払額に置き換える", async () => {
     const shop = await category("買い物");
     const manual = await api("POST", "/api/entries", {
