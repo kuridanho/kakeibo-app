@@ -26,7 +26,7 @@ export function plannedInput(p: Planned): SimpleInput {
 
 /** 中身が記録できる形かを先に確かめる */
 export async function validatePlanned(db: D1Database, p: Planned) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.date)) throw new LedgerError("日付を入れてください");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.date)) throw new LedgerError("日付を入力してください");
   await buildSimple(db, plannedInput(p));
 }
 

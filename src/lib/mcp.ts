@@ -101,13 +101,13 @@ async function handle(msg: Rpc, call: Call) {
       });
     case "tools/call": {
       const tool = TOOLS[msg.params?.name];
-      if (!tool) return fail(msg.id, -32602, `知らない道具です: ${msg.params?.name}`);
+      if (!tool) return fail(msg.id, -32602, `未対応のツールです：${msg.params?.name}`);
       const res = await call(tool.path(msg.params?.arguments ?? {}));
       const text = await res.text();
       return ok(msg.id, { content: [{ type: "text", text }], isError: !res.ok });
     }
     default:
-      return fail(msg.id, -32601, `知らないメソッドです: ${msg.method}`);
+      return fail(msg.id, -32601, `未対応のメソッドです：${msg.method}`);
   }
 }
 
@@ -117,7 +117,7 @@ export async function mcpResponse(req: Request, call: Call): Promise<Response> {
   try {
     body = await req.json();
   } catch {
-    return Response.json(fail(null, -32700, "JSONを読み取れません"), { status: 400 });
+    return Response.json(fail(null, -32700, "JSONの形式が正しくありません"), { status: 400 });
   }
   const msgs = (Array.isArray(body) ? body : [body]) as Rpc[];
   const out = [];

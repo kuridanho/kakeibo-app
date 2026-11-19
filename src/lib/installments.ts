@@ -126,16 +126,16 @@ export async function recordedPayments(db: D1Database, id: number) {
 /** 中身を確かめる。カードとカテゴリ、回数、金額 */
 export async function validateInstallment(db: D1Database, p: Installment): Promise<Account> {
   const card = await getAccount(db, p.card_id);
-  if (card.kind !== "card") throw new LedgerError("分割払いはカードで払ったときだけにできます");
+  if (card.kind !== "card") throw new LedgerError("分割払いはクレジットカード払いのみ設定できます");
   if (!card.closing_day || !card.payment_day) throw new LedgerError(`${card.name}の締め日と引き落とし日を設定してください`);
   const category = await resolveAccount(db, p.category_id);
-  if (category.type !== "expense") throw new LedgerError("支出のカテゴリを選んでください");
-  if (!Number.isInteger(p.count) || p.count < 2 || p.count > 99) throw new LedgerError("支払回数は2回から99回で入れてください");
+  if (category.type !== "expense") throw new LedgerError("支出のカテゴリを選択してください");
+  if (!Number.isInteger(p.count) || p.count < 2 || p.count > 99) throw new LedgerError("支払回数は2〜99回の範囲で入力してください");
   for (const [v, what] of [[p.principal, "利用額"], [p.first_payment, "1回目の支払額"], [p.payment, "毎月の支払額"]] as const) {
-    if (!Number.isInteger(v) || v <= 0) throw new LedgerError(`${what}を円単位で入れてください`);
+    if (!Number.isInteger(v) || v <= 0) throw new LedgerError(`${what}は円単位で入力してください`);
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.purchase_date)) throw new LedgerError("利用日を入れてください");
-  if (!/^\d{4}-\d{2}$/.test(p.first_month)) throw new LedgerError("1回目の請求月は YYYY-MM で入れてください");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.purchase_date)) throw new LedgerError("利用日を入力してください");
+  if (!/^\d{4}-\d{2}$/.test(p.first_month)) throw new LedgerError("1回目の請求月は「YYYY-MM」形式で入力してください");
   if (!Number.isInteger(p.start_number) || p.start_number < 1 || p.start_number > p.count) p.start_number = 1;
   return card;
 }
@@ -281,10 +281,10 @@ export async function createInstallment(db: D1Database, input: {
   count: number; fee?: number; user_id?: string | null;
 }, today = todayJST()) {
   const card = await getAccount(db, input.card_id);
-  if (card.kind !== "card") throw new LedgerError("分割払いはカードで払ったときだけにできます");
+  if (card.kind !== "card") throw new LedgerError("分割払いはクレジットカード払いのみ設定できます");
   if (!card.closing_day || !card.payment_day) throw new LedgerError(`${card.name}の締め日と引き落とし日を設定してください`);
   const fee = input.fee ?? 0;
-  if (!Number.isInteger(fee) || fee < 0) throw new LedgerError("手数料は円単位で入れてください");
+  if (!Number.isInteger(fee) || fee < 0) throw new LedgerError("手数料は円単位で入力してください");
   const first_month = billingMonth(input.date, card.closing_day, card.payment_day);
   const p = await insertInstallment(db, {
     card_id: card.id, category_id: input.category_id, payee: input.payee ?? "", memo: input.memo ?? "",
@@ -305,18 +305,18 @@ export async function convertToInstallment(db: D1Database, entryId: number, inpu
   count: number; fee?: number; first_month?: string;
 }, today = todayJST()) {
   const { entry, lines } = await getEntry(db, entryId);
-  if (entry.kind !== "expense") throw new LedgerError("分割にできるのは支出だけです");
-  if (parseInstallmentKey(entry.auto_key)) throw new LedgerError("この取引はもう分割払いです");
+  if (entry.kind !== "expense") throw new LedgerError("分割払いにできるのは支出のみです");
+  if (parseInstallmentKey(entry.auto_key)) throw new LedgerError("この取引はすでに分割払いに設定されています");
   const cardLines = lines.filter((l) => l.amount < 0);
-  if (cardLines.length !== 1) throw new LedgerError("支払方法が1つの支出だけ分割にできます");
+  if (cardLines.length !== 1) throw new LedgerError("支払方法が1つの支出のみ分割払いにできます");
   const card = await getAccount(db, cardLines[0].account_id);
-  if (card.kind !== "card") throw new LedgerError("カードで払った支出だけ分割にできます");
+  if (card.kind !== "card") throw new LedgerError("クレジットカード払いの支出のみ分割払いにできます");
   if (!card.closing_day || !card.payment_day) throw new LedgerError(`${card.name}の締め日と引き落とし日を設定してください`);
   const categories = lines.filter((l) => l.amount > 0);
-  if (categories.length !== 1) throw new LedgerError("カテゴリを1つにしてから分割にしてください");
-  if (entry.advance) throw new LedgerError("立て替えのある支出は分割にできません");
+  if (categories.length !== 1) throw new LedgerError("カテゴリを1つにしてから分割払いに設定してください");
+  if (entry.advance) throw new LedgerError("立て替えのある支出は分割払いにできません");
   const fee = input.fee ?? 0;
-  if (!Number.isInteger(fee) || fee < 0) throw new LedgerError("手数料は円単位で入れてください");
+  if (!Number.isInteger(fee) || fee < 0) throw new LedgerError("手数料は円単位で入力してください");
   const principal = -cardLines[0].amount;
   const p = await insertInstallment(db, {
     card_id: card.id, category_id: categories[0].account_id, payee: entry.payee, memo: entry.memo,
