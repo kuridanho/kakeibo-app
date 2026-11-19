@@ -43,7 +43,7 @@ describe("取り込みの店名", () => {
     await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2026-11", text });
     const e = (await api<any[]>("GET", `/api/entries?account_id=${card}`)).find((x) => x.date === "2026-10-03");
     expect(e.payee).toBe("Tully's");
-    expect(e.memo).toContain("明細の利用先: タリーズコーヒー仙台");
+    expect(e.memo).toContain("明細の利用先：タリーズコーヒー仙台");
   });
 
   it("直した店名を覚え、次からは行ごとに候補として出すだけで勝手に当てない", async () => {
@@ -54,7 +54,7 @@ describe("取り込みの店名", () => {
     let entries = await api<any[]>("GET", `/api/entries?account_id=${card}`);
     const renamed = entries.find((x) => x.date === "2026-10-05");
     expect(renamed.payee).toBe("STARBUCKS");
-    expect(renamed.memo).toContain("明細の利用先: STARBUCKS 仙台駅前店");
+    expect(renamed.memo).toContain("明細の利用先：STARBUCKS 仙台駅前店");
 
     const next = statement(
       "2026/11/05,ＳＴＡＲＢＵＣＫＳ　仙台駅前店,520,１,１,520,",

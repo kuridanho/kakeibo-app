@@ -74,14 +74,14 @@ async function exportTokenOk(env: Env, header: string | undefined): Promise<bool
 app.onError((err, c) => {
   if (err instanceof LedgerError) return c.json({ error: err.message }, err.status as 400);
   if (err instanceof StatementParseError) return c.json({ error: err.message }, 400);
-  if (err instanceof SyntaxError) return c.json({ error: "JSONを読み取れません" }, 400);
+  if (err instanceof SyntaxError) return c.json({ error: "送信データの形式が正しくありません" }, 400);
   console.error(err);
-  return c.json({ error: "サーバーでエラーが起きました" }, 500);
+  return c.json({ error: "サーバーでエラーが発生しました" }, 500);
 });
 
 const int = (v: unknown, what: string): number => {
   const n = Number(v);
-  if (!Number.isInteger(n)) throw new LedgerError(`${what}は整数で入れてください`);
+  if (!Number.isInteger(n)) throw new LedgerError(`${what}は整数で入力してください`);
   return n;
 };
 
@@ -96,14 +96,14 @@ const ACCOUNT_KINDS: Record<string, string[]> = {
 async function checkPaymentAccount(db: D1Database, id: unknown) {
   if (id === undefined || id === null) return;
   const a = await getAccount(db, int(id, "引き落とし口座"));
-  if (a.type !== "asset") throw new LedgerError("引き落とし口座には銀行口座などを選んでください");
+  if (a.type !== "asset") throw new LedgerError("引き落とし口座には銀行口座などを選択してください");
 }
 
 const ACCOUNT_NUMBER_FIELDS: Record<string, { label: string; min: number; max: number }> = {
   closing_day: { label: "締め日", min: 1, max: 31 },
   payment_day: { label: "引き落とし日", min: 1, max: 31 },
   payment_account_id: { label: "引き落とし口座", min: 1, max: Number.MAX_SAFE_INTEGER },
-  prepay_account_id: { label: "先に引く口座", min: 1, max: Number.MAX_SAFE_INTEGER },
+  prepay_account_id: { label: "優先して引き落とす残高", min: 1, max: Number.MAX_SAFE_INTEGER },
   payment_amount: { label: "毎月の返済額", min: 0, max: Number.MAX_SAFE_INTEGER },
   check_interval_days: { label: "残高照合の間隔", min: 1, max: 3650 },
   sort_order: { label: "並び順", min: 0, max: Number.MAX_SAFE_INTEGER },
@@ -113,7 +113,7 @@ const ACCOUNT_FLAG_FIELDS = ["liquid", "pay_method", "statement_import", "archiv
 /** 口座の数値とフラグの範囲を確かめ、数値に揃える。画面から来ない値もそのまま保存しない */
 function checkAccountFields(body: Record<string, unknown>) {
   if ("name" in body && (typeof body.name !== "string" || !body.name.trim())) {
-    throw new LedgerError("名前を入れてください");
+    throw new LedgerError("名前を入力してください");
   }
   for (const [k, f] of Object.entries(ACCOUNT_NUMBER_FIELDS)) {
     if (!(k in body) || body[k] === null) continue;
@@ -127,7 +127,7 @@ function checkAccountFields(body: Record<string, unknown>) {
     body.annual_rate = r;
   }
   if ("first_payment_date" in body && body.first_payment_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.first_payment_date))) {
-    throw new LedgerError("最初の返済日が正しくありません");
+    throw new LedgerError("初回返済日が正しくありません");
   }
   if ("due_date" in body && body.due_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.due_date))) {
     throw new LedgerError("返済期限が正しくありません");
@@ -135,7 +135,7 @@ function checkAccountFields(body: Record<string, unknown>) {
   for (const k of ACCOUNT_FLAG_FIELDS) {
     if (!(k in body) || body[k] === null) continue;
     const n = Number(body[k]);
-    if (n !== 0 && n !== 1) throw new LedgerError(`${k} は 0 か 1 で入れてください`);
+    if (n !== 0 && n !== 1) throw new LedgerError("設定の値が正しくありません");
     body[k] = n;
   }
 }
@@ -229,7 +229,7 @@ app.patch("/api/accounts/:id", async (c) => {
 /** 並び順を、渡したidの順に付け直す */
 app.post("/api/accounts/order", async (c) => {
   const { ids } = await c.req.json<{ ids: number[] }>();
-  if (!Array.isArray(ids) || ids.length === 0) throw new LedgerError("並べるものを渡してください");
+  if (!Array.isArray(ids) || ids.length === 0) throw new LedgerError("並び替える項目を指定してください");
   const db = c.env.DB;
   await db.batch(ids.map((id, i) => db.prepare("UPDATE accounts SET sort_order = ? WHERE id = ?").bind((i + 1) * 10, int(id, "id"))));
   return c.json({ ok: true });
@@ -261,7 +261,7 @@ app.post("/api/categories/:id/merge", async (c) => {
     db.prepare("UPDATE accounts SET archived = 1, merged_into_id = ? WHERE id = ?").bind(to.id, from.id),
   ]);
   // 予算の表ができたら、ここで予算も統合先に移す
-  await logChange(db, "merge_category", delta, `カテゴリの統合 ${from.name} を ${to.name} へ`);
+  await logChange(db, "merge_category", delta, `カテゴリ統合：「${from.name}」→「${to.name}」`);
   return c.json({ merged: from.id, into: to.id, moved_months: results.length });
 });
 
@@ -276,7 +276,7 @@ app.get("/api/rules", async (c) => {
 app.post("/api/rules", async (c) => {
   const { pattern, match, account_id } = await c.req.json<{ pattern: string; match?: string; account_id: number }>();
   const key = merchantKey(pattern ?? "");
-  if (!key) throw new LedgerError("利用先の文字を入れてください");
+  if (!key) throw new LedgerError("利用先名を入力してください");
   await resolveAccount(c.env.DB, int(account_id, "カテゴリ"));
   await c.env.DB
     .prepare(`INSERT INTO category_rules (pattern, match, account_id, origin, user_id) VALUES (?, ?, ?, 'user', ?)
@@ -384,7 +384,7 @@ app.get("/api/entries", async (c) => {
   if (q.cursor) {
     const [date, id] = String(q.cursor).split("|");
     if (!date || !id || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isInteger(Number(id))) {
-      throw new LedgerError("cursor が正しくありません");
+      throw new LedgerError("読み込み位置の指定が正しくありません");
     }
     where.push("(e.date < ? OR (e.date = ? AND e.id < ?))");
     args.push(date, date, Number(id));
@@ -392,7 +392,7 @@ app.get("/api/entries", async (c) => {
   let limit = paged ? 50 : 500;
   if (q.limit !== undefined) {
     const n = int(q.limit, "limit");
-    if (n < 1) throw new LedgerError("limit は1以上で入れてください");
+    if (n < 1) throw new LedgerError("取得件数は1以上で指定してください");
     limit = Math.min(n, paged ? 200 : 1000);
   }
 
@@ -458,7 +458,7 @@ app.post("/api/entries", async (c) => {
   if (input.planned_id !== undefined) {
     planned = await env.DB.prepare("SELECT * FROM planned WHERE id = ?").bind(int(input.planned_id, "予定")).first<Planned>();
     if (!planned) throw new LedgerError("予定が見つかりません", 404);
-    if (planned.entry_id) throw new LedgerError("この予定はもう記録してあります");
+    if (planned.entry_id) throw new LedgerError("この予定はすでに記録済みです");
   }
   if (input.installment_count !== undefined && Number(input.installment_count) > 1) {
     if (input.kind !== "expense" || input.items?.length || input.advance || planned) {
@@ -539,8 +539,8 @@ app.put("/api/entries/:id", async (c) => {
 app.post("/api/entries/confirm-categories", async (c) => {
   const db = c.env.DB;
   const { items } = await c.req.json<{ items?: { id: number; category_id: number }[] }>();
-  if (!Array.isArray(items) || items.length === 0) throw new LedgerError("確かめる取引がありません");
-  if (items.length > 500) throw new LedgerError("一度に確かめられるのは500件までです");
+  if (!Array.isArray(items) || items.length === 0) throw new LedgerError("確認対象の取引がありません");
+  if (items.length > 500) throw new LedgerError("一度に確定できるのは500件までです");
   const categories = new Map<number, Account>();
   let changed = 0;
   let confirmed = 0;
@@ -551,7 +551,7 @@ app.post("/api/entries/confirm-categories", async (c) => {
     const cid = int(item.category_id, "カテゴリ");
     if (!categories.has(cid)) {
       const a = await resolveAccount(db, cid);
-      if (a.type !== "expense") throw new LedgerError("支出のカテゴリを選んでください");
+      if (a.type !== "expense") throw new LedgerError("支出のカテゴリを選択してください");
       categories.set(cid, a);
     }
     const category = categories.get(cid)!;
@@ -599,7 +599,7 @@ app.delete("/api/entries/:id", async (c) => {
   const id = int(c.req.param("id"), "id");
   // 分割払いの回だけを消すと、毎日の記録で作り直してしまう。分割払いの画面でやめてもらう
   const { entry } = await getEntry(c.env.DB, id);
-  if (parseInstallmentKey(entry.auto_key)) throw new LedgerError("分割払いの回は消せません。分割払いの画面から分割をやめてください");
+  if (parseInstallmentKey(entry.auto_key)) throw new LedgerError("分割払いの各回は個別に削除できません。分割払いの画面から分割を解除してください");
   // 予定から記録した取引を消したときは、予定もいっしょに消す
   await c.env.DB.prepare("DELETE FROM planned WHERE entry_id = ?").bind(id).run();
   await deleteEntry(c.env.DB, id);
@@ -652,7 +652,7 @@ app.put("/api/installments/:id", async (c) => {
   if (body.first_month !== undefined) next.first_month = String(body.first_month);
   if (body.fee !== undefined || ((body.count !== undefined || body.principal !== undefined) && body.payment === undefined)) {
     const fee = body.fee !== undefined ? int(body.fee, "手数料") : p.first_payment + p.payment * (p.count - 1) - p.principal;
-    if (fee < 0) throw new LedgerError("手数料は円単位で入れてください");
+    if (fee < 0) throw new LedgerError("手数料は円単位で入力してください");
     Object.assign(next, defaultPayments(next.principal, next.count, fee));
   }
   next.category_id = (await resolveAccount(db, next.category_id)).id;
@@ -714,7 +714,7 @@ app.put("/api/recurring/:id", async (c) => {
   const db = c.env.DB;
   const id = int(c.req.param("id"), "id");
   const old = await db.prepare("SELECT * FROM recurring WHERE id = ?").bind(id).first<Recurring>();
-  if (!old) throw new LedgerError("繰り返しが見つかりません", 404);
+  if (!old) throw new LedgerError("繰り返し取引が見つかりません", 404);
   const r = recurringFrom(await c.req.json<Partial<Recurring>>(), old);
   await validate(db, r);
   const row = await db
@@ -738,7 +738,7 @@ const PLANNED_COLS = ["kind", "amount", "date", "from_account_id", "to_account_i
 function plannedFrom(body: Partial<Planned>, base?: Planned): Planned {
   const p = { ...(base ?? { payee: "", memo: "" }), ...body } as Planned;
   p.amount = int(p.amount, "金額");
-  if (p.amount <= 0) throw new LedgerError("金額を入れてください");
+  if (p.amount <= 0) throw new LedgerError("金額を入力してください");
   return p;
 }
 
@@ -767,7 +767,7 @@ app.put("/api/planned/:id", async (c) => {
   const id = int(c.req.param("id"), "id");
   const old = await db.prepare("SELECT * FROM planned WHERE id = ?").bind(id).first<Planned>();
   if (!old) throw new LedgerError("予定が見つかりません", 404);
-  if (old.entry_id) throw new LedgerError("記録した予定は、記録した取引のほうを直してください");
+  if (old.entry_id) throw new LedgerError("記録済みの予定は、該当する取引の画面から編集してください");
   const p = plannedFrom(await c.req.json<Partial<Planned>>(), old);
   await validatePlanned(db, p);
   const row = await db
@@ -801,12 +801,12 @@ app.get("/api/advances", async (c) => {
 app.post("/api/entries/:id/recoveries", async (c) => {
   const db = c.env.DB;
   const { entry, lines } = await getEntry(db, int(c.req.param("id"), "id"));
-  if (!entry.advance) throw new LedgerError("立て替えありの取引ではありません");
+  if (!entry.advance) throw new LedgerError("立て替え払いの取引ではありません");
   const body = await c.req.json<{ date?: string; account_id: number; amount: number; counterparty?: string }>();
   const amount = int(body.amount, "金額");
-  if (amount <= 0) throw new LedgerError("受け取った金額を入れてください");
-  const to = await resolveAccount(db, int(body.account_id, "受け取った口座"));
-  if (to.type !== "asset") throw new LedgerError("受け取り先を選んでください");
+  if (amount <= 0) throw new LedgerError("回収金額を入力してください");
+  const to = await resolveAccount(db, int(body.account_id, "入金先"));
+  if (to.type !== "asset") throw new LedgerError("入金先を選択してください");
   const ids = lines.map((l) => l.account_id);
   const { results: cats } = await db
     .prepare(`SELECT id FROM accounts WHERE type = 'expense' AND id IN (${ids.map(() => "?").join(",")})`)
@@ -821,7 +821,7 @@ app.post("/api/entries/:id/recoveries", async (c) => {
       JOIN accounts a ON a.id = l.account_id WHERE r.related_entry_id = ? AND r.kind = 'recovery' AND a.type = 'asset'`)
     .bind(entry.id).first<{ s: number }>())?.s ?? 0;
   if (amount > total - recovered) {
-    throw new LedgerError(`回収額が残り ${(total - recovered).toLocaleString("ja-JP")}円を超えています`);
+    throw new LedgerError(`回収金額が未回収額（${(total - recovered).toLocaleString("ja-JP")}円）を超えています`);
   }
   const shares = [...byCategory].map(([account_id, v]) => {
     const exact = (amount * v) / total;
@@ -836,7 +836,7 @@ app.post("/api/entries/:id/recoveries", async (c) => {
     date: body.date ?? todayJST(),
     report_date: entry.report_date,
     kind: "recovery",
-    payee: `${entry.payee} の回収`,
+    payee: entry.payee ? `${entry.payee}の回収` : "立て替えの回収",
     counterparty: body.counterparty ?? null,
     related_entry_id: entry.id,
     user_id: c.get("user"),
@@ -876,7 +876,7 @@ app.post("/api/statements/commit", async (c) => {
 // 明細の行に結びつけられる取引。明細とまだ結びついていない支出を、利用日に近い順に返す。支払方法は問わない
 app.get("/api/statements/linkable", async (c) => {
   const date = c.req.query("date");
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "日付を YYYY-MM-DD で入れてください" }, 400);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "日付は「YYYY-MM-DD」形式で入力してください" }, 400);
   const q = (c.req.query("q") ?? "").trim();
   const like = `%${q}%`;
   const { results } = await c.env.DB
@@ -911,7 +911,7 @@ app.post("/api/balance-checks", async (c) => {
   const db = c.env.DB;
   const body = await c.req.json<{ account_id: number; date?: string; actual: number; adjust?: boolean }>();
   const a = await getAccount(db, int(body.account_id, "口座"));
-  if (a.type !== "asset" && a.type !== "liability") throw new LedgerError("残高のあるものを選んでください");
+  if (a.type !== "asset" && a.type !== "liability") throw new LedgerError("残高を管理する口座を選択してください");
   const date = body.date ?? todayJST();
   const actual = int(body.actual, "残高");
   const book = await balanceOf(db, a, date);
@@ -924,7 +924,7 @@ app.post("/api/balance-checks", async (c) => {
       : await db.prepare("SELECT * FROM accounts WHERE kind = 'valuation'").first<Account>();
     const signed = a.type === "asset" ? diff : -diff;
     adjustmentId = await createEntry(db, {
-      date, kind: "adjustment", payee: `${a.name} 残高照合の差額`, source: "balance_check", user_id: c.get("user"),
+      date, kind: "adjustment", payee: `${a.name} 残高調整`, source: "balance_check", user_id: c.get("user"),
     }, [{ account_id: a.id, amount: signed }, { account_id: (await resolveAccount(db, counter!.id)).id, amount: -signed }]);
   }
   const row = await db
@@ -949,7 +949,7 @@ app.get("/api/balance-checks", async (c) => {
 
 app.get("/api/calendar", async (c) => {
   const month = c.req.query("month") ?? monthOf(todayJST());
-  if (!/^\d{4}-\d{2}$/.test(month)) throw new LedgerError("月は YYYY-MM で入れてください");
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new LedgerError("月は「YYYY-MM」形式で入力してください");
   return c.json(await calendarMonth(c.env.DB, month));
 });
 
@@ -985,7 +985,7 @@ app.get("/api/summary/year", async (c) => {
 /** 月末のまとめを作る(作り直す) */
 app.post("/api/reports/:month", async (c) => {
   const month = c.req.param("month");
-  if (!/^\d{4}-\d{2}$/.test(month)) throw new LedgerError("月は YYYY-MM で入れてください");
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new LedgerError("月は「YYYY-MM」形式で入力してください");
   return c.json(await closeMonth(c.env.DB, month));
 });
 
@@ -1003,7 +1003,7 @@ app.put("/api/settings", async (c) => {
   const stmts = [];
   for (const [k, v] of Object.entries(body)) {
     const value = String(v);
-    if (!allowed[k]?.(value)) throw new LedgerError(`設定 ${k} の値が正しくありません`);
+    if (!allowed[k]?.(value)) throw new LedgerError("設定の値が正しくありません");
     stmts.push(c.env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(k, value));
   }
   if (stmts.length) await c.env.DB.batch(stmts);
@@ -1016,8 +1016,8 @@ app.put("/api/settings", async (c) => {
 app.post("/api/receipts/read", async (c) => {
   const form = await c.req.formData();
   const file = form.get("image");
-  if (!(file instanceof File)) throw new LedgerError("レシートの写真を付けてください");
-  if (file.size > 8_000_000) throw new LedgerError("写真が大きすぎます");
+  if (!(file instanceof File)) throw new LedgerError("レシートの画像を選択してください");
+  if (file.size > 8_000_000) throw new LedgerError("画像のサイズが大きすぎます（8MB以下にしてください）");
   const receipt = await readReceipt(c.env, new Uint8Array(await file.arrayBuffer()), file.type || "image/jpeg");
   const items = receipt.items.filter((i) => i.name && Number.isInteger(i.amount));
   const cats = await classifyItems(c.env, items.map((i) => i.name));
@@ -1028,8 +1028,8 @@ app.post("/api/dev/receipt-eval", async (c) => {
   if (c.env.ENABLE_RECEIPT_EVAL !== "1") return c.json({ error: "比較検証は無効です" }, 404);
   const form = await c.req.formData();
   const file = form.get("image");
-  if (!(file instanceof File)) throw new LedgerError("image に画像を付けてください");
-  if (file.size > 8_000_000) throw new LedgerError("写真が大きすぎます");
+  if (!(file instanceof File)) throw new LedgerError("画像ファイルを選択してください");
+  if (file.size > 8_000_000) throw new LedgerError("画像のサイズが大きすぎます（8MB以下にしてください）");
   const models = String(form.get("models") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 4);
   return c.json(await evaluateReceipt(c.env, new Uint8Array(await file.arrayBuffer()), file.type || "image/jpeg", models));
 });
@@ -1049,7 +1049,7 @@ const EXPORT_TABLES = [
 app.get("/api/export", async (c) => {
   const want = c.req.query("tables")?.split(",").map((s) => s.trim()).filter(Boolean);
   const unknown = want?.filter((t) => !(EXPORT_TABLES as readonly string[]).includes(t));
-  if (unknown?.length) throw new LedgerError(`知らない表です: ${unknown.join(", ")}`);
+  if (unknown?.length) throw new LedgerError(`指定されたテーブル名が見つかりません：${unknown.join(", ")}`);
   const names = want?.length ? want : [...EXPORT_TABLES];
   const rows = await c.env.DB.batch(names.map((t) => c.env.DB.prepare(`SELECT * FROM ${t} ORDER BY 1`)));
   const tables = Object.fromEntries(names.map((t, i) => [t, rows[i].results]));

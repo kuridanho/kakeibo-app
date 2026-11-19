@@ -5,7 +5,7 @@ import type { Account, Env } from "../types";
 import { addDays, addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import { beforeFirstPayment } from "./interest";
 import { pendingPayments } from "./installments";
-import { balanceOf, buildSimple, resolveAccount } from "./ledger";
+import { balanceOf, buildSimple, kindLabel, resolveAccount } from "./ledger";
 import { cardDueAhead, getSetting, splitPayment } from "./reports";
 import { type Planned, plannedInput } from "./planned";
 import { occurrence, toInput, type Recurring } from "./recurring";
@@ -58,7 +58,7 @@ async function recordedItems(db: D1Database, from: string, to: string): Promise<
     .filter((r) => r.delta !== 0)
     .map((r) => ({
       date: r.date,
-      label: r.payee || r.kind,
+      label: r.payee || kindLabel(r.kind),
       amount: Math.abs(r.delta),
       cash_delta: r.delta,
       kind: r.kind === "card_payment" ? "payment" : r.kind === "transfer" ? "transfer" : r.delta > 0 ? "income" : "expense",
@@ -188,7 +188,7 @@ export async function advanceItems(db: D1Database, month: string): Promise<Budge
       FROM entries e WHERE e.advance = 1 AND e.settled = 0 AND e.date <= ? ORDER BY e.date`)
     .bind(`${month}-31`).all<{ payee: string | null; remaining: number | null }>();
   return results.filter((r) => (r.remaining ?? 0) > 0).map((r) => ({
-    date: `${month}-01`, label: `${r.payee || "立て替え"} の回収`, amount: r.remaining!, cash_delta: r.remaining!, kind: "income",
+    date: `${month}-01`, label: `${r.payee || "立て替え"}の回収`, amount: r.remaining!, cash_delta: r.remaining!, kind: "income",
   }));
 }
 

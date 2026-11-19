@@ -38,8 +38,8 @@ export function toInput(r: Recurring, date: string): SimpleInput {
 
 /** 中身が記録できる形かを先に確かめる */
 export async function validate(db: D1Database, r: Recurring) {
-  if (!Number.isInteger(r.day) || r.day < 1 || r.day > 31) throw new LedgerError("日は1から31で入れてください");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(r.first_date)) throw new LedgerError("始める日を入れてください");
+  if (!Number.isInteger(r.day) || r.day < 1 || r.day > 31) throw new LedgerError("日付は1〜31の範囲で入力してください");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(r.first_date)) throw new LedgerError("開始日を入力してください");
   await buildSimple(db, toInput(r, r.first_date));
 }
 

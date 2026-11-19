@@ -139,7 +139,7 @@ export function parseSMBC(text: string): ParsedStatement {
       rows.push(wideRow(date, cols));
       billingMonth ??= wideBillingMonth(cols);
     } else if (date) {
-      if (cardName === null) throw new StatementParseError("カード名の行が見つかりませんでした");
+      if (cardName === null) throw new StatementParseError("明細CSVからカード名を読み取れませんでした");
       const usage = toInt(cols[2]) ?? 0;
       rows.push({
         usageDate: date,
@@ -163,6 +163,6 @@ export function parseSMBC(text: string): ParsedStatement {
       cardNumber = cols[1];
     }
   }
-  if (cardName === null && billingMonth === null) throw new StatementParseError("明細の行が見つかりませんでした");
+  if (cardName === null && billingMonth === null) throw new StatementParseError("取り込める明細データが見つかりませんでした");
   return { cardName: cardName ?? "", billingMonth, rows, declaredTotal, paymentTotal: rows.reduce((s, r) => s + r.paymentAmount, 0) };
 }

@@ -110,7 +110,7 @@ async function runGemini(env: Env, model: string, image: Uint8Array, mime: strin
 
 export async function runModel(env: Env, model: string, image: Uint8Array, mime: string): Promise<{ text: string; usage: unknown }> {
   if (model.startsWith("gemini-")) return runGemini(env, model, image, mime);
-  if (!env.AI) throw new LedgerError("AIが使えないため、レシートを読めません", 503);
+  if (!env.AI) throw new LedgerError("AIが利用できないため、レシートを読み取れません", 503);
   const ai = env.AI;
   let input: Record<string, unknown>;
   if (model.includes("llama-3.2-11b-vision")) {
@@ -190,7 +190,7 @@ export async function readReceipt(env: Env, image: Uint8Array, mime: string): Pr
     const fallback = model.startsWith("gemini-") ? FALLBACK_RECEIPT_MODEL : model;
     p = extractJSON((await runModel(env, fallback, image, mime)).text) as Record<string, unknown> | null;
   }
-  if (!p) throw new LedgerError("レシートを読み取れませんでした。明るい場所で、レシート全体が入るように撮ってください");
+  if (!p) throw new LedgerError("レシートを読み取れませんでした。明るい場所で、レシート全体が写るように撮影してください");
   const date = typeof p.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : null;
   const items = Array.isArray(p.items) ? p.items.map((i: Record<string, unknown>) => ({
     name: String(i?.name ?? "").trim(),

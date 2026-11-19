@@ -179,11 +179,11 @@ async function looseDuplicates(db: D1Database, cardId: number, billingMonth: str
 export async function previewStatement(env: Env, cardId: number, billingMonth: string, text: string): Promise<Preview> {
   const db = env.DB;
   const card = await getAccount(db, cardId);
-  if (card.kind !== "card") throw new LedgerError("取り込み先にはカードを選んでください");
-  if (!/^\d{4}-\d{2}$/.test(billingMonth)) throw new LedgerError("請求月は YYYY-MM で入れてください");
+  if (card.kind !== "card") throw new LedgerError("取り込み先にはクレジットカードを選択してください");
+  if (!/^\d{4}-\d{2}$/.test(billingMonth)) throw new LedgerError("請求月は「YYYY-MM」形式で入力してください");
   const parsed = parseSMBC(text);
   if (parsed.billingMonth && parsed.billingMonth !== billingMonth) {
-    throw new LedgerError(`この明細の請求月は ${Number(parsed.billingMonth.slice(5))}月です。請求月を ${parsed.billingMonth} にしてください`);
+    throw new LedgerError(`この明細は${Number(parsed.billingMonth.slice(0, 4))}年${Number(parsed.billingMonth.slice(5))}月請求分です。請求月を「${parsed.billingMonth}」に変更してください`);
   }
   const keys = rowKeys(cardId, billingMonth, parsed.rows);
 
@@ -340,30 +340,30 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
       continue;
     }
     if (typeof link === "number") {
-      if (used.has(link)) throw new LedgerError("同じ仮の取引を2つの行に結びつけています");
+      if (used.has(link)) throw new LedgerError("同じ仮の取引が複数の明細行に選択されています");
       used.add(link);
       const old = await db.prepare("SELECT id, kind, statement_key, auto_key FROM entries WHERE id = ?").bind(link)
         .first<{ id: number; kind: string; statement_key: string | null; auto_key: string | null }>();
-      if (!old) throw new LedgerError(`取引 ${link} が見つかりません`);
-      if (old.statement_key) throw new LedgerError(`取引 ${link} はもう明細の行と結びついています`);
+      if (!old) throw new LedgerError("選択した取引が見つかりません");
+      if (old.statement_key) throw new LedgerError("選択した取引はすでに明細と照合済みです");
       const { results: oldLines } = await db
         .prepare("SELECT account_id, amount FROM lines WHERE entry_id = ?").bind(link).all<Line>();
-      if (parseInstallmentKey(old.auto_key)) throw new LedgerError(`取引 ${link} は分割払いの回なので、ほかの行と結びつけられません`);
+      if (parseInstallmentKey(old.auto_key)) throw new LedgerError("分割払いの取引は他の明細行と照合できません");
       if (oldLines.some((l) => l.account_id === cardId)) {
         // カテゴリが複数に分かれていて金額が違う取引は、自動では合わせられない。分割の行はカテゴリが1つの取引だけ
         const others = oldLines.filter((l) => l.account_id !== cardId);
         const cardAmount = -oldLines.filter((l) => l.account_id === cardId).reduce((s, l) => s + l.amount, 0);
         if (others.length !== 1 && (cardAmount !== row.paymentAmount || isInstallment(row))) {
-          throw new LedgerError(`取引 ${link} はカテゴリが複数に分かれていて、金額が明細と違うため自動で合わせられません`);
+          throw new LedgerError("カテゴリが複数に分かれた取引は、金額が明細と異なるため自動で照合できません");
         }
       } else {
         // ほかの支払方法で入れた支出。支払方法をこのカードに付け替える
-        if (old.kind !== "expense") throw new LedgerError(`取引 ${link} は支出ではないため、明細の行と結びつけられません`);
-        if (row.paymentAmount <= 0) throw new LedgerError(`${row.merchant} は返品の行なので、このカードの取引にだけ結びつけられます`);
+        if (old.kind !== "expense") throw new LedgerError("選択した取引は支出ではないため、明細と照合できません");
+        if (row.paymentAmount <= 0) throw new LedgerError(`「${row.merchant}」は返品の明細のため、このカードの取引のみと照合できます`);
         const debit = oldLines.filter((l) => l.amount > 0);
         const debitTotal = debit.reduce((s, l) => s + l.amount, 0);
         if (debit.length !== 1 && (debitTotal !== row.paymentAmount || isInstallment(row))) {
-          throw new LedgerError(`取引 ${link} はカテゴリが複数に分かれていて、金額が明細と違うため自動で合わせられません`);
+          throw new LedgerError("カテゴリが複数に分かれた取引は、金額が明細と異なるため自動で照合できません");
         }
       }
       plans.push({ row, choice, link, category_id: null });
@@ -372,16 +372,16 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
     // 新しい取引。カテゴリか、チャージ先の口座を先に確かめる
     if (row.charge_account_id && !choice.category_id && !isInstallment(row)) {
       const target = await getAccount(db, row.charge_account_id);
-      if (target.type !== "asset") throw new LedgerError(`${target.name} にはチャージできません`);
+      if (target.type !== "asset") throw new LedgerError(`「${target.name}」にはチャージできません`);
       plans.push({ row, choice, link: "new", category_id: null });
       continue;
     }
     const categoryId = choice.category_id ?? row.category_id;
-    if (!categoryId) throw new LedgerError(`${row.merchant} のカテゴリが決まっていません`);
+    if (!categoryId) throw new LedgerError(`「${row.merchant}」のカテゴリが未設定です`);
     const category = await resolveAccount(db, categoryId);
     // 収入のカテゴリにできるのは、カードに戻るマイナスの行(キャッシュバックなど)だけ
     if (category.type !== "expense" && !(category.type === "income" && row.paymentAmount < 0 && !isInstallment(row))) {
-      throw new LedgerError(row.paymentAmount < 0 ? "支出か収入のカテゴリを選んでください" : "支出には支出のカテゴリを選んでください");
+      throw new LedgerError(row.paymentAmount < 0 ? "支出または収入のカテゴリを選択してください" : "支出には支出のカテゴリを選択してください");
     }
     plans.push({ row, choice, link: "new", category_id: category.id });
   }
@@ -445,7 +445,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
   const preview = await previewStatement(env, cardId, billingMonth, text);
   const unresolved = preview.rows.filter((r) => r.status === "choose" && !choices[r.index]?.link);
   if (unresolved.length > 0) {
-    throw new LedgerError(`候補を選んでいない行が${unresolved.length}件あります`);
+    throw new LedgerError(`照合先が未選択の明細が${unresolved.length}件あります`);
   }
   // 先に全部確かめてから書き込む
   const plans = await planCommit(db, preview, cardId, choices);
@@ -523,12 +523,12 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
         continue;
       }
       const memo = [row.subCardName, row.installmentCount && row.installmentCount > 1
-        ? `分割 ${row.installmentNumber}/${row.installmentCount}回 (利用額 ${row.usageAmount.toLocaleString("ja-JP")}円)` : "", row.note]
+        ? `分割 ${row.installmentNumber}/${row.installmentCount}回（利用額：${row.usageAmount.toLocaleString("ja-JP")}円）` : "", row.note]
         .filter(Boolean).join(" ");
       // 明細の利用先名で、入力した店名や直した店名を上書きしない
       const edited = choice.payee?.trim().slice(0, 100) || null;
       const withStatementName = (payee: string) =>
-        payee !== row.merchant ? `明細の利用先: ${row.merchant}` : "";
+        payee !== row.merchant ? `明細の利用先：${row.merchant}` : "";
       const common = {
         date: row.usageDate,
         payee: edited ?? row.merchant,
@@ -559,7 +559,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
             : [...debit.map((l) => ({ account_id: l.account_id, amount: l.amount })), { account_id: cardId, amount: -scale }];
           const credit = snapshot.lines.filter((l) => l.amount < 0).map((l) => l.account_id);
           const names = await Promise.all(credit.map(async (id) => (await getAccount(db, id)).name));
-          paidWith = names.length ? `入力時の支払方法: ${names.join("、")}` : "";
+          paidWith = names.length ? `入力時の支払方法：${names.join("、")}` : "";
         }
         if (isInstallment(row)) {
           // 1回払いで入れた取引が明細では分割になっていた。あとから分割にしたものとして分割払いを登録する
@@ -598,7 +598,7 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
         }
         // 入力したときの店名を残し、明細の利用先はメモに回す
         const payee = edited ?? (old.payee || row.merchant);
-        const statementName = old.memo.includes(`明細の利用先: ${row.merchant}`) ? "" : withStatementName(payee);
+        const statementName = (old.memo.includes(`明細の利用先：${row.merchant}`) || old.memo.includes(`明細の利用先: ${row.merchant}`)) ? "" : withStatementName(payee);
         await updateEntry(db, link, {
           ...common,
           payee,

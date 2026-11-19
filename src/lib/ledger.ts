@@ -22,7 +22,7 @@ const entryColumns = [
 
 export async function getAccount(db: D1Database, id: number): Promise<Account> {
   const a = await db.prepare("SELECT * FROM accounts WHERE id = ?").bind(id).first<Account>();
-  if (!a) throw new LedgerError(`項目が見つかりません: ${id}`, 404);
+  if (!a) throw new LedgerError("指定された項目が見つかりません", 404);
   return a;
 }
 
@@ -35,7 +35,7 @@ export async function resolveAccount(db: D1Database, id: number): Promise<Accoun
 
 export async function getEntry(db: D1Database, id: number): Promise<{ entry: Entry; lines: Line[] }> {
   const entry = await db.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first<Entry>();
-  if (!entry) throw new LedgerError(`取引が見つかりません: ${id}`, 404);
+  if (!entry) throw new LedgerError("指定された取引が見つかりません", 404);
   const { results } = await db
     .prepare("SELECT account_id, amount FROM lines WHERE entry_id = ? ORDER BY id")
     .bind(id)
@@ -49,7 +49,7 @@ function validateLines(lines: Line[]) {
     if (!Number.isInteger(l.amount)) throw new LedgerError("金額は円単位の整数にしてください");
   }
   const sum = lines.reduce((s, l) => s + l.amount, 0);
-  if (sum !== 0) throw new LedgerError(`借方と貸方が一致しません(差 ${sum})`);
+  if (sum !== 0) throw new LedgerError(`借方と貸方の合計が一致しません（差額：${sum}円）`);
 }
 
 type Delta = Record<string, Record<string, number>>;
@@ -86,8 +86,22 @@ function changeStatement(db: D1Database, entryId: number | null, action: string,
     .bind(entryId, action, JSON.stringify(months), JSON.stringify(delta), summary);
 }
 
+const KIND_LABELS: Record<string, string> = {
+  expense: "支出",
+  income: "収入",
+  transfer: "振替",
+  opening: "開始残高",
+  adjustment: "残高調整",
+  recovery: "回収",
+  card_payment: "カード引き落とし",
+};
+
+export function kindLabel(kind: string): string {
+  return KIND_LABELS[kind] ?? kind;
+}
+
 function describe(e: Pick<Entry, "date" | "payee" | "kind">) {
-  return `${e.date} ${e.payee || e.kind}`;
+  return `${e.date} ${e.payee || kindLabel(e.kind)}`;
 }
 
 /** 仕訳を新しく作る。作った取引のidを返す */
@@ -192,8 +206,8 @@ export interface SimpleInput {
 
 /** cardIncome: カードに入る収入(明細のキャッシュバック)を受け付ける。新しい記録では選ばせない */
 export async function buildSimple(db: D1Database, input: SimpleInput, opts: { cardIncome?: boolean } = {}): Promise<{ fields: EntryFields; lines: Line[] }> {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new LedgerError("日付は YYYY-MM-DD で入れてください");
-  if (!Number.isInteger(input.amount) || input.amount === 0) throw new LedgerError("金額を円単位で入れてください");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new LedgerError("日付は「YYYY-MM-DD」形式で入力してください");
+  if (!Number.isInteger(input.amount) || input.amount === 0) throw new LedgerError("金額は円単位の整数で入力してください");
   const fields: EntryFields = {
     date: input.date,
     kind: input.kind,
@@ -202,7 +216,7 @@ export async function buildSimple(db: D1Database, input: SimpleInput, opts: { ca
     advance: input.advance ? 1 : 0,
   };
   const need = (id: number | undefined, what: string) => {
-    if (!id) throw new LedgerError(`${what}を選んでください`);
+    if (!id) throw new LedgerError(`${what}を選択してください`);
     return resolveAccount(db, id);
   };
   let lines: Line[];
@@ -212,34 +226,34 @@ export async function buildSimple(db: D1Database, input: SimpleInput, opts: { ca
     if (input.items?.length) {
       const byCat = new Map<number, number>();
       for (const item of input.items) {
-        if (!Number.isInteger(item.amount)) throw new LedgerError("品目の金額は円単位で入れてください");
+        if (!Number.isInteger(item.amount)) throw new LedgerError("品目の金額は円単位で入力してください");
         const cat = await need(item.category_id, "品目のカテゴリ");
-        if (cat.type !== "expense") throw new LedgerError("品目には支出のカテゴリを選んでください");
+        if (cat.type !== "expense") throw new LedgerError("品目には支出のカテゴリを選択してください");
         byCat.set(cat.id, (byCat.get(cat.id) ?? 0) + item.amount);
       }
       const sum = [...byCat.values()].reduce((s, v) => s + v, 0);
-      if (sum !== input.amount) throw new LedgerError(`品目の合計 ${sum.toLocaleString("ja-JP")}円が金額 ${input.amount.toLocaleString("ja-JP")}円と合いません`);
+      if (sum !== input.amount) throw new LedgerError(`品目の合計（${sum.toLocaleString("ja-JP")}円）が入力金額（${input.amount.toLocaleString("ja-JP")}円）と一致しません`);
       lines = [...byCat].filter(([, v]) => v !== 0).map(([id, v]) => ({ account_id: id, amount: v }));
       lines.push({ account_id: paidWith.id, amount: -input.amount });
     } else {
       const cat = await need(input.category_id, "カテゴリ");
-      if (cat.type !== "expense") throw new LedgerError("支出には支出のカテゴリを選んでください");
+      if (cat.type !== "expense") throw new LedgerError("支出には支出のカテゴリを選択してください");
       lines = [{ account_id: cat.id, amount: input.amount }, { account_id: paidWith.id, amount: -input.amount }];
     }
   } else if (input.kind === "income") {
-    const to = await need(input.to_account_id, "受け取り先");
+    const to = await need(input.to_account_id, "入金先");
     // カードに入る収入はキャッシュバック。新しい記録では選ばせないが、明細から作った取引はカードのまま保つ
-    if (to.type !== "asset" && !(opts.cardIncome && to.kind === "card")) throw new LedgerError("受け取り先には財布や銀行口座などを選んでください");
+    if (to.type !== "asset" && !(opts.cardIncome && to.kind === "card")) throw new LedgerError("入金先には財布や銀行口座などを選択してください");
     const cat = await need(input.category_id, "カテゴリ");
-    if (cat.type !== "income") throw new LedgerError("収入には収入のカテゴリを選んでください");
+    if (cat.type !== "income") throw new LedgerError("収入には収入のカテゴリを選択してください");
     lines = [{ account_id: to.id, amount: input.amount }, { account_id: cat.id, amount: -input.amount }];
     paidWith = to;
   } else if (input.kind === "transfer") {
-    paidWith = await need(input.from_account_id, "移す元");
-    const to = await need(input.to_account_id, "移す先");
-    if (paidWith.id === to.id) throw new LedgerError("移す元と先が同じです");
+    paidWith = await need(input.from_account_id, "振替元");
+    const to = await need(input.to_account_id, "振替先");
+    if (paidWith.id === to.id) throw new LedgerError("振替元と振替先が同じです");
     const interest = input.interest ?? 0;
-    if (!Number.isInteger(interest) || interest < 0) throw new LedgerError("利息は円単位で入れてください");
+    if (!Number.isInteger(interest) || interest < 0) throw new LedgerError("利息は円単位で入力してください");
     if (interest > 0 && to.kind !== "loan") throw new LedgerError("利息を分けられるのは借入の返済だけです");
     if (interest >= input.amount && interest > 0) throw new LedgerError("利息は返済額より少なくしてください");
     lines = [{ account_id: to.id, amount: input.amount - interest }, { account_id: paidWith.id, amount: -input.amount }];
@@ -270,15 +284,15 @@ export async function buildSimple(db: D1Database, input: SimpleInput, opts: { ca
  * 消すほうにしかないメモ、立て替えの印、回収、予定の結びつきは残すほうへ移してから消す
  */
 export async function mergeEntries(db: D1Database, keepId: number, dropId: number): Promise<number> {
-  if (keepId === dropId) throw new LedgerError("同じ取引どうしは統合できません");
+  if (keepId === dropId) throw new LedgerError("同じ取引同士は統合できません");
   let [keep, drop] = await Promise.all([getEntry(db, keepId), getEntry(db, dropId)]);
   if (!keep.entry.statement_key && drop.entry.statement_key) [keep, drop] = [drop, keep];
-  if (keep.entry.statement_key && drop.entry.statement_key) throw new LedgerError("どちらも明細から取り込んだ取引なので統合できません");
+  if (keep.entry.statement_key && drop.entry.statement_key) throw new LedgerError("カード明細から取り込んだ取引同士は統合できません");
   for (const e of [keep.entry, drop.entry]) {
-    if (!["expense", "income", "transfer"].includes(e.kind)) throw new LedgerError("支出、収入、振替だけ統合できます");
-    if (/^installment:/.test(e.auto_key ?? "")) throw new LedgerError("分割払いの回は統合できません");
+    if (!["expense", "income", "transfer"].includes(e.kind)) throw new LedgerError("支出・収入・振替のみ統合できます");
+    if (/^installment:/.test(e.auto_key ?? "")) throw new LedgerError("分割払いの取引は統合できません");
   }
-  if (keep.entry.kind !== drop.entry.kind) throw new LedgerError("種類の違う取引は統合できません");
+  if (keep.entry.kind !== drop.entry.kind) throw new LedgerError("種類が異なる取引は統合できません");
   const k = keep.entry, d = drop.entry;
   const fields: Partial<EntryFields> = {};
   if (d.memo && !k.memo.includes(d.memo)) fields.memo = [k.memo, d.memo].filter(Boolean).join(" / ");

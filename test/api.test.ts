@@ -138,7 +138,7 @@ describe("カード明細の取り込み", () => {
     const linked = entries.find((e) => e.payee === "ドトール");
     expect(linked.provisional).toBe(0);
     expect(linked.source).toBe("statement");
-    expect(linked.memo).toContain("明細の利用先: ドトールコーヒー");
+    expect(linked.memo).toContain("明細の利用先：ドトールコーヒー");
 
     // 2回目は重複として何もしない
     const again = await api("POST", "/api/statements/preview", { account_id: card, billing_month: "2026-12", text: csv });
@@ -303,13 +303,13 @@ describe("集計の年と自動の処理", () => {
     expect(rules.some((x) => x.pattern === "ITEM:牛乳" && x.account_id === food)).toBe(true);
     await expect(api("POST", "/api/entries", {
       kind: "expense", date: "2026-10-20", amount: 1000, from_account_id: wallet, items: [{ name: "牛乳", amount: 250, category_id: food }],
-    })).rejects.toThrow("合いません");
+    })).rejects.toThrow("一致しません");
   });
 
   it("収入の受け取り先にカードは選べない", async () => {
     await expect(api("POST", "/api/entries", {
       kind: "income", date: "2026-10-20", amount: 100, to_account_id: card, category_id: await category("その他の収入"),
-    })).rejects.toThrow("受け取り先");
+    })).rejects.toThrow("入金先");
   });
 
   it("支払方法に出すかどうかの初期値と、並べ替え", async () => {
@@ -381,7 +381,7 @@ describe("明細の取り込みに失敗したとき", () => {
 
     await expect(api("POST", "/api/statements/commit", {
       account_id: card, billing_month: "2027-06", text, choices: { 0: { link: confirmed.id } },
-    })).rejects.toThrow("もう明細の行と結びついています");
+    })).rejects.toThrow("すでに明細と照合済み");
 
     // 失敗した取り込みは、明細の記録も仕訳も残さない
     expect(await api<any[]>("GET", "/api/statements")).toHaveLength(importsBefore.length);
@@ -444,7 +444,7 @@ describe("明細の行を既存の取引から選ぶ", () => {
     expect(r).toMatchObject({ linked: 1, created: 0 });
     const e = await api("GET", `/api/entries/${cash.id}`);
     expect(e.lines.map((l: any) => [l.account_id, l.amount]).sort()).toEqual([[card, -1500], [dining, 1500]].sort());
-    expect(e.memo).toContain("入力時の支払方法: 財布");
+    expect(e.memo).toContain("入力時の支払方法：財布");
     // 結びつけた取引はもう選べない
     expect((await api<any[]>("GET", "/api/statements/linkable?date=2029-03-05")).some((x) => x.entry_id === cash.id)).toBe(false);
   });
