@@ -320,7 +320,7 @@ body.sheet .sheet-layer { pointer-events: auto; }
 .sheet-dim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.32); opacity: 0; transition: opacity 300ms ease; }
 body.sheet .sheet-dim { opacity: 1; }
 .sheet-panel {
-  position: absolute; left: 0; right: 0; bottom: 0; top: calc(env(safe-area-inset-top) + 32px);
+  position: absolute; left: 0; right: 0; bottom: 0; top: env(safe-area-inset-top);
   width: 100%; max-width: 640px; margin: 0 auto;
   background: var(--bg); border-radius: 12px 12px 0 0; box-shadow: 0 -2px 24px rgba(0, 0, 0, 0.18);
   overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
@@ -331,7 +331,7 @@ body.sheet .sheet-dim { opacity: 1; }
 .sheet-panel > * { flex-shrink: 0; }
 body.sheet .sheet-panel { transform: none; }
 .sheet-panel .sheetbar { border-radius: 12px 12px 0 0; }
-/* Safari のタブで開いたときはぼかしの帯がないので、シートを上まで寄せる */
+/* Safari のタブで開いたときは上に余白がないので、少しだけ下げる */
 @media not all and (display-mode: standalone) {
   .sheet-panel { top: calc(env(safe-area-inset-top) + 10px); }
 }
