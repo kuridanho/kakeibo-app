@@ -526,7 +526,8 @@ async function home() {
     todos.length ? h("section", { class: "block" },
       h("h2", { class: "block-head" }, h("span", {}, "確認すること"), h("span", { class: "count" }, todos.length)),
       h("div", { class: "todo-grid" }, todos.map(([href, label, n, glyph, color]) =>
-        h("a", { class: "todo", href }, badge(null, glyph, color), h("span", { class: "todo-label" }, label), h("span", { class: "todo-n" }, n))))) : null,
+        // 長い文は2列ぶんの幅に広げ、省略せず全文を出す
+        h("a", { class: `todo${label.length > 18 ? " wide" : ""}`, href }, badge(null, glyph, color), h("span", { class: "todo-label" }, label), h("span", { class: "todo-n" }, n))))) : null,
     // 資産は残高だけを並べる。見出しの右にまとまりの合計を出す。並べ替えや追加は設定で行う
     assetGroups(b).map(([title, as]) => h("section", { class: "block" },
       h("h2", { class: "block-head" }, h("span", {}, title), h("span", { class: "sum" }, num(groupSum(as)))),
