@@ -98,7 +98,7 @@ export async function balances(db: D1Database, today = todayJST()) {
 
   // 引き落とし口座の残高が、近いうちに落ちる額に足りるか。先の請求まで含めると毎日警告が出るので、
   // 引き落とし日が SHORTFALL_DAYS 日以内に来るもので、まだ記録されていないものだけを見る
-  const dueSoon: { bank: number; date: string; amount: number }[] = [];
+  const dueSoon: { bank: number; account_id: number; name: string; date: string; amount: number }[] = [];
   const until = addDays(today, SHORTFALL_DAYS);
   const month = monthOf(today);
   for (const x of accounts) {
@@ -110,15 +110,20 @@ export async function balances(db: D1Database, today = todayJST()) {
       const amount = x.kind === "card" ? await cardDue(db, x.id, m) : Math.min(x.payment_amount ?? 0, Math.max(x.balance, 0));
       // 先に引く口座の残高で足りる分は、引き落とし口座の不足に数えない
       const { rest } = await splitPayment(db, x, amount, today);
-      if (rest > 0) dueSoon.push({ bank: x.payment_account_id, date, amount: rest });
+      if (rest > 0) dueSoon.push({ bank: x.payment_account_id, account_id: x.id, name: x.name, date, amount: rest });
     }
   }
   const shortfalls = accounts
     .filter((a) => a.type === "asset")
     .map((bank) => {
-      const mine = dueSoon.filter((d) => d.bank === bank.id);
-      const date = mine.map((d) => d.date).sort()[0] ?? null;
-      return { account_id: bank.id, name: bank.name, balance: bank.balance, due: mine.reduce((s, d) => s + d.amount, 0), date };
+      const mine = dueSoon.filter((d) => d.bank === bank.id)
+        .sort((x, y) => x.date.localeCompare(y.date) || x.account_id - y.account_id);
+      const due = mine.reduce((s, d) => s + d.amount, 0);
+      // date は最初に足りなくなる引き落としの日。items はどの引き落としがいくらかの内訳
+      let left = bank.balance;
+      const date = mine.find((d) => (left -= d.amount) < 0)?.date ?? mine[0]?.date ?? null;
+      const items = mine.map(({ account_id, name, date, amount }) => ({ account_id, name, date, amount }));
+      return { account_id: bank.id, name: bank.name, balance: bank.balance, due, short: due - bank.balance, date, items };
     })
     .filter((x) => x.due > 0 && x.due > x.balance);
 
