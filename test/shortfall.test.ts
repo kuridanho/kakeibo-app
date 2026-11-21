@@ -44,7 +44,10 @@ describe("引き落としの残高不足", () => {
 
   it(`引き落とし日の${SHORTFALL_DAYS}日前から当日まで出す`, async () => {
     for (const today of ["2030-11-19", "2030-11-26"]) {
-      expect(await short(today)).toEqual([{ account_id: bank, name: "不足銀行", balance: 10000, due: 30000, date: "2030-11-26" }]);
+      expect(await short(today)).toEqual([{
+        account_id: bank, name: "不足銀行", balance: 10000, due: 30000, short: 20000, date: "2030-11-26",
+        items: [{ account_id: card, name: "不足カード", date: "2030-11-26", amount: 30000 }],
+      }]);
     }
   });
 

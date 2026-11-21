@@ -434,7 +434,7 @@ async function home() {
     ...b.loan_reminders.map((x) => [`#/account/${x.id}`, `${x.name}の返済期限：${dayLabel(x.due_date)}${x.days_left < 0 ? "（期限超過）" : x.days_left === 0 ? "（本日）" : `（あと${x.days_left}日）`}`,
       num(x.balance), "percent", x.days_left < 0 ? "#FF453A" : "#FF9F0A"]),
     ...b.overdue_checks.map((a) => [`#/check/${a.id}`, `${a.name}の残高照合`, 1, "wallet", "#30D158"]),
-    ...b.shortfalls.map((x) => [`#/accounts`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りません`, 1, "bolt", "#FF453A"]),
+    ...b.shortfalls.map((x) => [`#/account/${x.account_id}`, `${x.name}の残高が${dayLabel(x.date)}の引き落としに足りない額`, num(x.short), "bolt", "#FF453A"]),
   ].filter(Boolean);
 
   const sum = (items) => items.reduce((t, x) => t + x.amount, 0);
@@ -1924,12 +1924,14 @@ async function accountView(id) {
   const name = (cid) => list.find((x) => x.id === cid)?.name ?? "";
   const row = (label, value) => cell({}, h("span", { class: "grow" }, label), h("span", { class: "value" }, value));
   const recent = entries.filter((e) => e.kind !== "opening");
+  const short = b.shortfalls.find((x) => x.account_id === a.id);
   // 設定は編集から開く別の画面に分け、ここには残高、棚卸し、取引だけを置く
   return [
     h("div", { class: "navrow" }, h("h1", {}, a.name), h("div", {}, h("a", { class: "text", href: `#/account/${a.id}/edit` }, "編集"))),
     h("div", { class: "card" }, h("div", { class: "row" },
       h("span", {}, a.kind === "card" ? "未払い額" : a.kind === "loan" ? "借入残高" : "残高"), h("span", { class: "title1" }, yenBig(bal)))),
     paying.length ? group(row("未請求の分割払い", num(later)), row("分割払いを含めた合計", num(bal + later))) : null,
+    short ? shortfallDetail(short) : null,
     interest ? loanInterest(interest) : null,
     a.kind === "loan" ? group(
       a.due_date ? row("返済期限", dayLabel(a.due_date)) : null,
@@ -1941,6 +1943,20 @@ async function accountView(id) {
     recent.length ? [...Map.groupBy(recent, (e) => e.date)].map(([d, es]) => [
       h("span", { class: "section-head" }, dayLabel(d)), group(es.map(entryCell))]) : null,
   ];
+}
+
+// 近いうちの引き落としに残高が足りない口座で、どの引き落としでいくら足りなくなるか
+function shortfallDetail(x) {
+  let left = x.balance;
+  return [h("span", { class: "section-head" }, "引き落としの不足"), group(
+    cell({}, h("span", { class: "grow" }, "今の残高"), h("span", { class: "value" }, num(x.balance))),
+    x.items.map((d) => {
+      left -= d.amount;
+      return cell({ class: "sub", href: `#/account/${d.account_id}` },
+        h("span", { class: "grow" }, h("span", {}, d.name), h("span", { class: "detail" }, `${dayLabel(d.date)}・引き落とし後 ${num(left)}`)),
+        h("span", { class: "amount" }, num(-d.amount)));
+    }),
+    cell({}, h("span", { class: "grow" }, h("b", {}, "不足額")), h("b", { class: "neg" }, num(x.short))))];
 }
 
 // 借入の次の返済と、その内訳、たまっている利息
