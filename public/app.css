@@ -413,7 +413,6 @@ main:has(> .cal-top) > * { padding-left: max(16px, calc(50% - 284px)); padding-r
   position: relative; height: 44px; min-height: 0; overflow: hidden; padding: 2px 1px 0; border-radius: 8px; background: none; color: var(--label);
   display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1px; font-weight: 400; text-align: center;
 }
-.cal-d.spent { background: color-mix(in oklab, var(--meter) var(--heat), transparent); }
 .cal-d .n { position: relative; flex: none; font-size: 14px; font-weight: 500; line-height: 20px; min-width: 20px; height: 20px; border-radius: 10px; font-variant-numeric: tabular-nums; }
 .cal-d .e, .cal-d .i, .cal-d .p { max-width: 100%; font-size: 10px; line-height: 10.5px; letter-spacing: -0.04em; white-space: nowrap; overflow-x: clip; overflow-y: visible; color: var(--label); font-weight: 500; }
 .cal-d .i, .cal-d .p.inc { color: var(--tint); }
