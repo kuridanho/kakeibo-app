@@ -1506,8 +1506,6 @@ async function calendarView(params) {
   const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const cells = Math.ceil((first + last) / 7) * 7;
-  // 使った額の多い日ほどマスを濃い水色に染め、月のどこで使ったかを色で見せる
-  const maxOut = Math.max(1, ...Object.values(daily).map((t) => t.expense));
 
   // 日を押すと、下の一覧のその日へ移る。同じ日を続けて押すと、その日付で記録を開く。
   // iOS の Safari はボタンの dblclick を出さないので、2回の押下の間隔で見分ける
@@ -1551,8 +1549,7 @@ async function calendarView(params) {
       const [pin, pout] = [planIn(ps), planOut(ps)];
       return h("button", {
         type: "button", "data-day": d,
-        class: `cal-d${d === selected ? " on" : ""}${d === cal.today ? " today" : ""}${t?.expense > 0 ? " spent" : ""}${tone}`,
-        style: t?.expense > 0 ? `--heat:${Math.round(6 + (t.expense / maxOut) * 30)}%` : null,
+        class: `cal-d${d === selected ? " on" : ""}${d === cal.today ? " today" : ""}${tone}`,
         "aria-label": `${dayLabel(d)}${t?.income ? ` 収入 ${t.income}円` : ""}${t?.expense ? ` 支出 ${t.expense}円` : ""}${pin ? ` 入金予定 ${pin}円` : ""}${pout ? ` 出金予定 ${pout}円` : ""}`,
         onclick: () => tap(d),
       },
