@@ -76,6 +76,16 @@ let fromReads = null;
 // 後ろで送っている保存。読み直しは保存が終わってから行い、古い値で描き直さない
 const writes = new Set();
 
+// Cloudflare Access の認証が切れたら、Service Worker を通さずに開き直して Access のログイン画面へ進む。
+// ログインしても通らないときに繰り返さないよう、1分に1回までにする
+function reauth() {
+  try {
+    if (Date.now() - Number(sessionStorage.getItem("reauth-at") ?? 0) < 60_000) return;
+    sessionStorage.setItem("reauth-at", String(Date.now()));
+  } catch { /* 記録できなくても進む */ }
+  location.replace(`/?reauth=${Date.now()}${location.hash}`);
+}
+
 async function api(method, path, body) {
   if (method === "GET") {
     if (fromReads && reads.has(path)) {
@@ -92,6 +102,7 @@ async function api(method, path, body) {
   const text = await res.text();
   let data = {};
   try { data = JSON.parse(text); } catch { /* 空の返事 */ }
+  if (res.status === 401 && data.reauth) reauth();
   if (!res.ok) throw new Error(data.error ?? `エラーが発生しました（${res.status}）`);
   if (method === "GET") {
     reads.delete(path);
@@ -2885,4 +2896,21 @@ for (const a of document.querySelectorAll(".tabbar a")) {
 }
 route();
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  // 画面のファイルは端末の控えから開く。新しい版が届いたら、次に画面を離れたときに読み直して切り替える。
+  // 入力中のシートや送っている保存があるときは待つ
+  let updated = false;
+  const swap = () => {
+    if (!updated || document.visibilityState !== "hidden") return;
+    if (writes.size || sheetLayer.getAttribute("aria-hidden") === "false") return;
+    location.reload();
+  };
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type === "reauth") reauth();
+    if (e.data?.type === "updated") { updated = true; swap(); }
+  });
+  document.addEventListener("visibilitychange", swap);
+}
+// ログインし直したあとの印を、アドレスから外す
+if (new URLSearchParams(location.search).has("reauth")) history.replaceState(null, "", `/${location.hash}`);
