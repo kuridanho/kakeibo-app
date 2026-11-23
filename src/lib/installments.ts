@@ -1,7 +1,10 @@
 // カードの分割払い。記録のときに分割にしたもの、あとから分割にしたもの、明細で見つけた分割を同じ形で持つ。
 // 毎月の支払いは、その回が請求に載る日(締め日。1回目は利用日)に、その月の請求月の取引として記録する。
 // まだ記録していない回は、カードの引き落とし額と来月使える額の見込みに足す。
-// 支払額のうち利用額を回数で割った分はカテゴリへ、残りは利息・手数料へ入れる。
+// 利用額の全額は購入した日(使い始める前に買ったものは使い始めた日)にカテゴリの支出として記録し、
+// 相手は「分割払い」(まだ請求に載っていない分割の利用額)にする。
+// 毎月の回は、支払額のうち利用額を回数で割った分を「分割払い」からカードの請求へ移し、残りは利息・手数料の支出にする。
+// 支払いを購入と混同しないよう、毎月の回はカテゴリの支出に数えない。
 
 import type { Account, Entry, Line } from "../types";
 import { addMonths, billingMonth, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
@@ -41,6 +44,15 @@ export interface Payment {
 type Card = Pick<Account, "id" | "closing_day" | "payment_day" | "statement_import">;
 
 export const installmentKey = (id: number, n: number) => `installment:${id}:${n}`;
+
+/** 購入の取引の鍵。回の鍵と同じ installment: で始め、明細の照合や重複の候補から外れるようにする */
+export const purchaseKey = (id: number) => `installment:${id}:purchase`;
+
+/** 回の取引でも購入の取引でも、どの分割払いのものか。購入は number 0 */
+export function installmentOf(key: string | null): { id: number; number: number } | null {
+  const m = /^installment:(\d+):purchase$/.exec(key ?? "");
+  return m ? { id: Number(m[1]), number: 0 } : parseInstallmentKey(key);
+}
 
 export function parseInstallmentKey(key: string | null): { id: number; number: number } | null {
   const m = /^installment:(\d+):(\d+)$/.exec(key ?? "");
@@ -85,19 +97,25 @@ async function interestCategory(db: D1Database): Promise<number> {
   return (await resolveAccount(db, row.id)).id;
 }
 
-/** 支払額 amount の回の仕訳の行。利用額の分をカテゴリへ、残りを利息・手数料へ */
+/** まだ請求に載っていない分割の利用額を数える勘定 */
+async function deferredAccount(db: D1Database): Promise<number> {
+  const row = await db.prepare("SELECT id FROM accounts WHERE seed_key = 'installment_deferred'").first<{ id: number }>();
+  if (!row) throw new LedgerError("分割払いの勘定がありません");
+  return row.id;
+}
+
+/** 支払額 amount の回の仕訳の行。利用額の分を「分割払い」から移し、残りを利息・手数料の支出へ */
 export async function paymentLines(db: D1Database, p: Installment, pay: Pick<Payment, "number">, amount: number): Promise<Line[]> {
   const base = Math.floor(p.principal / p.count);
   const principal = Math.min(pay.number === 1 ? p.principal - base * (p.count - 1) : base, amount);
-  const category = (await resolveAccount(db, p.category_id)).id;
-  const lines: Line[] = [{ account_id: category, amount: principal }];
+  const lines: Line[] = [{ account_id: await deferredAccount(db), amount: principal }];
   if (amount - principal > 0) lines.push({ account_id: await interestCategory(db), amount: amount - principal });
   lines.push({ account_id: p.card_id, amount: -amount });
   return lines.filter((l) => l.amount !== 0);
 }
 
 export function paymentMemo(p: Installment, n: number) {
-  return [p.memo, `分割 ${n}/${p.count}回`].filter(Boolean).join(" ");
+  return [p.memo, n === 0 ? `分割 ${p.count}回払いで購入` : `分割 ${n}/${p.count}回`].filter(Boolean).join(" ");
 }
 
 export function paymentFields(p: Installment, card: Card, pay: Payment): EntryFields {
@@ -120,7 +138,53 @@ export async function recordedPayments(db: D1Database, id: number) {
     .prepare("SELECT * FROM entries WHERE auto_key LIKE ? ORDER BY date, id")
     .bind(`installment:${id}:%`)
     .all<Entry>();
-  return results.map((e) => ({ entry: e, number: parseInstallmentKey(e.auto_key)!.number }));
+  return results.filter((e) => parseInstallmentKey(e.auto_key)).map((e) => ({ entry: e, number: parseInstallmentKey(e.auto_key)!.number }));
+}
+
+/**
+ * 購入の取引を分割払いに合わせる。記録する回(start_number 以降)の利用額の全額を、購入した日のカテゴリの支出にする。
+ * 使い始める前に買ったものは使い始めた日に記録する。メモは利用者が直したものを残す。
+ */
+export async function syncPurchase(db: D1Database, p: Installment, start?: string | null) {
+  const card = await getAccount(db, p.card_id);
+  const amount = schedule(p, card).filter((x) => x.number >= p.start_number).reduce((s, x) => s + x.principal, 0);
+  if (start === undefined) start = await trackingStart(db);
+  const date = start && p.purchase_date < start ? start : p.purchase_date;
+  const lines: Line[] = [
+    { account_id: (await resolveAccount(db, p.category_id)).id, amount },
+    { account_id: await deferredAccount(db), amount: -amount },
+  ];
+  const key = purchaseKey(p.id);
+  const existing = await db.prepare("SELECT * FROM entries WHERE auto_key = ?").bind(key).first<Entry>();
+  if (!existing) {
+    await createEntry(db, {
+      date, report_date: date, kind: "expense", payee: p.payee, memo: paymentMemo(p, 0),
+      source: "installment", provisional: 0, billing_month: null, auto_key: key, category_source: "user", user_id: p.user_id,
+    }, lines);
+    return;
+  }
+  const { lines: old } = await getEntry(db, existing.id);
+  const same = old.length === lines.length && lines.every((l) => old.some((o) => o.account_id === l.account_id && o.amount === l.amount));
+  if (same && existing.date === date && existing.report_date === date && existing.payee === p.payee) return;
+  await updateEntry(db, existing.id, { date, report_date: date, payee: p.payee }, lines, "分割の変更");
+}
+
+/** すべての分割払いの購入の取引を合わせ、分割払いがなくなった購入の取引を消す */
+export async function syncPurchases(db: D1Database) {
+  const { results } = await db.prepare("SELECT * FROM installments").all<Installment>();
+  const start = await trackingStart(db);
+  for (const p of results) {
+    try {
+      await syncPurchase(db, p, start);
+    } catch (e) {
+      console.error(`分割払い ${p.id} の購入を合わせられませんでした`, e);
+    }
+  }
+  const { results: orphans } = await db
+    .prepare(`SELECT id FROM entries WHERE auto_key LIKE 'installment:%:purchase'
+      AND CAST(substr(auto_key, 13, length(auto_key) - 21) AS INTEGER) NOT IN (SELECT id FROM installments)`)
+    .all<{ id: number }>();
+  for (const o of orphans) await deleteEntry(db, o.id);
 }
 
 /** 中身を確かめる。カードとカテゴリ、回数、金額 */
@@ -169,6 +233,7 @@ export async function recordPlan(db: D1Database, p: Installment, today = todayJS
     if (pay.number < p.start_number || pay.date > today || (since && pay.date < since) || done.has(pay.number)) continue;
     created.push(await createEntry(db, paymentFields(p, card, pay), await paymentLines(db, p, pay, pay.amount)));
   }
+  await syncPurchase(db, p);
   return created;
 }
 
@@ -183,6 +248,7 @@ export async function recordInstallments(db: D1Database, today = todayJST()) {
       console.error(`分割払い ${p.id} を記録できませんでした`, e);
     }
   }
+  await syncPurchases(db);
   return created;
 }
 
@@ -221,13 +287,24 @@ export async function resyncPlan(db: D1Database, p: Installment, today = todayJS
 
 /** 分割をやめる。明細で確かめていない回の記録も消す */
 export async function deleteInstallment(db: D1Database, id: number) {
-  await getInstallment(db, id);
+  const p = await getInstallment(db, id);
+  const deferred = await deferredAccount(db);
+  const category = (await resolveAccount(db, p.category_id)).id;
   for (const { entry } of await recordedPayments(db, id)) {
-    if (entry.statement_import_id !== null && entry.provisional === 0) continue;
+    if (entry.statement_import_id !== null && entry.provisional === 0) {
+      // 明細で確かめた回は残す。購入の取引がなくなるので、利用額の分をカテゴリの支出に戻す
+      const { lines } = await getEntry(db, entry.id);
+      await updateEntry(db, entry.id, {}, lines.map((l) => ({
+        account_id: l.account_id === deferred ? category : l.account_id, amount: l.amount,
+      })), "分割の解除");
+      continue;
+    }
     // 予定から記録した取引をあとから分割にしたときは、予定が取引を指しているので先に消す
     await db.prepare("DELETE FROM planned WHERE entry_id = ?").bind(entry.id).run();
     await deleteEntry(db, entry.id);
   }
+  const purchase = await db.prepare("SELECT id FROM entries WHERE auto_key = ?").bind(purchaseKey(id)).first<{ id: number }>();
+  if (purchase) await deleteEntry(db, purchase.id);
   await db.prepare("DELETE FROM installments WHERE id = ?").bind(id).run();
 }
 
@@ -306,7 +383,7 @@ export async function convertToInstallment(db: D1Database, entryId: number, inpu
 }, today = todayJST()) {
   const { entry, lines } = await getEntry(db, entryId);
   if (entry.kind !== "expense") throw new LedgerError("分割払いにできるのは支出のみです");
-  if (parseInstallmentKey(entry.auto_key)) throw new LedgerError("この取引はすでに分割払いに設定されています");
+  if (installmentOf(entry.auto_key)) throw new LedgerError("この取引はすでに分割払いに設定されています");
   const cardLines = lines.filter((l) => l.amount < 0);
   if (cardLines.length !== 1) throw new LedgerError("支払方法が1つの支出のみ分割払いにできます");
   const card = await getAccount(db, cardLines[0].account_id);

@@ -180,15 +180,20 @@ describe("カード払いの保留と引き落とし", () => {
     await balanced();
   });
 
-  it("分割払いは毎月の支払額がその請求月の支出と引き落としになる", async () => {
+  it("分割払いは利用額の全額が購入した月の支出になり、毎月の支払額がその請求月の引き落としになる", async () => {
     const shop = await category("買い物");
     const text = (n: number) => `様,1,流れカード\n2027/06/20,ヨドバシカメラ,30000,３,${"１２３"[n - 1]},10000,\n,,,,,10000,\n`;
     for (const [n, m] of [[1, "2027-08"], [2, "2027-09"], [3, "2027-10"]] as const) {
       await api("POST", "/api/statements/commit", { account_id: card, billing_month: m, text: text(n), choices: { 0: { category_id: shop } } });
     }
     const rows = await api<any[]>("GET", "/api/entries?q=ヨドバシ");
-    expect(rows).toHaveLength(3);
-    expect(rows.map((r) => r.billing_month).sort()).toEqual(["2027-08", "2027-09", "2027-10"]);
+    // 毎月の回が3件と、購入の取引が1件
+    expect(rows).toHaveLength(4);
+    expect(rows.filter((r) => r.billing_month).map((r) => r.billing_month).sort()).toEqual(["2027-08", "2027-09", "2027-10"]);
+    expect((await month("2027-06")).categories.find((c: any) => c.id === shop).amount).toBe(30000);
+    for (const m of ["2027-08", "2027-09", "2027-10"]) {
+      expect((await month(m)).categories.find((c: any) => c.id === shop)).toBeUndefined();
+    }
     const bankBefore = (await snapshot()).bal(bank);
     for (const m of ["2027-08", "2027-09", "2027-10"]) await recordDuePayments(db, nextBankDay(dayInMonth(m, 10)));
     const after = await snapshot();
@@ -538,6 +543,10 @@ describe("使い始める前の分、キャッシュバック、二重の記録"
     const b = await balances(db, "2027-01-10");
     expect(b.card_dues.filter((d: any) => d.account_id === mer).map((d: any) => [d.billing_month, d.amount])).toEqual([["2027-01", 1296]]);
     expect(b.past_due_bills.filter((d: any) => d.account_id === mer)).toEqual([]);
+    // 使い始める前の購入は、記録する回の利用額だけを使い始めた日の支出にする
+    const purchase = await db.prepare("SELECT * FROM entries WHERE auto_key = ?").bind(`installment:${r.installment_id}:purchase`).first<any>();
+    expect(purchase).toMatchObject({ date: "2027-01-01", report_date: "2027-01-01" });
+    expect((await month("2027-01")).categories.find((c: any) => c.name === "美容").amount).toBe(1296);
     await balanced();
   });
 
