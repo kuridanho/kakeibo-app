@@ -15,8 +15,8 @@ import { classifyMerchants, learnRule, merchantKey } from "./classify";
 import { addMonths, diffDays } from "./dates";
 import { looksLikeCharge } from "./keywords";
 import {
-  defaultPayments, getInstallment, type Installment, insertInstallment, installmentKey, parseInstallmentKey, paymentFields,
-  paymentLines, paymentMemo, recordedPayments, resyncPlan, saveInstallment, schedule,
+  defaultPayments, getInstallment, type Installment, insertInstallment, installmentKey, installmentOf, paymentFields,
+  paymentLines, paymentMemo, recordedPayments, resyncPlan, saveInstallment, schedule, syncPurchases,
 } from "./installments";
 import { createEntry, getAccount, getEntry, LedgerError, resolveAccount, updateEntry } from "./ledger";
 import { merchantMemos, rememberName, rememberNote, suggestName } from "./merchant-names";
@@ -348,7 +348,7 @@ async function planCommit(db: D1Database, preview: Preview, cardId: number,
       if (old.statement_key) throw new LedgerError("選択した取引はすでに明細と照合済みです");
       const { results: oldLines } = await db
         .prepare("SELECT account_id, amount FROM lines WHERE entry_id = ?").bind(link).all<Line>();
-      if (parseInstallmentKey(old.auto_key)) throw new LedgerError("分割払いの取引は他の明細行と照合できません");
+      if (installmentOf(old.auto_key)) throw new LedgerError("分割払いの取引は他の明細行と照合できません");
       if (oldLines.some((l) => l.account_id === cardId)) {
         // カテゴリが複数に分かれていて金額が違う取引は、自動では合わせられない。分割の行はカテゴリが1つの取引だけ
         const others = oldLines.filter((l) => l.account_id !== cardId);
@@ -665,6 +665,8 @@ export async function commitStatement(env: Env, cardId: number, billingMonth: st
     await rollbackStatement(db, importId, created, snapshots, changeMark, planSnapshots);
     throw e;
   }
+  // 分割払いを登録したり結びつけたりしたので、購入の取引を合わせる
+  await syncPurchases(db);
   if (learn.length > 0) {
     await db.batch(learn.map(([merchant, payee]) => db
       .prepare(`INSERT INTO statement_links (merchant_key, payee, user_id) VALUES (?, ?, ?)

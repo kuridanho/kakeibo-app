@@ -13,8 +13,8 @@ import { monthEndProjection, nextMonthBudget } from "./lib/budget";
 import { balances, closeMonth, daily, monthSummary, yearSummary } from "./lib/reports";
 import { evaluateReceipt, readReceipt } from "./lib/receipt-eval";
 import {
-  convertToInstallment, createInstallment, defaultPayments, deleteInstallment, getInstallment, type Installment,
-  parseInstallmentKey, recordedPayments, resyncPlan, saveInstallment, schedule,
+  convertToInstallment, createInstallment, defaultPayments, installmentOf, deleteInstallment, getInstallment, type Installment,
+  recordedPayments, resyncPlan, saveInstallment, schedule,
 } from "./lib/installments";
 import { openPlanned, type Planned, validatePlanned } from "./lib/planned";
 import { type Recurring, recordRecurring, validate } from "./lib/recurring";
@@ -418,11 +418,11 @@ app.get("/api/entries/:id", async (c) => {
   const [full] = await withLines(c.env.DB, [entry]);
   const { results: recoveries } = await c.env.DB
     .prepare("SELECT * FROM entries WHERE related_entry_id = ? ORDER BY date").bind(entry.id).all<Entry>();
-  const key = parseInstallmentKey(entry.auto_key);
+  const key = installmentOf(entry.auto_key);
   const plan = key ? await c.env.DB.prepare("SELECT * FROM installments WHERE id = ?").bind(key.id).first<Installment>() : null;
   return c.json({
     ...full, recoveries: await withLines(c.env.DB, recoveries),
-    installment: plan ? { id: plan.id, number: key!.number, count: plan.count } : null,
+    installment: plan ? { id: plan.id, number: key!.number, count: plan.count, card_id: plan.card_id, category_id: plan.category_id } : null,
   });
 });
 
@@ -486,10 +486,10 @@ app.put("/api/entries/:id", async (c) => {
   const id = int(c.req.param("id"), "id");
   const { entry, lines: oldLines } = await getEntry(db, id);
   const input = await c.req.json<EntryInput>();
-  const key = parseInstallmentKey(entry.auto_key);
+  const key = installmentOf(entry.auto_key);
   const plan = key ? await db.prepare("SELECT * FROM installments WHERE id = ?").bind(key.id).first<Installment>() : null;
   if (plan) {
-    // 分割払いの回は、店とカテゴリを分割払い全体で直す。メモだけはその回のもの
+    // 分割払いの購入と回は、店とカテゴリを分割払い全体で直す。メモだけはその回のもの
     const category = input.category_id ?? plan.category_id;
     const next = { ...plan, payee: input.payee ?? plan.payee, category_id: (await resolveAccount(db, category)).id };
     await saveInstallment(db, next);
@@ -599,7 +599,7 @@ app.delete("/api/entries/:id", async (c) => {
   const id = int(c.req.param("id"), "id");
   // 分割払いの回だけを消すと、毎日の記録で作り直してしまう。分割払いの画面でやめてもらう
   const { entry } = await getEntry(c.env.DB, id);
-  if (parseInstallmentKey(entry.auto_key)) throw new LedgerError("分割払いの各回は個別に削除できません。分割払いの画面から分割を解除してください");
+  if (installmentOf(entry.auto_key)) throw new LedgerError("分割払いの購入と各回は個別に削除できません。分割払いの画面から分割を解除してください");
   // 予定から記録した取引を消したときは、予定もいっしょに消す
   await c.env.DB.prepare("DELETE FROM planned WHERE entry_id = ?").bind(id).run();
   await deleteEntry(c.env.DB, id);

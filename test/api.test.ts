@@ -195,7 +195,12 @@ describe("カード明細の取り込み", () => {
     await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2027-02", text });
     const e = await api("GET", `/api/entries/${manual.id}`);
     expect(e.provisional).toBe(0);
-    expect(e.lines.find((l: any) => l.type === "expense")).toMatchObject({ account_id: shop, amount: 20000 });
+    // その月の支払額はカードの請求に移すだけで、利用額の全額は購入の取引で12月の支出になる
+    expect(e.lines.find((l: any) => l.amount < 0)).toMatchObject({ account_id: card, amount: -20000 });
+    expect(e.lines.find((l: any) => l.type === "expense")).toBeUndefined();
+    const purchase = await api("GET", `/api/entries/${(await api<any[]>("GET", "/api/entries?q=ヨドバシ")).find((x) => x.auto_key?.endsWith(":purchase")).id}`);
+    expect(purchase).toMatchObject({ date: "2026-12-20", installment: { number: 0, count: 3 } });
+    expect(purchase.lines.find((l: any) => l.type === "expense")).toMatchObject({ account_id: shop, amount: 60000 });
     expect(e.memo).toContain("掃除機");
     expect(e.memo).toContain("分割 1/3回");
   });

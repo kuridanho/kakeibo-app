@@ -677,7 +677,9 @@ async function entryForm(existing, opts = {}) {
   const neg = lines.find((l) => l.amount < 0);
   // 品目ごとに分けた支出や、利息を分けた返済もあるので、金額は払った側の額にする
   const expenseLines = lines.filter((l) => l.type === "expense");
-  const paid = kind === "expense" ? expenseLines.reduce((s, l) => s + l.amount, 0)
+  // 分割払いの回はカードの請求に載る支払額、購入は利用額の全額。支払方法とカテゴリは分割払いのもの
+  const paid = inst && inst.number > 0 ? -lines.filter((l) => l.amount < 0).reduce((s, l) => s + l.amount, 0)
+    : kind === "expense" ? expenseLines.reduce((s, l) => s + l.amount, 0)
     : -lines.filter((l) => l.amount < 0).reduce((s, l) => s + l.amount, 0);
   const init = existing ? {
     amount: kind === "income" ? pos?.amount : paid,
@@ -686,9 +688,9 @@ async function entryForm(existing, opts = {}) {
     payee: existing.payee,
     memo: existing.memo,
     advance: !!existing.advance,
-    from_account_id: kind === "income" ? undefined : neg?.account_id,
+    from_account_id: inst ? inst.card_id : kind === "income" ? undefined : neg?.account_id,
     to_account_id: kind === "income" || kind === "transfer" ? pos?.account_id : undefined,
-    category_id: kind === "expense" ? expenseLines[0]?.account_id : kind === "income" ? neg?.account_id : undefined,
+    category_id: inst ? inst.category_id : kind === "expense" ? expenseLines[0]?.account_id : kind === "income" ? neg?.account_id : undefined,
   } : src ? {
     amount: src.amount, date: src.date, payee: src.payee, memo: src.memo,
     from_account_id: src.from_account_id ?? undefined, to_account_id: src.to_account_id ?? undefined, category_id: src.category_id ?? undefined,
@@ -784,7 +786,7 @@ async function entryForm(existing, opts = {}) {
         kind === "transfer" ? field("うち利息・手数料", moneyInput({ name: "interest", "data-num": "", value: init.interest, oninput: () => { interestTouched = true; } })) : null,
         kind === "transfer" ? payoffRow : null,
         kind !== "income" ? dueRow : null,
-        inst ? cell({ href: `#/installment/${inst.id}` }, h("span", { class: "grow" }, "分割払い"), h("span", { class: "value" }, `${inst.number}/${inst.count}回`)) : null,
+        inst ? cell({ href: `#/installment/${inst.id}` }, h("span", { class: "grow" }, "分割払い"), h("span", { class: "value" }, inst.number ? `${inst.number}/${inst.count}回` : `${inst.count}回払いで購入`)) : null,
         field("メモ", h("input", { name: "memo", value: init.memo }))),
       kind === "expense" ? itemsBox : null,
       kind === "expense" ? h("details", { class: "more", open: init.advance || undefined },
@@ -1465,7 +1467,11 @@ function listTabs(current, month) {
     h("button", { "aria-pressed": String(current === "list"), onclick: () => { location.hash = `#/list?view=list&month=${month}`; } }, "リスト"));
 }
 
+/** 分割払いの回。利用額は購入の日に支出にしたので、カードの請求へ移すだけ(手数料があればその分は支出) */
+const isInstallmentPayment = (e) => e.lines.some((l) => l.kind === "deferred" && l.amount > 0);
+
 function entryCell(e) {
+  if (isInstallmentPayment(e)) return installmentPaymentCell(e);
   const transfer = !["expense", "income"].includes(e.kind) && !e.lines.some((l) => l.type === "expense" || l.type === "income");
   const cat = e.lines.find((l) => l.type === "expense" || l.type === "income");
   return cell({ href: `#/entry/${e.id}`, class: "tall plain" },
@@ -1478,6 +1484,17 @@ function entryCell(e) {
     e.kind === "income" || (!transfer && e.lines.filter((l) => l.type === "expense" || l.type === "income").reduce((s, l) => s + l.amount, 0) < 0)
       ? h("span", { class: "amount inc" }, plus(entryAmount(e)))
       : h("span", { class: `amount${transfer ? " muted" : ""}` }, transfer ? num(entryAmount(e)) : minus(entryAmount(e))));
+}
+
+function installmentPaymentCell(e) {
+  const card = e.lines.find((l) => l.amount < 0);
+  const fee = e.lines.filter((l) => l.type === "expense").reduce((s, l) => s + l.amount, 0);
+  return cell({ href: `#/entry/${e.id}`, class: "tall plain" },
+    badge("card"),
+    h("div", { class: "grow" }, h("span", {}, e.payee || "分割払い"),
+      h("span", { class: "detail" }, [`分割払い　${card?.name ?? ""}`, fee ? `うち手数料 ${num(fee)}円` : ""].filter(Boolean).join("　"))),
+    e.provisional ? h("span", { class: "pill" }, "仮") : null,
+    h("span", { class: "amount muted" }, num(-(card?.amount ?? 0))));
 }
 
 /** 一覧の日の見出し。「11月30日」を太く、曜日を小さく添え、右にその日の合計を出す */

@@ -6,7 +6,7 @@ import { app } from "../src/index";
 import { createInstallment, recordInstallments } from "../src/lib/installments";
 import { nextMonthBudget } from "../src/lib/budget";
 import { calendarMonth } from "../src/lib/calendar";
-import { cardDue } from "../src/lib/reports";
+import { cardDue, categoryTotals } from "../src/lib/reports";
 import type { Env } from "../src/types";
 
 const testEnv = env as unknown as Env;
@@ -66,12 +66,18 @@ describe("分割払い", () => {
     ]);
     const first = plan.payments[0].entry_id;
     expect(plan.payments[1].entry_id).toBeNull();
-    // 利用額を3回で割った分がカテゴリ、残りが利息・手数料
+    // 回は支出ではなく、カードの請求に移すだけ。手数料の分だけが利息・手数料の支出になる
     const s = await split(first, card);
-    expect(s).toMatchObject({ category: 33334, fee: 500, card: 33834 });
+    expect(s).toMatchObject({ category: 0, fee: 500, card: 33834 });
     expect(s.entry.billing_month).toBe("2030-04");
     expect(s.entry.memo).toBe("分割 1/3回");
-    expect(s.entry.installment).toEqual({ id: p.id, number: 1, count: 3 });
+    expect(s.entry.installment).toMatchObject({ id: p.id, number: 1, count: 3, card_id: card, category_id: shopping });
+    // 利用額の全額は購入した日にカテゴリの支出になる
+    const purchase = (await api<any[]>("GET", "/api/entries?q=家電店")).find((e) => e.auto_key === `installment:${p.id}:purchase`);
+    expect(purchase).toMatchObject({ date: "2030-03-10", report_date: "2030-03-10", memo: "分割 3回払いで購入" });
+    expect((await split(purchase.id, card)).category).toBe(100000);
+    expect((await api("GET", `/api/entries/${purchase.id}`)).installment).toMatchObject({ id: p.id, number: 0 });
+    expect((await call("DELETE", `/api/entries/${purchase.id}`)).status).toBe(400);
 
     // まだ記録していない回も、その請求月の引き落とし額とカレンダーに入る
     expect(await cardDue(db, card, "2030-05")).toBe(33833);
@@ -90,6 +96,11 @@ describe("分割払い", () => {
     expect(second.entry_id).not.toBeNull();
     expect((await split(second.entry_id, card)).entry).toMatchObject({ date: "2030-04-30", billing_month: "2030-05" });
     expect(await cardDue(db, card, "2030-05")).toBe(33833);
+    // 集計では、購入した月に利用額の全額、払った月には手数料だけが入る。払うたびに購入したようには見えない
+    const totals = await categoryTotals(db, ["2030-03", "2030-04"]);
+    expect(totals["2030-03"][shopping]).toBe(100000);
+    expect(totals["2030-04"]?.[shopping] ?? 0).toBe(0);
+    expect(totals["2030-04"][interest]).toBe(500);
   });
 
   it("記録の画面から支払回数を付けて入れられる", async () => {
@@ -116,7 +127,8 @@ describe("分割払い", () => {
     });
     const p = await api("POST", `/api/entries/${id}/installment`, { count: 12 });
     let s = await split(id, card);
-    expect(s).toMatchObject({ category: 10000, fee: 0, card: 10000 });
+    expect(s).toMatchObject({ category: 0, fee: 0, card: 10000 });
+    expect((await categoryTotals(db, ["2030-06"]))["2030-06"][shopping]).toBe(120000);
     expect(s.entry).toMatchObject({ billing_month: "2030-07", provisional: 1, memo: "分割 1/12回" });
     expect(await cardDue(db, card, "2030-08")).toBe(10000);
     // 2回は分割にできない
@@ -130,7 +142,7 @@ describe("分割払い", () => {
     const r1 = await api("POST", "/api/statements/commit", { account_id: card, billing_month: "2030-07", text: july });
     expect(r1).toMatchObject({ linked: 1, created: 0 });
     s = await split(id, card);
-    expect(s).toMatchObject({ category: 10000, fee: 200, card: 10200 });
+    expect(s).toMatchObject({ category: 0, fee: 200, card: 10200 });
     expect(s.entry).toMatchObject({ provisional: 0, source: "statement", date: "2030-06-05", payee: "パソコン" });
 
     // 8月の明細の2回目は、まだ記録していない回として新しく作る。以降の見込みはその額にする
