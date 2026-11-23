@@ -1,10 +1,10 @@
 // ホーム画面に追加して開くための Service Worker。
 // 画面のファイル(アプリシェル)は端末の控えからすぐ返し、後ろでサーバーと見比べて新しければ差し替える。
-// 差し替えた版は次に開いたとき(画面に戻ったとき)から使う。
+// 差し替えた版は次にアプリを起動したときから使う。
 // 数字は控えから出さない。API の GET はネットワーク優先で、つながらないときだけ前に読んだ控えを返す。
 // 控えを先に描いて後から描き直すのは画面(app.js)側で行う。
 // Cloudflare Access の認証が切れたら、控えを返さずに 401 を返し、画面がログインし直す。
-const CACHE = "kakeibo-v17";
+const CACHE = "kakeibo-v18";
 const API_CACHE = "kakeibo-api-v1";
 const KEEP = new Set([CACHE, API_CACHE]);
 const SHELL = ["/", "/app.js", "/app.css", "/manifest.webmanifest", "/icon.svg", "/icon-180.png"];

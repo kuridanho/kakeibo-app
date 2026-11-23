@@ -2898,19 +2898,11 @@ route();
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
-  // 画面のファイルは端末の控えから開く。新しい版が届いたら、次に画面を離れたときに読み直して切り替える。
-  // 入力中のシートや送っている保存があるときは待つ
-  let updated = false;
-  const swap = () => {
-    if (!updated || document.visibilityState !== "hidden") return;
-    if (writes.size || sheetLayer.getAttribute("aria-hidden") === "false") return;
-    location.reload();
-  };
+  // 画面のファイルは端末の控えから開く。新しい版は Service Worker が控えを差し替え、次にアプリを起動したときから使う。
+  // 使っている途中で読み直すと、戻ったときに空の画面が挟まるので読み直さない
   navigator.serviceWorker.addEventListener("message", (e) => {
     if (e.data?.type === "reauth") reauth();
-    if (e.data?.type === "updated") { updated = true; swap(); }
   });
-  document.addEventListener("visibilitychange", swap);
 }
 // ログインし直したあとの印を、アドレスから外す
 if (new URLSearchParams(location.search).has("reauth")) history.replaceState(null, "", `/${location.hash}`);
