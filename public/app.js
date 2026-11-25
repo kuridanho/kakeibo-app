@@ -435,6 +435,8 @@ async function home() {
   const todos = [
     // その日が来た予定。開くと中身が入った記録の画面になり、確かめて記録する
     ...duePlans.map((p) => [`#/new?planned=${p.id}`, `${dayLabel(p.date)}の予定${p.payee ? `「${p.payee}」` : ""}`, num(p.amount), "flag", "#FF9F0A"]),
+    // 繰り返しが自動で記録した回。開くと記録の画面になり、保存すると確認済みになる
+    ...(counts.unconfirmed ?? []).map((e) => [`#/entry/${e.id}`, `${dayLabel(e.date)}の繰り返し${e.payee ? `「${e.payee}」` : ""}`, num(e.amount), "flag", "#FF9F0A"]),
     counts.unsure && ["#/list?unsure=1", "自動分類されたカテゴリの確認", counts.unsure, "sparkle", "#BF5AF2"],
     counts.provisional && ["#/list?provisional=1", "未照合のカード払い", counts.provisional, "card", "#5E5CE6"],
     counts.advances && ["#/advances", "回収待ちの立て替え", counts.advances, "hand", "#FF9F0A"],

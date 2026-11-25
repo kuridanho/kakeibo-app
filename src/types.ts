@@ -67,6 +67,8 @@ export interface Entry {
   counterparty: string | null;
   auto_key: string | null;
   user_id: string | null;
+  /** 繰り返しが自動で記録し、まだ本人が確かめていない取引は 1 */
+  unconfirmed: number;
   created_at: string;
   updated_at: string;
 }
