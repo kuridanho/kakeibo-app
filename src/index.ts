@@ -524,7 +524,7 @@ app.put("/api/entries/:id", async (c) => {
   }
   const oldCategory = oldLines.find((l) => l.amount > 0 && l.account_id !== input.to_account_id)?.account_id;
   const categoryChanged = input.category_id !== undefined && input.category_id !== oldCategory;
-  await updateEntry(db, id, { ...fields, category_source: categoryChanged ? "user" : entry.category_source }, lines);
+  await updateEntry(db, id, { ...fields, category_source: categoryChanged ? "user" : entry.category_source, unconfirmed: 0 }, lines);
   if (categoryChanged && input.kind === "expense" && input.learn !== false && (input.payee ?? entry.payee)) {
     await learnRule(db, input.payee ?? entry.payee, input.category_id!);
   }
@@ -963,10 +963,14 @@ app.get("/api/counts", async (c) => {
     c.env.DB.prepare("SELECT COUNT(*) AS n FROM entries WHERE advance = 1 AND settled = 0"),
     c.env.DB.prepare(`SELECT COUNT(*) AS n FROM entries WHERE kind = 'expense'
       AND report_date BETWEEN ? AND ? AND category_source IN ('ai', 'keyword', 'none')`).bind(`${month}-01`, `${month}-31`),
+    // 繰り返しが自動で記録し、まだ確かめていない回
+    c.env.DB.prepare(`SELECT e.id, e.date, e.kind, e.payee,
+      (SELECT SUM(amount) FROM lines WHERE entry_id = e.id AND amount > 0) AS amount
+      FROM entries e WHERE e.unconfirmed = 1 ORDER BY e.date, e.id`),
   ]);
   const count = (r: D1Result) => Number((r.results?.[0] as { n?: number } | undefined)?.n ?? 0);
   return c.json({ provisional: count(results[0]), advances: count(results[1]), unsure: count(results[2]),
-    duplicates: (await findDuplicates(c.env.DB)).length });
+    unconfirmed: results[3].results ?? [], duplicates: (await findDuplicates(c.env.DB)).length });
 });
 
 app.get("/api/budget", async (c) => c.json(await nextMonthBudget(c.env.DB)));

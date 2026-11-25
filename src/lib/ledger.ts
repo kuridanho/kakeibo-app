@@ -17,7 +17,7 @@ export type EntryFields = Partial<Omit<Entry, "id" | "created_at" | "updated_at"
 const entryColumns = [
   "date", "report_date", "kind", "payee", "memo", "source", "provisional", "billing_month",
   "statement_import_id", "statement_key", "category_source", "advance", "settled",
-  "related_entry_id", "counterparty", "auto_key", "user_id",
+  "related_entry_id", "counterparty", "auto_key", "user_id", "unconfirmed",
 ] as const;
 
 export async function getAccount(db: D1Database, id: number): Promise<Account> {

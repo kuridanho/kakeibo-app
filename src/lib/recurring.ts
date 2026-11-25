@@ -1,4 +1,5 @@
 // 繰り返しの取引。毎朝の処理で、その日までに来た回を一度ずつ記録する。
+// 記録した回は未確認とし、ホームの確認することで本人が金額などを確かめる。
 
 import { addMonths, dayInMonth, monthOf, nextBankDay, todayJST } from "./dates";
 import { buildSimple, createEntry, LedgerError, type SimpleInput } from "./ledger";
@@ -58,7 +59,7 @@ export async function recordRecurring(db: D1Database, today = todayJST()) {
       if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(autoKey).first()) continue;
       try {
         const { fields, lines } = await buildSimple(db, toInput(r, date));
-        created.push(await createEntry(db, { ...fields, source: "recurring", category_source: "user", auto_key: autoKey, user_id: r.user_id }, lines));
+        created.push(await createEntry(db, { ...fields, source: "recurring", category_source: "user", auto_key: autoKey, user_id: r.user_id, unconfirmed: 1 }, lines));
       } catch (e) {
         // 口座を消したなどで記録できない回は飛ばし、ほかの繰り返しは続ける
         console.error(`繰り返し ${r.id} を記録できませんでした`, e);

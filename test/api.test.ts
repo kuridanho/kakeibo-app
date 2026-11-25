@@ -332,13 +332,23 @@ describe("集計の年と自動の処理", () => {
 
 describe("繰り返し", () => {
   it("決まった日に一度だけ記録し、休みなら翌営業日にずらす", async () => {
+    // 登録したときにも今日までの回を記録するので、先の日付で確かめる
     const salary = await category("給与");
     await api("POST", "/api/recurring", {
-      kind: "income", amount: 250000, day: 25, first_date: "2026-11-25", to_account_id: bank, category_id: salary, payee: "給与",
+      kind: "income", amount: 250000, day: 25, first_date: "2030-11-25", to_account_id: bank, category_id: salary, payee: "給与",
     });
-    expect(await recordRecurring(testEnv.DB, "2026-11-24")).toHaveLength(0);
-    expect(await recordRecurring(testEnv.DB, "2026-11-25")).toHaveLength(1);
-    expect(await recordRecurring(testEnv.DB, "2026-11-26")).toHaveLength(0);
+    expect(await recordRecurring(testEnv.DB, "2030-11-24")).toHaveLength(0);
+    expect(await recordRecurring(testEnv.DB, "2030-11-25")).toHaveLength(1);
+    expect(await recordRecurring(testEnv.DB, "2030-11-26")).toHaveLength(0);
+
+    // 記録した回はホームの確認することに出し、保存すると確認済みになる
+    const due = (await api<any>("GET", "/api/counts")).unconfirmed;
+    const made = due[0]?.id;
+    expect(due).toEqual([{ id: expect.any(Number), date: "2030-11-25", kind: "income", payee: "給与", amount: 250000 }]);
+    await api("PUT", `/api/entries/${made}`, {
+      kind: "income", date: "2030-11-25", amount: 248000, to_account_id: bank, category_id: salary, payee: "給与",
+    });
+    expect((await api<any>("GET", "/api/counts")).unconfirmed).toEqual([]);
 
     // 2027/1/10 は日曜、1/11 は成人の日なので 1/12 に記録する
     const r = await api("POST", "/api/recurring", {
