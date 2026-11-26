@@ -22,6 +22,8 @@ export interface Planned {
   planned_id?: number;
   /** カードの引き落としのうち、明細でまだ確定していない額 */
   pending?: number;
+  /** 押したときに開く画面。繰り返し、一度きりの予定、分割払い、カードや借入の設定、立て替えの取引 */
+  href?: string;
 }
 
 export async function calendarMonth(db: D1Database, month: string, today = todayJST()) {
@@ -50,29 +52,29 @@ export async function calendarMonth(db: D1Database, month: string, today = today
     if (viaCard(r)) continue;
     const date = occurrence(r, month);
     if (!date || date <= today || date < r.first_date || (r.end_date && date > r.end_date)) continue;
-    planned.push({ date, label: r.payee || "繰り返し", amount: r.amount, kind: r.kind });
+    planned.push({ date, label: r.payee || "繰り返し", amount: r.amount, kind: r.kind, href: `#/recurring/${r.id}` });
   }
 
   // 一度きりの予定は、日が過ぎてもまだ確かめていなければ出しておく
   const { results: ps } = await db
     .prepare("SELECT * FROM planned WHERE entry_id IS NULL AND date BETWEEN ? AND ?")
     .bind(`${month}-01`, `${month}-31`).all<PlannedRow>();
-  for (const p of ps) if (!viaCard(p)) planned.push({ date: p.date, label: p.payee || "予定", amount: p.amount, kind: p.kind, planned_id: p.id });
+  for (const p of ps) if (!viaCard(p)) planned.push({ date: p.date, label: p.payee || "予定", amount: p.amount, kind: p.kind, planned_id: p.id, href: `#/planned/${p.id}` });
 
   for (const a of payers) {
     const date = nextBankDay(dayInMonth(month, a.payment_day!));
     if (date <= today || beforeFirstPayment(a, month)) continue;
     if (a.kind === "card") {
       const { amount, usage, pending } = await cardDueAhead(db, a, month);
-      if (amount > 0) planned.push({ date, label: `${a.name} 引き落とし`, amount, kind: "payment", ...(pending ? { pending } : {}) });
-      for (const u of usage) planned.push({ date, label: u.label, amount: u.amount, kind: "card", via: a.name, planned_id: u.planned_id });
+      if (amount > 0) planned.push({ date, label: `${a.name} 引き落とし`, amount, kind: "payment", href: `#/account/${a.id}/edit`, ...(pending ? { pending } : {}) });
+      for (const u of usage) planned.push({ date, label: u.label, amount: u.amount, kind: "card", via: a.name, planned_id: u.planned_id, href: u.href });
     } else if (a.payment_amount) {
-      planned.push({ date, label: `${a.name} 返済`, amount: a.payment_amount, kind: "payment" });
+      planned.push({ date, label: `${a.name} 返済`, amount: a.payment_amount, kind: "payment", href: `#/account/${a.id}/edit` });
     }
   }
   // 来月使える額と同じく、回収していない立て替えは来月の初めに戻る見込みとして出す
   if (month === addMonths(monthOf(today), 1)) {
-    for (const a of await advanceItems(db, month)) planned.push({ date: a.date, label: a.label, amount: a.amount, kind: "income" });
+    for (const a of await advanceItems(db, month)) planned.push({ date: a.date, label: a.label, amount: a.amount, kind: "income", href: a.href });
   }
   planned.sort((x, y) => x.date.localeCompare(y.date));
   return { month, today, days, planned };

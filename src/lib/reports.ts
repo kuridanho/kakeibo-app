@@ -271,7 +271,7 @@ export async function cardDue(db: D1Database, cardId: number, month: string): Pr
 }
 
 /** カードの請求に載る、まだ記録していない利用。繰り返し、一度きりの予定、分割払いの回 */
-export interface CardUsage { date: string; label: string; amount: number; planned_id?: number }
+export interface CardUsage { date: string; label: string; amount: number; planned_id?: number; href?: string }
 
 /**
  * 請求月 month に引き落とされる額の見込みと、その中のまだ記録していない利用。
@@ -315,12 +315,12 @@ export async function cardDueAhead(db: D1Database, card: Account, month: string)
     if (await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(key).first()) done.add(key);
   }
   const usage: CardUsage[] = [
-    ...occurrences.filter((x) => !done.has(x.key)).map(({ r, date }) => ({ date, label: r.payee || "繰り返し", amount: r.amount })),
-    ...ps.filter((p) => billed(p.date)).map((p) => ({ date: p.date, label: p.payee || "予定", amount: p.amount, planned_id: p.id })),
+    ...occurrences.filter((x) => !done.has(x.key)).map(({ r, date }) => ({ date, label: r.payee || "繰り返し", amount: r.amount, href: `#/recurring/${r.id}` })),
+    ...ps.filter((p) => billed(p.date)).map((p) => ({ date: p.date, label: p.payee || "予定", amount: p.amount, planned_id: p.id, href: `#/planned/${p.id}` })),
   ];
   const extra = usage.reduce((s, u) => s + u.amount, 0);
   // 分割払いの回は cardDue がもう足しているので、内訳にだけ並べる
-  usage.push(...installments.map((p) => ({ date: p.date, label: `${p.plan.payee || "分割払い"} ${p.number}/${p.plan.count}回`, amount: p.amount })));
+  usage.push(...installments.map((p) => ({ date: p.date, label: `${p.plan.payee || "分割払い"} ${p.number}/${p.plan.count}回`, amount: p.amount, href: `#/installment/${p.plan.id}` })));
   usage.sort((x, y) => x.date.localeCompare(y.date));
   return { amount: due + extra, usage, pending };
 }
