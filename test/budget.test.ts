@@ -102,6 +102,12 @@ describe("来月の予算", () => {
     expect(b.income[0]).toMatchObject({ date: "2026-11-25", label: "給与", amount: 250000 });
     expect(b.expenses.reduce((s, x) => s + x.amount, 0)).toBe(145000);
     expect(b.expenses.map((x) => x.label)).toEqual(expect.arrayContaining(["家賃", "予算カード 引き落とし", "予算奨学金 返済", "病院"]));
+    // どの予定も押すと元の設定を開ける
+    const href = (label: string) => b.expenses.find((x) => x.label === label)?.href;
+    expect(href("家賃")).toMatch(/^#\/recurring\/\d+$/);
+    expect(href("予算カード 引き落とし")).toMatch(/^#\/account\/\d+\/edit$/);
+    expect(href("予算奨学金 返済")).toMatch(/^#\/account\/\d+\/edit$/);
+    expect(href("病院")).toMatch(/^#\/entry\/\d+$/);
     // カードで払う携帯は、来月の手元からは出ないので使える額から引かない
     expect(b.card_fixed).toHaveLength(1);
     expect(b.card_fixed[0]).toMatchObject({ label: "携帯", amount: 8000, cash_delta: 0 });

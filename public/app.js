@@ -451,7 +451,7 @@ async function home() {
   ].filter(Boolean);
 
   const sum = (items) => items.reduce((t, x) => t + x.amount, 0);
-  const flowItem = (label, date, amount, note) => h("div", { class: "cell sub" },
+  const flowItem = (label, date, amount, note, href) => cell({ class: "sub", href },
     h("span", { class: "grow" }, h("span", {}, label),
       date ? h("span", { class: "detail" }, [dayLabel(date), note].filter(Boolean).join("・")) : null),
     h("span", { class: "amount" }, amount));
@@ -474,8 +474,8 @@ async function home() {
 
   // 見込みの内訳。収入予定と支払予定の数字を押すと、その中身を下に開く。もう一度押すと閉じる
   const flowPanel = h("div", { class: "flow-panel", hidden: true });
-  const flows = { income: m.income.map((x) => flowItem(x.label, x.date, h("span", { class: "inc" }, plus(x.amount)))),
-    expenses: m.expenses.map((x) => flowItem(x.label, x.date, minus(x.amount), pendingNote(x))) };
+  const flows = { income: m.income.map((x) => flowItem(x.label, x.date, h("span", { class: "inc" }, plus(x.amount)), null, planHref(x))),
+    expenses: m.expenses.map((x) => flowItem(x.label, x.date, minus(x.amount), pendingNote(x), planHref(x))) };
   const stat = (key, label, value) => {
     const rows = flows[key];
     const el = h(rows?.length ? "button" : "div", { class: "stat", type: rows?.length ? "button" : null, "aria-expanded": rows?.length ? "false" : null },
@@ -551,6 +551,11 @@ async function home() {
 // ---- 来月の予算 ----
 
 /** カードの引き落とし見込みのうち、明細でまだ確定していない額の添え書き */
+/** 予定の行の行き先。日が来た一度きりの予定は、確かめて記録する画面で開く */
+const planHref = (p) => {
+  const id = p.href?.match(/^#\/planned\/(\d+)$/)?.[1];
+  return id && p.date <= today() ? `#/new?planned=${id}` : p.href;
+};
 const pendingNote = (p) => !p.pending ? "" : p.pending >= p.amount ? "未確定" : `うち未確定 ${num(p.pending)}`;
 
 async function budgetView() {
@@ -559,7 +564,7 @@ async function budgetView() {
   const sum = (items) => items.reduce((t, x) => t + x.amount, 0);
   const hero = h("span", { class: `hero${b.budget < 0 ? " neg" : ""}` }, yenBig(b.budget));
   // 予定の行は左に日付を縦に組み、日の順に読めるようにする
-  const item = (label, date, amount, note) => h("div", { class: "cell sub dated" },
+  const item = (label, date, amount, note, href) => cell({ class: "sub dated", href },
     date ? h("span", { class: "date-chip" }, h("b", {}, Number(date.slice(8, 10))), h("span", {}, `${Number(date.slice(5, 7))}月`)) : h("span", { class: "date-chip" }),
     h("span", { class: "grow" }, h("span", {}, label), note ? h("span", { class: "detail" }, note) : null),
     h("span", { class: "amount" }, amount));
@@ -595,8 +600,8 @@ async function budgetView() {
     h("div", { class: "card", style: "padding-top:4px;padding-bottom:4px" },
       h("div", { class: "group budget", style: "padding-left:0;border-radius:0" },
       h("div", { class: "cell" }, h("span", { class: "grow" }, "月初残高"), h("span", { class: "amount" }, num(b.opening_liquid))),
-      part("収入予定", plus(sum(b.income)), b.income.map((x) => item(x.label, x.date, h("span", { class: "inc" }, plus(x.amount))))),
-      part("支払予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount), pendingNote(x)))),
+      part("収入予定", plus(sum(b.income)), b.income.map((x) => item(x.label, x.date, h("span", { class: "inc" }, plus(x.amount)), null, planHref(x)))),
+      part("支払予定", minus(sum(b.expenses)), b.expenses.map((x) => item(x.label, x.date, minus(x.amount), pendingNote(x), planHref(x)))),
       h("label", { class: "cell field" }, h("span", { class: "grow" }, "貯金に回す金額"), h("span", { class: "minus" }, "−"), buffer))),
   ];
 }
@@ -1614,7 +1619,7 @@ async function calendarView(params) {
       dayIn(d) && dayOut(d) ? "　" : null, dayOut(d) ? minus(dayOut(d)) : null) : null, `day-${d}`),
     h("div", { class: "group" },
       (byDay.get(d) ?? []).map(entryCell),
-      (plannedBy.get(d) ?? []).map((p) => cell(p.planned_id ? { href: p.date <= today() ? `#/new?planned=${p.planned_id}` : `#/planned/${p.planned_id}` } : {},
+      (plannedBy.get(d) ?? []).map((p) => cell({ href: planHref(p) },
         h("div", { class: "grow" }, h("span", {}, p.label), h("span", { class: "detail" }, p.kind === "card" ? `${p.via}の引き落とし分` : ["予定", pendingNote(p)].filter(Boolean).join("・"))),
         h("span", { class: "amount muted" }, p.kind === "income" ? plus(p.amount) : minus(p.amount))))),
   ])];

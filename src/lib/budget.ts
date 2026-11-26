@@ -20,6 +20,8 @@ export interface BudgetItem {
   kind: "income" | "expense" | "transfer" | "payment" | "card";
   /** カードの引き落としのうち、明細でまだ確定していない額 */
   pending?: number;
+  /** 押したときに開く画面。取引、繰り返し、一度きりの予定、分割払い、カードや借入の設定 */
+  href?: string;
 }
 
 export interface NextMonthBudget {
@@ -60,6 +62,7 @@ async function recordedItems(db: D1Database, from: string, to: string): Promise<
       date: r.date,
       label: r.payee || kindLabel(r.kind),
       amount: Math.abs(r.delta),
+      href: `#/entry/${r.id}`,
       cash_delta: r.delta,
       kind: r.kind === "card_payment" ? "payment" : r.kind === "transfer" ? "transfer" : r.delta > 0 ? "income" : "expense",
     }));
@@ -125,7 +128,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
     }
     const kind = r.kind === "expense" && from?.kind === "card" ? "card" : r.kind;
     if (cashDelta === 0 && kind !== "card") return null;
-    return { date, label: r.payee || "繰り返し", amount: Math.abs(r.amount), cash_delta: cashDelta, kind };
+    return { date, label: r.payee || "繰り返し", amount: Math.abs(r.amount), cash_delta: cashDelta, kind, href: `#/recurring/${r.id}` };
   }));
 
   const fromPayments = Promise.all(paymentDue.filter((x) => !done.has(x.key)).map(async ({ a, billMonth, due }): Promise<BudgetItem | null> => {
@@ -143,6 +146,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
       amount,
       cash_delta: cashDelta,
       kind: "payment",
+      href: `#/account/${a.id}/edit`,
       ...(ahead?.pending ? { pending: ahead.pending } : {}),
     };
   }));
@@ -163,7 +167,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
     }
     const kind = p.kind === "expense" && from?.kind === "card" ? "card" : p.kind;
     if (cashDelta === 0 && kind !== "card") return null;
-    return { date: p.date, label: p.payee || "予定", amount: p.amount, cash_delta: cashDelta, kind };
+    return { date: p.date, label: p.payee || "予定", amount: p.amount, cash_delta: cashDelta, kind, href: `#/planned/${p.id}` };
   }));
 
   // まだ記録していない分割払いの回。カードの未払いに足すだけで、手元からは引き落としのときに出る
@@ -171,7 +175,7 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
     .filter((p) => month === monthOf(today) || monthOf(p.date) === month)
     .map((p): BudgetItem => {
       owe(p.plan.card_id, p.amount);
-      return { date: p.date, label: `${p.plan.payee || "分割払い"} ${p.number}/${p.plan.count}回`, amount: p.amount, cash_delta: 0, kind: "card" };
+      return { date: p.date, label: `${p.plan.payee || "分割払い"} ${p.number}/${p.plan.count}回`, amount: p.amount, cash_delta: 0, kind: "card", href: `#/installment/${p.plan.id}` };
     });
 
   const items = [...await fromRecurring, ...await fromPayments, ...await fromPlanned, ...fromInstallments].filter((x): x is BudgetItem => x !== null);
@@ -181,14 +185,14 @@ async function pendingItems(db: D1Database, month: string, liquidIds: Set<number
 /** まだ回収していない立て替え。いつ返るかは分からないので、来月の初めに入る見込みとして数える */
 export async function advanceItems(db: D1Database, month: string): Promise<BudgetItem[]> {
   const { results } = await db
-    .prepare(`SELECT e.payee,
+    .prepare(`SELECT e.id, e.payee,
         (SELECT SUM(l.amount) FROM lines l JOIN accounts a ON a.id = l.account_id WHERE l.entry_id = e.id AND a.type = 'expense')
         - COALESCE((SELECT SUM(l.amount) FROM entries r JOIN lines l ON l.entry_id = r.id JOIN accounts a ON a.id = l.account_id
           WHERE r.related_entry_id = e.id AND r.kind = 'recovery' AND a.type = 'asset'), 0) AS remaining
       FROM entries e WHERE e.advance = 1 AND e.settled = 0 AND e.date <= ? ORDER BY e.date`)
-    .bind(`${month}-31`).all<{ payee: string | null; remaining: number | null }>();
+    .bind(`${month}-31`).all<{ id: number; payee: string | null; remaining: number | null }>();
   return results.filter((r) => (r.remaining ?? 0) > 0).map((r) => ({
-    date: `${month}-01`, label: `${r.payee || "立て替え"}の回収`, amount: r.remaining!, cash_delta: r.remaining!, kind: "income",
+    date: `${month}-01`, label: `${r.payee || "立て替え"}の回収`, amount: r.remaining!, cash_delta: r.remaining!, kind: "income", href: `#/entry/${r.id}`,
   }));
 }
 
