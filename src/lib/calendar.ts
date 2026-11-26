@@ -48,10 +48,13 @@ export async function calendarMonth(db: D1Database, month: string, today = today
   const billed = new Set(payers.filter((a) => a.kind === "card" && a.closing_day).map((a) => a.id));
   const viaCard = (p: { kind: string; from_account_id: number | null }) => p.kind === "expense" && p.from_account_id !== null && billed.has(p.from_account_id);
   const { results: rs } = await db.prepare("SELECT * FROM recurring WHERE active = 1").all<Recurring>();
+  // 今日の回は毎朝7時の処理で記録されるまで予定として出す。過ぎた日は記録のほうに出る
+  const recorded = async (key: string) => !!(await db.prepare("SELECT 1 FROM entries WHERE auto_key = ?").bind(key).first());
   for (const r of rs) {
     if (viaCard(r)) continue;
     const date = occurrence(r, month);
-    if (!date || date <= today || date < r.first_date || (r.end_date && date > r.end_date)) continue;
+    if (!date || date < today || date < r.first_date || (r.end_date && date > r.end_date)) continue;
+    if (date === today && await recorded(`recurring:${r.id}:${month}`)) continue;
     planned.push({ date, label: r.payee || "繰り返し", amount: r.amount, kind: r.kind, href: `#/recurring/${r.id}` });
   }
 
@@ -63,7 +66,8 @@ export async function calendarMonth(db: D1Database, month: string, today = today
 
   for (const a of payers) {
     const date = nextBankDay(dayInMonth(month, a.payment_day!));
-    if (date <= today || beforeFirstPayment(a, month)) continue;
+    if (date < today || beforeFirstPayment(a, month)) continue;
+    if (date === today && await recorded(`payment:${a.id}:${month}`)) continue;
     if (a.kind === "card") {
       const { amount, usage, pending } = await cardDueAhead(db, a, month);
       if (amount > 0) planned.push({ date, label: `${a.name} 引き落とし`, amount, kind: "payment", href: `#/account/${a.id}/edit`, ...(pending ? { pending } : {}) });

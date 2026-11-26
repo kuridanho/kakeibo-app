@@ -137,6 +137,17 @@ describe("来月の予算", () => {
     await api("DELETE", `/api/entries/${id}`);
   });
 
+  it("今日の繰り返しと返済は、毎朝の処理で記録されるまでカレンダーの予定に出す", async () => {
+    // 0時から7時の間は、今日の回がまだ記録されていない
+    const before = (await calendarMonth(db, "2026-11", "2026-11-25")).planned;
+    expect(before).toContainEqual(expect.objectContaining({ date: "2026-11-25", label: "給与", amount: 250000 }));
+    expect((await calendarMonth(db, "2026-11", "2026-11-27")).planned)
+      .toContainEqual(expect.objectContaining({ date: "2026-11-27", label: "予算奨学金 返済", amount: 15000 }));
+    // 記録したあとは記録のほうに出るので、予定からは外す
+    await recordRecurring(db, "2026-11-25");
+    expect((await calendarMonth(db, "2026-11", "2026-11-25")).planned.filter((x) => x.label === "給与")).toHaveLength(0);
+  });
+
   it("すでに記録した回は、繰り返しから二重に足さない", async () => {
     await recordRecurring(db, "2026-11-25");
     const b = await nextMonthBudget(db, today);
